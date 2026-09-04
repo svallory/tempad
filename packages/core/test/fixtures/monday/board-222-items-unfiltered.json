@@ -1,0 +1,29 @@
+{
+  "data": {
+    "boards": [
+      {
+        "items_page": {
+          "cursor": null,
+          "items": [
+            {
+              "id": "2001",
+              "name": "Legacy task",
+              "group": { "title": "Todo" },
+              "created_at": "2026-07-01T10:00:00Z",
+              "updated_at": "2026-08-18T10:00:00Z",
+              "column_values": [
+                {
+                  "id": "people8",
+                  "type": "people",
+                  "text": "Saulo Vallory",
+                  "value": "{\"changed_at\":\"2026-08-18T10:00:00.000Z\",\"personsAndTeams\":[{\"id\":1234567,\"kind\":\"person\"}]}"
+                },
+                { "id": "status", "type": "status", "text": "To Do", "value": "{\"index\":0}" }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "data": {
+    "boards": [
+      {
+        "id": "111",
+        "name": "Engineering",
+        "columns": [
+          { "id": "person", "title": "Assignee", "type": "people" },
+          { "id": "status", "title": "Status", "type": "status" },
+          { "id": "timeline", "title": "Timeline", "type": "timeline" },
+          { "id": "time_tracking", "title": "Time Tracked", "type": "time_tracking" }
+        ]
+      },
+      {
+        "id": "222",
+        "name": "Legacy Board",
+        "columns": [
+          { "id": "people8", "title": "Owner", "type": "people" },
+          { "id": "status", "title": "Status", "type": "status" }
+        ]
+      }
+    ]
+  }
+}

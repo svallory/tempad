@@ -1,0 +1,224 @@
+import type { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { mondayCollector } from "../src/collect/monday.ts";
+import type { Config } from "../src/config/env.ts";
+import { openDatabase } from "../src/db/database.ts";
+
+const FIXTURES_DIR = join(import.meta.dir, "fixtures/monday");
+
+function loadFixture(name: string): unknown {
+  return JSON.parse(readFileSync(join(FIXTURES_DIR, `${name}.json`), "utf8"));
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function makeConfig(): Config {
+  return {
+    mondayApiToken: "test-token",
+    mondayUser: "1234567",
+    ghUser: "svallory",
+    ghOrgs: ["mosaicstg"],
+    ghIncludePersonal: false,
+    ghToken: undefined,
+    gitAuthorEmails: ["me@saulo.engineer"],
+    claudeDirs: [],
+    hostSlug: "test-host",
+    tz: "America/Sao_Paulo",
+    since: "2026-07-01",
+    home: "/tmp/tempad-test-home",
+  };
+}
+
+let database: Database;
+let dbPath: string;
+let callLog: string[];
+let complexityAttempts: number;
+
+function dispatchFetch(): typeof fetch {
+  return (async (_url: string | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as {
+      query: string;
+      variables: Record<string, unknown>;
+    };
+    const query = body.query;
+    callLog.push(query.trim().split("\n")[0] ?? "");
+
+    if (query.includes("me {")) {
+      return jsonResponse(loadFixture("me"));
+    }
+
+    if (query.includes("boards(limit:")) {
+      const page = body.variables.page;
+      return jsonResponse(
+        page === 1 ? loadFixture("boards-page-1") : loadFixture("boards-page-2-empty"),
+      );
+    }
+
+    if (query.includes("next_items_page(cursor:")) {
+      return jsonResponse(loadFixture("board-111-items-page-2"));
+    }
+
+    if (query.includes("items_page(limit:")) {
+      const boardId = (body.variables.boardId as string[])[0];
+      const hasFilter = body.variables.params !== undefined && body.variables.params !== null;
+
+      if (boardId === "111") {
+        return jsonResponse(loadFixture("board-111-items-page-1"));
+      }
+
+      if (boardId === "222") {
+        if (hasFilter) {
+          return jsonResponse(loadFixture("board-222-rule-rejected"));
+        }
+        return jsonResponse(loadFixture("board-222-items-unfiltered"));
+      }
+
+      if (boardId === "333") {
+        complexityAttempts++;
+        if (complexityAttempts === 1) {
+          return jsonResponse(loadFixture("complexity-error"), 429);
+        }
+        return jsonResponse({
+          data: { boards: [{ items_page: { cursor: null, items: [] } }] },
+        });
+      }
+    }
+
+    throw new Error(`Unhandled query in test fetch mock: ${query}`);
+  }) as typeof fetch;
+}
+
+beforeEach(() => {
+  dbPath = `/tmp/tempad-monday-test-${Math.random().toString(36).slice(2)}.db`;
+  database = openDatabase(dbPath);
+  callLog = [];
+  complexityAttempts = 0;
+});
+
+afterEach(() => {
+  database.close();
+});
+
+describe("mondayCollector", () => {
+  test("filters by assignee id and by name, extracts columns by type, follows cursor", async () => {
+    const summary = await mondayCollector.sync(database, makeConfig(), {
+      fetch: dispatchFetch(),
+    });
+
+    expect(summary.source).toBe("monday");
+    expect(summary.inserted).toBe(3);
+    expect(summary.updated).toBe(0);
+
+    const rows = database
+      .query(
+        "SELECT id, board_id, status, timeline_start, timeline_end, time_tracked_seconds, assignees FROM monday_items ORDER BY id",
+      )
+      .all() as {
+      id: number;
+      board_id: number;
+      status: string | null;
+      timeline_start: string | null;
+      timeline_end: string | null;
+      time_tracked_seconds: number | null;
+      assignees: string;
+    }[];
+
+    expect(rows.map((row) => row.id)).toEqual([1001, 1003, 2001]);
+
+    const byId = new Map(rows.map((row) => [row.id, row]));
+
+    const matchedById = byId.get(1001);
+    expect(matchedById?.status).toBe("Working on it");
+    expect(matchedById?.timeline_start).toBe("2026-08-01");
+    expect(matchedById?.timeline_end).toBe("2026-08-15");
+    expect(matchedById?.time_tracked_seconds).toBe(5400);
+    expect(JSON.parse(matchedById?.assignees ?? "[]")).toEqual([
+      { id: "1234567", name: "Saulo Vallory" },
+    ]);
+
+    const matchedByName = byId.get(1003);
+    expect(matchedByName).toBeDefined();
+    expect(matchedByName?.status).toBe("Stuck");
+
+    const notAssigned = rows.find((row) => row.id === 1002);
+    expect(notAssigned).toBeUndefined();
+  });
+
+  test("falls back to unfiltered pull when the last-updated rule is rejected", async () => {
+    database
+      .query(
+        "INSERT INTO sync_state (source, last_sync_at, cursor) VALUES ('monday', '2026-08-01T00:00:00Z', NULL)",
+      )
+      .run();
+
+    const summary = await mondayCollector.sync(database, makeConfig(), {
+      fetch: dispatchFetch(),
+    });
+
+    expect(summary.warnings.length).toBe(1);
+    expect(summary.warnings[0]).toContain("board 222");
+    expect(summary.warnings[0]).toContain("falling back");
+
+    const row = database.query("SELECT id FROM monday_items WHERE id = 2001").get();
+    expect(row).not.toBeNull();
+  });
+
+  test("retries once on a complexity error then succeeds", async () => {
+    const config = makeConfig();
+
+    const originalDispatch = dispatchFetch();
+    const fetchWithThirdBoard: typeof fetch = (async (url, init) => {
+      const parsed = JSON.parse(String((init as RequestInit).body)) as {
+        query: string;
+        variables: Record<string, unknown>;
+      };
+      if (parsed.query.includes("boards(limit:") && parsed.variables.page === 1) {
+        return jsonResponse({
+          data: {
+            boards: [{ id: "333", name: "Retry Board", columns: [] }],
+          },
+        });
+      }
+      if (parsed.query.includes("boards(limit:") && parsed.variables.page === 2) {
+        return jsonResponse({ data: { boards: [] } });
+      }
+      return originalDispatch(url, init);
+    }) as typeof fetch;
+
+    const summary = await mondayCollector.sync(database, config, { fetch: fetchWithThirdBoard });
+
+    expect(complexityAttempts).toBe(2);
+    expect(summary.inserted).toBe(0);
+    expect(summary.warnings.length).toBe(0);
+  });
+
+  test("idempotent: running twice yields the same row counts", async () => {
+    await mondayCollector.sync(database, makeConfig(), { fetch: dispatchFetch() });
+    const firstCount = (
+      database.query("SELECT COUNT(*) as count FROM monday_items").get() as {
+        count: number;
+      }
+    ).count;
+
+    complexityAttempts = 0;
+    const secondSummary = await mondayCollector.sync(database, makeConfig(), {
+      fetch: dispatchFetch(),
+    });
+    const secondCount = (
+      database.query("SELECT COUNT(*) as count FROM monday_items").get() as {
+        count: number;
+      }
+    ).count;
+
+    expect(secondCount).toBe(firstCount);
+    expect(secondSummary.inserted).toBe(0);
+    expect(secondSummary.updated).toBe(3);
+  });
+});

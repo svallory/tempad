@@ -1,0 +1,25 @@
+{
+  "data": {
+    "next_items_page": {
+      "cursor": null,
+      "items": [
+        {
+          "id": "1003",
+          "name": "Review PR",
+          "group": { "title": "Backlog" },
+          "created_at": "2026-08-03T10:00:00Z",
+          "updated_at": "2026-08-21T10:00:00Z",
+          "column_values": [
+            {
+              "id": "person",
+              "type": "people",
+              "text": "Someone Else, Saulo Vallory",
+              "value": "{\"changed_at\":\"2026-08-21T10:00:00.000Z\",\"personsAndTeams\":[{\"id\":9999999,\"kind\":\"person\"},{\"id\":8888888,\"kind\":\"person\"}]}"
+            },
+            { "id": "status", "type": "status", "text": "Stuck", "value": "{\"index\":2}" }
+          ]
+        }
+      ]
+    }
+  }
+}
