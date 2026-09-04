@@ -112,6 +112,49 @@ describe("dailyReport", () => {
     database.close();
   });
 
+  test("a NULL title_source (pre-migration row, never re-synced) is listed individually, not rolled up", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(
+      `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, path_meta, title, title_source, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+       VALUES ('session-legacy', '~/.claude', 'dir', '/tmp/session-legacy.jsonl', NULL, 'acme', 'widgets', NULL, 'pre-migration session', NULL, NULL, '2026-09-01T12:20:00.000Z', '2026-09-01T12:25:00.000Z', 2, 0, '[]', 'test-host', '2026-09-01T12:25:00.000Z')`,
+    );
+
+    const output = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+    });
+
+    expect(output).toContain("pre-migration session,");
+    expect(output).not.toContain("untitled sessions");
+
+    database.close();
+  });
+
+  test("rebased copies of the same commit (same repo/subject/authored_at, different sha) print once with an (xN) suffix", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(
+      `INSERT INTO gh_commits (sha, repo, branches, author_name, author_email, authored_at, committed_at, subject, body, files_changed, insertions, deletions)
+       VALUES
+       ('fffffff6666666666666666666666666666666', 'acme/widgets', '["feature/rebased"]', 'Octo Cat', 'octocat@example.com', '2026-09-01T14:00:00.000Z', '2026-09-01T14:00:00.000Z', 'feat(widgets): polish report output', NULL, 2, 10, 3),
+       ('9999999777777777777777777777777777777a', 'acme/widgets', '["feature/rebased-2"]', 'Octo Cat', 'octocat@example.com', '2026-09-01T14:00:00.000Z', '2026-09-01T14:00:00.000Z', 'feat(widgets): polish report output', NULL, 2, 10, 3)`,
+    );
+
+    const output = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+    });
+
+    expect(output).toContain("bbbbbbb feat(widgets): polish report output (acme/widgets) (x3)");
+    const occurrences = output.split("feat(widgets): polish report output").length - 1;
+    expect(occurrences).toBe(1);
+
+    database.close();
+  });
+
   test("a weekday with nothing prints no evidence, a weekend with nothing is omitted", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     // no seed: empty database

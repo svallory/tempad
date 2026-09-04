@@ -75,6 +75,49 @@ describe("hourlyReport", () => {
     database.close();
   });
 
+  test("a NULL title_source session is shown by name, not counted as untitled", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(
+      `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, path_meta, title, title_source, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+       VALUES ('session-legacy', '~/.claude', 'dir', '/tmp/session-legacy.jsonl', NULL, 'acme', 'widgets', NULL, 'pre-migration session', NULL, NULL, '2026-09-01T12:20:00.000Z', '2026-09-01T12:25:00.000Z', 1, 0, '[]', 'test-host', '2026-09-01T12:25:00.000Z')`,
+    );
+    database.exec(
+      `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, origin_kind, model, text_preview, tool_name, tokens_in, tokens_out)
+       VALUES ('msg-legacy', 'session-legacy', '2026-09-01T12:21:00.000Z', 'user', 0, 'human', NULL, 'x', NULL, 5, NULL)`,
+    );
+
+    const output = hourlyReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+    });
+
+    expect(output).toContain("pre-migration session (1 messages)");
+    expect(output).not.toContain("untitled");
+
+    database.close();
+  });
+
+  test("rebased copies of the same commit in one hour print once with an (xN) suffix", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(
+      `INSERT INTO gh_commits (sha, repo, branches, author_name, author_email, authored_at, committed_at, subject, body, files_changed, insertions, deletions)
+       VALUES ('fffffff6666666666666666666666666666666', 'acme/widgets', '["feature/rebased"]', 'Octo Cat', 'octocat@example.com', '2026-09-01T14:00:00.000Z', '2026-09-01T14:00:00.000Z', 'feat(widgets): polish report output', NULL, 2, 10, 3)`,
+    );
+
+    const output = hourlyReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+    });
+
+    expect(output).toContain("bbbbbbb (x2)");
+
+    database.close();
+  });
+
   test("a day with no evidence renders a single line", () => {
     const database = openDatabase(join(dir, "tempad.db"));
 

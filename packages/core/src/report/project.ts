@@ -1,10 +1,12 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
-import { elapsedLabel, heading, table } from "./markdown.ts";
+import { elapsedLabel, heading, localDateTime, table } from "./markdown.ts";
 import {
   type CommitRow,
+  type PullRequestRow,
   queryCommits,
   queryMondayItems,
+  queryPullRequestsByRepo,
   querySessions,
   type SessionRow,
 } from "./queries.ts";
@@ -87,14 +89,19 @@ function render(database: Database, config: Config, options: ReportOptions): str
             const itemSessions = projectSessions.length;
             return [
               item.name,
-              first,
-              last,
+              localDateTime(first, range.timeZone),
+              localDateTime(last, range.timeZone),
               elapsedLabel(first, last),
               String(itemCommits),
               String(itemSessions),
             ];
           })
-        : branchRows(projectCommits, projectSessions);
+        : branchRows(
+            projectCommits,
+            projectSessions,
+            queryPullRequestsByRepo(database, key.org, key.project),
+            range.timeZone,
+          );
 
     const lines =
       rows.length > 0
@@ -123,7 +130,25 @@ function render(database: Database, config: Config, options: ReportOptions): str
   return sections.join("\n\n");
 }
 
-function branchRows(commits: CommitRow[], sessions: SessionRow[]): string[][] {
+const PULL_REF_PATTERN = /^pull\/(\d+)\/head$/;
+
+function branchLabel(branch: string, pullRequestsByNumber: Map<number, PullRequestRow>): string {
+  const match = branch.match(PULL_REF_PATTERN);
+  if (!match) return branch;
+
+  const number = Number.parseInt(match[1] as string, 10);
+  const pullRequest = pullRequestsByNumber.get(number);
+  return pullRequest ? `PR #${number} ${pullRequest.title}` : `PR #${number}`;
+}
+
+function branchRows(
+  commits: CommitRow[],
+  sessions: SessionRow[],
+  pullRequests: PullRequestRow[],
+  timeZone: string,
+): string[][] {
+  const pullRequestsByNumber = new Map(pullRequests.map((pr) => [pr.number, pr]));
+
   const byBranch = new Map<string, CommitRow[]>();
   for (const commit of commits) {
     const branch = inferBranch(commit.branches);
@@ -141,9 +166,9 @@ function branchRows(commits: CommitRow[], sessions: SessionRow[]): string[][] {
     const first = branchCommits[0]?.authoredAt ?? "";
     const last = branchCommits[branchCommits.length - 1]?.authoredAt ?? "";
     return [
-      branch,
-      first,
-      last,
+      branchLabel(branch, pullRequestsByNumber),
+      localDateTime(first, timeZone),
+      localDateTime(last, timeZone),
       elapsedLabel(first, last),
       String(branchCommits.length),
       String(branchSessions.length),

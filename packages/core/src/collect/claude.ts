@@ -404,7 +404,7 @@ export const claudeCollector: Collector = {
     );
 
     const selectExisting = database.query(
-      "SELECT file_mtime as fileMtime, message_count as messageCount, title as title FROM claude_sessions WHERE id = ?",
+      "SELECT file_mtime as fileMtime, message_count as messageCount, title as title, title_source as titleSource FROM claude_sessions WHERE id = ?",
     );
 
     for (const claudeDir of config.claudeDirs) {
@@ -446,6 +446,7 @@ export const claudeCollector: Collector = {
           fileMtime: string;
           messageCount: number;
           title: string | null;
+          titleSource: string | null;
         } | null;
 
         const { title, source: titleSource } = resolveTitle(session);
@@ -454,7 +455,8 @@ export const claudeCollector: Collector = {
           existing !== null &&
           existing.fileMtime === fileMtime &&
           existing.messageCount === session.messageCount &&
-          existing.title === title;
+          existing.title === title &&
+          existing.titleSource === titleSource;
 
         if (!unchanged) {
           upsertSession.run(

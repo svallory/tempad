@@ -1,7 +1,12 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
 import { dayRange, heading, localDay, localHour, table } from "./markdown.ts";
-import { queryCommits, querySessionMessagesByHour } from "./queries.ts";
+import {
+  groupDuplicateCommits,
+  isNamedTitleSource,
+  queryCommits,
+  querySessionMessagesByHour,
+} from "./queries.ts";
 import type { Report, ReportOptions } from "./types.ts";
 
 interface ProjectKey {
@@ -95,9 +100,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
         let untitledCount = 0;
         let untitledMessages = 0;
         for (const session of bySession.values()) {
-          const isNamed =
-            session.titleSource === "custom-title" || session.titleSource === "agent-name";
-          if (isNamed) {
+          if (isNamedTitleSource(session.titleSource)) {
             parts.push(`${session.title as string} (${session.count} messages)`);
           } else {
             untitledCount += 1;
@@ -107,8 +110,9 @@ function render(database: Database, config: Config, options: ReportOptions): str
         if (untitledCount > 0) {
           parts.push(`+${untitledCount} untitled (${untitledMessages} messages)`);
         }
-        for (const commit of cellCommits) {
-          parts.push(commit.sha.slice(0, 7));
+        for (const group of groupDuplicateCommits(cellCommits)) {
+          const suffix = group.count > 1 ? ` (x${group.count})` : "";
+          parts.push(`${group.sha.slice(0, 7)}${suffix}`);
         }
 
         row.push(parts.join("; "));

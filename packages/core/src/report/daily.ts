@@ -3,6 +3,8 @@ import type { Config } from "../config/env.ts";
 import { dayRange, heading, isWeekend, localDay, localTime, localWeekday } from "./markdown.ts";
 import {
   type CommitRow,
+  groupDuplicateCommits,
+  isNamedTitleSource,
   type MondayItemRow,
   type PullRequestRow,
   queryCommits,
@@ -73,13 +75,15 @@ function render(database: Database, config: Config, options: ReportOptions): str
     for (const key of projectKeys) {
       lines.push(heading(3, projectKeyString(key)));
 
-      for (const commit of dayCommits.filter((row) => matchesKey(row, key))) {
-        lines.push(`- ${commit.sha.slice(0, 7)} ${commit.subject} (${commit.repo})`);
+      const keyCommits = dayCommits.filter((row) => matchesKey(row, key));
+      for (const group of groupDuplicateCommits(keyCommits)) {
+        const suffix = group.count > 1 ? ` (x${group.count})` : "";
+        lines.push(`- ${group.sha.slice(0, 7)} ${group.subject} (${group.repo})${suffix}`);
       }
 
       const keySessions = daySessions.filter((row) => matchesKey(row, key));
-      const namedSessions = keySessions.filter((row) => isNamedTitle(row.titleSource));
-      const untitledSessions = keySessions.filter((row) => !isNamedTitle(row.titleSource));
+      const namedSessions = keySessions.filter((row) => isNamedTitleSource(row.titleSource));
+      const untitledSessions = keySessions.filter((row) => !isNamedTitleSource(row.titleSource));
 
       for (const session of namedSessions) {
         const startTime = localTime(session.startedAt, timeZone);
@@ -114,10 +118,6 @@ function render(database: Database, config: Config, options: ReportOptions): str
   if (sections.length === 1) sections.push("no evidence");
 
   return sections.join("\n\n");
-}
-
-function isNamedTitle(titleSource: string | null): boolean {
-  return titleSource === "custom-title" || titleSource === "agent-name";
 }
 
 function sessionTouchesDay(session: SessionRow, day: string, timeZone: string): boolean {

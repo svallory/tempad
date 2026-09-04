@@ -12,7 +12,7 @@ import type { Report, ReportOptions } from "./report/types.ts";
 
 function printUsage(): void {
   console.error("Usage:");
-  console.error("  tempad sync [monday|github|claude]");
+  console.error("  tempad sync [monday|github|claude] [--full]");
   console.error(
     "  tempad report <daily|project|hourly> --from <date> --to <date> [--org X] [--project Y] [--out path]",
   );
@@ -49,7 +49,13 @@ export async function runSync(
 }
 
 async function runSyncCommand(args: string[]): Promise<number> {
-  const source = args[0];
+  const { values, positionals } = parseArgs({
+    args,
+    options: { full: { type: "boolean", default: false } },
+    strict: true,
+    allowPositionals: true,
+  });
+  const source = positionals[0];
 
   if (source !== undefined && !collectors.has(source as Collector["name"])) {
     printUsage();
@@ -63,6 +69,13 @@ async function runSyncCommand(args: string[]): Promise<number> {
     source !== undefined
       ? [collectors.get(source as Collector["name"]) as Collector]
       : [...collectors.values()];
+
+  if (values.full) {
+    const deleteSyncState = database.query("DELETE FROM sync_state WHERE source = ?");
+    for (const collector of selected) {
+      deleteSyncState.run(collector.name);
+    }
+  }
 
   const { summaries, failed } = await runSync(database, config, selected);
 

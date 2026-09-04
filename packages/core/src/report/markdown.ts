@@ -77,6 +77,16 @@ export function localTime(isoTimestamp: string, timeZone: string): string {
   return formatted === "24:00" ? "00:00" : formatted;
 }
 
+/**
+ * Local "YYYY-MM-DD HH:MM" for an ISO instant, per the given IANA zone. A bare
+ * date (no "T", e.g. a Monday timeline_start/end with no time component) is
+ * returned unchanged -- there is no instant to convert.
+ */
+export function localDateTime(timestamp: string, timeZone: string): string {
+  if (!timestamp.includes("T")) return timestamp;
+  return `${localDay(timestamp, timeZone)} ${localTime(timestamp, timeZone)}`;
+}
+
 export function localWeekday(day: string, timeZone: string): string {
   const [year, month, date] = day.split("-").map(Number);
   const noonUtc = new Date(Date.UTC(year as number, (month as number) - 1, date, 12));
