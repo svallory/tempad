@@ -1,0 +1,12 @@
+{
+  "total_count": 1,
+  "items": [
+    {
+      "repository": {
+        "full_name": "Mosaicstg/LiUNA-Campaigns",
+        "default_branch": "main",
+        "ssh_url": "git@github.com:Mosaicstg/LiUNA-Campaigns.git"
+      }
+    }
+  ]
+}
