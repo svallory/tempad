@@ -291,6 +291,7 @@ describe("claude collector", () => {
       type: "user",
       sessionId: "sess-3",
       timestamp: "2026-01-03T10:00:06.000Z",
+      cwd: "/should/not/be/recorded",
       origin: { kind: "human" },
       message: { role: "user", content: "no uuid, should be skipped" },
     };
