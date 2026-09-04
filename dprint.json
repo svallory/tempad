@@ -7,7 +7,13 @@
   "toml": {},
   "yaml": {},
   "includes": ["**/*.{md,toml,yml,yaml}"],
-  "excludes": ["**/node_modules", "**/dist", "**/.moon/cache", "CHANGELOG.md"],
+  "excludes": [
+    "**/node_modules",
+    "**/dist",
+    "**/.moon/cache",
+    "CHANGELOG.md",
+    "packages/core/test/fixtures/report-golden/*.md"
+  ],
   "plugins": [
     "https://plugins.dprint.dev/markdown-0.23.3.wasm",
     "https://plugins.dprint.dev/toml-0.8.0.wasm",

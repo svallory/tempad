@@ -115,9 +115,9 @@ async function runReportCommand(args: string[]): Promise<number> {
   const output = report.render(database, config, options);
   console.log(output);
 
-  if (values.out) {
-    await Bun.write(values.out, output);
-  }
+  const outPath =
+    values.out ?? join(config.home, "reports", `${kind}-${options.from}-${options.to}.md`);
+  await Bun.write(outPath, output);
 
   return 0;
 }
