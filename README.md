@@ -63,6 +63,15 @@ Reports land in `~/.tempad/reports/`.
 
 Tooling: [moon](https://moonrepo.dev) orchestrates tasks, [Biome](https://biomejs.dev) lints and formats JS/TS/JSON, [dprint](https://dprint.dev) formats Markdown, TOML and YAML.
 
+## Roadmap
+
+- **Profiles.** All configuration is global today (`TEMPAD_HOME/.env` and `tempad.toml`), so one machine can only serve one TemPad. Introduce profiles (for example `~/.tempad/profiles/<name>/` selected by `--profile` or `TEMPAD_PROFILE`) so a person can keep separate databases, tokens and path rules per client or per persona.
+- **w5 table.** A Claude Code hook that periodically asks a small model _who, when, what, why, where_ (plus outcome) about the live session and stores the answer, with a batch backfill over existing sessions. This is what turns raw sessions into "things I worked on", including side quests that never produced a commit.
+- **Weekly objective table.** Per weekday, per project: distinct objectives, shipped vs abandoned, side-quest share. Depends on w5.
+- **Goals and drift.** Set goals and get a nudge when time drifts away from them for too long.
+- **TUI** in Go (charmbracelet) under `apps/`.
+- **Timesheet export.** A recurring agent that fills external timesheets (Deel) from the reports.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
