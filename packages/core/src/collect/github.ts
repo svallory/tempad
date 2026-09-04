@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
 import { getSyncState, setSyncState } from "../db/sync-state.ts";
 import { discoverRepositories } from "./github/discover.ts";
-import { branchesContaining, commitExists, logCommits } from "./github/log.ts";
+import { commitExists, logCommits, refsContaining } from "./github/log.ts";
 import { mirrorRepository } from "./github/mirror.ts";
 import { fetchPullRequests } from "./github/pull-requests.ts";
 import type { CommandRunner } from "./github/request.ts";
@@ -19,6 +19,14 @@ export interface GithubCollectorDependencies {
   fetch: typeof fetch;
   runner: CommandRunner;
   ghCliRetryDelayMs?: number;
+}
+
+type UpsertOutcome = "inserted" | "updated" | "unchanged";
+
+/** Rows touched by the statement that ran most recently on this connection. */
+function rowChanged(database: Database): boolean {
+  const row = database.query(`SELECT changes() AS changed`).get() as { changed: number };
+  return row.changed > 0;
 }
 
 function upsertRepository(
@@ -60,8 +68,10 @@ function upsertCommit(
     insertions: number | null;
     deletions: number | null;
   },
-): "inserted" | "updated" {
+): UpsertOutcome {
   const existing = database.query(`SELECT sha FROM gh_commits WHERE sha = ?`).get(commit.sha);
+  // The DO UPDATE only fires when at least one stored column actually differs, so
+  // `changes()` stays 0 for a re-sync of unchanged rows and `updated` reports real edits.
   database
     .query(
       `INSERT INTO gh_commits
@@ -77,7 +87,18 @@ function upsertCommit(
          body = excluded.body,
          files_changed = excluded.files_changed,
          insertions = excluded.insertions,
-         deletions = excluded.deletions`,
+         deletions = excluded.deletions
+       WHERE gh_commits.repo IS NOT excluded.repo
+         OR gh_commits.branches IS NOT excluded.branches
+         OR gh_commits.author_name IS NOT excluded.author_name
+         OR gh_commits.author_email IS NOT excluded.author_email
+         OR gh_commits.authored_at IS NOT excluded.authored_at
+         OR gh_commits.committed_at IS NOT excluded.committed_at
+         OR gh_commits.subject IS NOT excluded.subject
+         OR gh_commits.body IS NOT excluded.body
+         OR gh_commits.files_changed IS NOT excluded.files_changed
+         OR gh_commits.insertions IS NOT excluded.insertions
+         OR gh_commits.deletions IS NOT excluded.deletions`,
     )
     .run(
       commit.sha,
@@ -93,7 +114,8 @@ function upsertCommit(
       commit.insertions,
       commit.deletions,
     );
-  return existing ? "updated" : "inserted";
+  if (!existing) return "inserted";
+  return rowChanged(database) ? "updated" : "unchanged";
 }
 
 function upsertPullRequest(
@@ -109,7 +131,7 @@ function upsertPullRequest(
     mergedAt: string | null;
     closedAt: string | null;
   },
-): "inserted" | "updated" {
+): UpsertOutcome {
   const existing = database
     .query(`SELECT number FROM gh_pull_requests WHERE repo = ? AND number = ?`)
     .get(pullRequest.repo, pullRequest.number);
@@ -124,7 +146,14 @@ function upsertPullRequest(
          role = excluded.role,
          created_at = excluded.created_at,
          merged_at = excluded.merged_at,
-         closed_at = excluded.closed_at`,
+         closed_at = excluded.closed_at
+       WHERE gh_pull_requests.title IS NOT excluded.title
+         OR gh_pull_requests.state IS NOT excluded.state
+         OR gh_pull_requests.author IS NOT excluded.author
+         OR gh_pull_requests.role IS NOT excluded.role
+         OR gh_pull_requests.created_at IS NOT excluded.created_at
+         OR gh_pull_requests.merged_at IS NOT excluded.merged_at
+         OR gh_pull_requests.closed_at IS NOT excluded.closed_at`,
     )
     .run(
       pullRequest.repo,
@@ -137,7 +166,8 @@ function upsertPullRequest(
       pullRequest.mergedAt,
       pullRequest.closedAt,
     );
-  return existing ? "updated" : "inserted";
+  if (!existing) return "inserted";
+  return rowChanged(database) ? "updated" : "unchanged";
 }
 
 export function createGithubCollector(dependencies: GithubCollectorDependencies): Collector {
@@ -203,14 +233,10 @@ export function createGithubCollector(dependencies: GithubCollectorDependencies)
         for (const commit of commits) {
           if (!matchingEmails.has(commit.authorEmail.toLowerCase())) continue;
 
-          const branches = await branchesContaining(
-            mirrorResult.path,
-            commit.sha,
-            dependencies.runner,
-          );
+          const branches = await refsContaining(mirrorResult.path, commit.sha, dependencies.runner);
           const outcome = upsertCommit(database, repository.fullName, { ...commit, branches });
           if (outcome === "inserted") inserted++;
-          else updated++;
+          else if (outcome === "updated") updated++;
         }
 
         const storedShas = database
@@ -220,7 +246,7 @@ export function createGithubCollector(dependencies: GithubCollectorDependencies)
         for (const { sha } of storedShas) {
           const exists = await commitExists(mirrorResult.path, sha, dependencies.runner);
           const branches = exists
-            ? await branchesContaining(mirrorResult.path, sha, dependencies.runner)
+            ? await refsContaining(mirrorResult.path, sha, dependencies.runner)
             : [];
           if (!exists || branches.length === 0) {
             database.query(`DELETE FROM gh_commits WHERE sha = ?`).run(sha);
@@ -244,7 +270,7 @@ export function createGithubCollector(dependencies: GithubCollectorDependencies)
           for (const pullRequest of pullRequests) {
             const outcome = upsertPullRequest(database, pullRequest);
             if (outcome === "inserted") inserted++;
-            else updated++;
+            else if (outcome === "updated") updated++;
           }
         }
       }
