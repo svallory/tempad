@@ -146,7 +146,7 @@ describe("claude collector", () => {
       // Idempotence: run again.
       const secondSummary = await claudeCollector.sync(database, config, {});
       expect(secondSummary.inserted).toBe(0);
-      expect(secondSummary.updated).toBe(1);
+      expect(secondSummary.updated).toBe(0);
 
       const messageCountAfter = (
         database
@@ -287,9 +287,16 @@ describe("claude collector", () => {
         message: { role: "assistant", content: [{ type: "text", text: "ok" }] },
       },
     ];
+    const uuidLessLine = {
+      type: "user",
+      sessionId: "sess-3",
+      timestamp: "2026-01-03T10:00:06.000Z",
+      origin: { kind: "human" },
+      message: { role: "user", content: "no uuid, should be skipped" },
+    };
     const content = `${JSON.stringify(goodLines[0])}\nnot valid json\n${JSON.stringify(
       goodLines[1],
-    )}\n{"broken":\n`;
+    )}\n{"broken":\n${JSON.stringify(uuidLessLine)}\n`;
     writeFileSync(sessionFile, content);
 
     try {
@@ -299,7 +306,16 @@ describe("claude collector", () => {
       const summary = await claudeCollector.sync(database, config, {});
       expect(summary.inserted).toBe(1);
       expect(summary.warnings.length).toBe(1);
-      expect(summary.warnings[0]).toContain("2 malformed lines");
+      expect(summary.warnings[0]).toContain("3 malformed lines");
+
+      const messageCount = (
+        database
+          .query("SELECT COUNT(*) as count FROM claude_messages WHERE session_id = 'sess-3'")
+          .get() as {
+          count: number;
+        }
+      ).count;
+      expect(messageCount).toBe(2);
 
       const session = database
         .query("SELECT * FROM claude_sessions WHERE id = 'sess-3'")
