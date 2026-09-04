@@ -1,0 +1,44 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.swp
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# moon
+.moon/cache/
+.moon/docker/
+
+# Go
+bin/
+*.test
+*.out
+
+# Runtime data (lives in TEMPAD_HOME, never here)
+.env
+.env.*
+!.env.example
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+repos/
+reports/
+
+# Local Claude settings
+.claude/settings.local.json
+
+# Logs
+*.log

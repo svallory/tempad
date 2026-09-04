@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="160" height="160" role="img" aria-label="Orange retro clock">
+  <circle cx="80" cy="80" r="70" fill="#f28c28" stroke="#5a2e00" stroke-width="6"/>
+  <circle cx="80" cy="80" r="56" fill="#fff3e0" stroke="#5a2e00" stroke-width="4"/>
+  <g stroke="#5a2e00" stroke-width="4" stroke-linecap="round">
+    <line x1="80" y1="32" x2="80" y2="40"/>
+    <line x1="128" y1="80" x2="120" y2="80"/>
+    <line x1="80" y1="128" x2="80" y2="120"/>
+    <line x1="32" y1="80" x2="40" y2="80"/>
+  </g>
+  <g stroke="#5a2e00" stroke-width="6" stroke-linecap="round">
+    <line x1="80" y1="80" x2="80" y2="50"/>
+    <line x1="80" y1="80" x2="104" y2="92"/>
+  </g>
+  <circle cx="80" cy="80" r="5" fill="#5a2e00"/>
+  <circle cx="80" cy="14" r="8" fill="#5a2e00"/>
+</svg>
