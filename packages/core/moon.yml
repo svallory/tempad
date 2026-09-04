@@ -1,0 +1,22 @@
+$schema: "https://moonrepo.dev/schemas/project.json"
+
+layer: "library"
+language: "typescript"
+
+tasks:
+  lint:
+    command: "biome check ."
+    inputs:
+      - "src/**/*"
+      - "test/**/*"
+  typecheck:
+    command: "tsc --noEmit"
+    inputs:
+      - "src/**/*"
+      - "test/**/*"
+      - "tsconfig.json"
+  test:
+    command: "bun test"
+    inputs:
+      - "src/**/*"
+      - "test/**/*"
