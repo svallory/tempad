@@ -18,6 +18,7 @@ function lowerBound(since: string, lastSyncAt: string | undefined): string {
 export interface GithubCollectorDependencies {
   fetch: typeof fetch;
   runner: CommandRunner;
+  ghCliRetryDelayMs?: number;
 }
 
 function upsertRepository(
@@ -152,6 +153,7 @@ export function createGithubCollector(dependencies: GithubCollectorDependencies)
         token: config.ghToken,
         fetch: fetchImplementation,
         runner: dependencies.runner,
+        ghCliRetryDelayMs: dependencies.ghCliRetryDelayMs,
       };
 
       let inserted = 0;

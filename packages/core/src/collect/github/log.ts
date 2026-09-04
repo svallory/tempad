@@ -17,6 +17,10 @@ const FIELD_SEP = "\x1f";
 const RECORD_SEP = "\x1e";
 const LOG_FORMAT = ["%H", "%an", "%ae", "%aI", "%cI", "%s", "%b"].join(FIELD_SEP);
 
+function toUtcIso(dateString: string): string {
+  return new Date(dateString).toISOString();
+}
+
 function parseShortstat(line: string | undefined): {
   filesChanged: number | null;
   insertions: number | null;
@@ -60,8 +64,8 @@ export function parseLogOutput(output: string): CommitRecord[] {
       sha,
       authorName: authorName ?? "",
       authorEmail: authorEmail ?? "",
-      authoredAt: authoredAt ?? "",
-      committedAt: committedAt ?? "",
+      authoredAt: authoredAt ? toUtcIso(authoredAt) : "",
+      committedAt: committedAt ? toUtcIso(committedAt) : "",
       subject: subject ?? "",
       body,
       ...stat,
@@ -91,7 +95,15 @@ export async function logCommits(
   if (result.code !== 0) {
     throw new Error(`git log failed in ${mirrorDirectory}: ${result.stderr}`);
   }
-  return parseLogOutput(result.stdout);
+
+  // git's --since is a traversal-stopping heuristic per ref, not a strict filter:
+  // with --all across branches whose history isn't strictly chronological
+  // (rebases, cherry-picks, long-lived branches), it can still return commits
+  // authored well before the cutoff. Filter strictly here instead of trusting it.
+  const sinceMs = new Date(since).getTime();
+  return parseLogOutput(result.stdout).filter(
+    (commit) => new Date(commit.authoredAt).getTime() >= sinceMs,
+  );
 }
 
 export async function branchesContaining(

@@ -90,6 +90,57 @@ function makeFetch(): typeof fetch {
 }
 
 describe("github collector", () => {
+  test("a second sync immediately after the first is fully idempotent across timezone offsets", async () => {
+    const homeDirectory = mkdtempSync(join(tmpdir(), "tempad-home-"));
+    const sourceDirectory = await buildRepository([
+      {
+        message: "commit with non-UTC offset",
+        authorName: "Saulo Vallory",
+        authorEmail: "me@saulo.engineer",
+        date: "2026-09-02T22:00:00-03:00",
+        files: { "readme.md": "hello" },
+      },
+      {
+        message: "another commit with non-UTC offset",
+        authorName: "Saulo Vallory",
+        authorEmail: "me@saulo.engineer",
+        date: "2026-09-03T23:30:00-03:00",
+        files: { "other.md": "hi" },
+      },
+    ]);
+
+    try {
+      const dbPath = join(homeDirectory, "tempad.db");
+      const database = openDatabase(dbPath);
+      const config = baseConfig(homeDirectory);
+      const mirrorRoot = { source: sourceDirectory };
+      const collector = createGithubCollector({
+        fetch: makeFetch(),
+        runner: makeRunner(mirrorRoot),
+      });
+
+      const firstSummary = await collector.sync(database, config, {});
+      expect(firstSummary.deleted).toBe(0);
+
+      const commitRows = database
+        .query("SELECT sha, authored_at FROM gh_commits WHERE repo = ?")
+        .all("Mosaicstg/LiUNA-Campaigns") as { sha: string; authored_at: string }[];
+      expect(commitRows.length).toBe(2);
+      for (const row of commitRows) {
+        expect(row.authored_at.endsWith("Z")).toBe(true);
+      }
+
+      const secondSummary = await collector.sync(database, config, {});
+      expect(secondSummary.inserted).toBe(0);
+      expect(secondSummary.deleted).toBe(0);
+
+      database.close();
+    } finally {
+      rmSync(homeDirectory, { recursive: true, force: true });
+      rmSync(sourceDirectory, { recursive: true, force: true });
+    }
+  });
+
   test("discovers, mirrors, logs commits, records PRs, and is idempotent", async () => {
     const homeDirectory = mkdtempSync(join(tmpdir(), "tempad-home-"));
     const sourceDirectory = await buildRepository([
@@ -273,6 +324,267 @@ describe("github collector", () => {
 
       const collector = createGithubCollector({ fetch: alwaysRateLimited, runner: noopRunner });
       await expect(collector.sync(database, config, {})).rejects.toThrow(/rate limit/i);
+
+      database.close();
+    } finally {
+      rmSync(homeDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test("a repo discovered only via reviewed-by search is still mirrored and its commits collected", async () => {
+    const homeDirectory = mkdtempSync(join(tmpdir(), "tempad-home-"));
+    const sourceDirectory = await buildRepository([
+      {
+        message: "reviewed repo commit",
+        authorName: "Someone Else",
+        authorEmail: "someone@example.com",
+        date: "2026-09-02T10:00:00-03:00",
+        files: { "x.md": "x" },
+      },
+    ]);
+
+    try {
+      const dbPath = join(homeDirectory, "tempad.db");
+      const database = openDatabase(dbPath);
+      const config = { ...baseConfig(homeDirectory), gitAuthorEmails: ["someone@example.com"] };
+
+      const fetchImpl: typeof fetch = (async (input: string | URL | Request) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/search/commits")) {
+          return jsonResponse({ total_count: 0, items: [] });
+        }
+        if (url.includes("reviewed-by")) {
+          return jsonResponse(loadFixture("search-issues-reviewed-only-repo.json"));
+        }
+        if (url.includes("/search/issues")) {
+          return jsonResponse({ total_count: 0, items: [] });
+        }
+        if (url.includes("/pulls")) {
+          return jsonResponse(loadFixture("pulls-only-reviewed.json"));
+        }
+        return jsonResponse({ items: [], total_count: 0 });
+      }) as typeof fetch;
+
+      const runner = makeRunner({ source: sourceDirectory });
+      const collector = createGithubCollector({ fetch: fetchImpl, runner });
+
+      const summary = await collector.sync(database, config, {});
+
+      expect(summary.warnings).toEqual([]);
+
+      const repoRow = database
+        .query("SELECT full_name, mirrored_at FROM gh_repos WHERE full_name = ?")
+        .get("Mosaicstg/only-reviewed") as { full_name: string; mirrored_at: string | null } | null;
+      expect(repoRow?.mirrored_at).not.toBeNull();
+
+      const commitRows = database
+        .query("SELECT sha FROM gh_commits WHERE repo = ?")
+        .all("Mosaicstg/only-reviewed") as { sha: string }[];
+      expect(commitRows.length).toBe(1);
+
+      const pullRequestRows = database
+        .query("SELECT number, role FROM gh_pull_requests WHERE repo = ?")
+        .all("Mosaicstg/only-reviewed") as { number: number; role: string }[];
+      expect(pullRequestRows).toEqual([{ number: 7, role: "reviewer" }]);
+
+      database.close();
+    } finally {
+      rmSync(homeDirectory, { recursive: true, force: true });
+      rmSync(sourceDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test("one repo failing to mirror does not block commits/PRs for other repos, and is warned", async () => {
+    const homeDirectory = mkdtempSync(join(tmpdir(), "tempad-home-"));
+    const sourceDirectory = await buildRepository([
+      {
+        message: "good repo commit",
+        authorName: "Saulo Vallory",
+        authorEmail: "me@saulo.engineer",
+        date: "2026-09-02T10:00:00-03:00",
+        files: { "readme.md": "hello" },
+      },
+    ]);
+
+    try {
+      const dbPath = join(homeDirectory, "tempad.db");
+      const database = openDatabase(dbPath);
+      const config = baseConfig(homeDirectory);
+
+      const fetchImpl: typeof fetch = (async (input: string | URL | Request) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/search/commits")) {
+          return jsonResponse({
+            total_count: 2,
+            items: [
+              { repository: { full_name: "Mosaicstg/broken-repo" } },
+              { repository: { full_name: "Mosaicstg/LiUNA-Campaigns" } },
+            ],
+          });
+        }
+        if (url.includes("reviewed-by")) return jsonResponse({ total_count: 0, items: [] });
+        if (url.includes("/search/issues"))
+          return jsonResponse(loadFixture("search-issues-authored.json"));
+        if (url.includes("/pulls")) return jsonResponse(loadFixture("pulls.json"));
+        return jsonResponse({ items: [], total_count: 0 });
+      }) as typeof fetch;
+
+      const runner: CommandRunner = {
+        async run(argv, cwd) {
+          if (
+            argv[0] === "git" &&
+            argv[1] === "clone" &&
+            argv.some((arg) => arg.includes("broken-repo.git"))
+          ) {
+            return { code: 1, stdout: "", stderr: "simulated clone failure" };
+          }
+          return makeRunner({ source: sourceDirectory }).run(argv, cwd);
+        },
+      };
+
+      const collector = createGithubCollector({ fetch: fetchImpl, runner });
+
+      await expect(collector.sync(database, config, {})).rejects.toThrow(/could not be mirrored/i);
+
+      const commitRows = database
+        .query("SELECT sha FROM gh_commits WHERE repo = ?")
+        .all("Mosaicstg/LiUNA-Campaigns") as { sha: string }[];
+      expect(commitRows.length).toBe(1);
+
+      const pullRequestRows = database
+        .query("SELECT number FROM gh_pull_requests WHERE repo = ?")
+        .all("Mosaicstg/LiUNA-Campaigns") as { number: number }[];
+      expect(pullRequestRows).toEqual([{ number: 42 }]);
+
+      const brokenRepoRow = database
+        .query("SELECT mirrored_at FROM gh_repos WHERE full_name = ?")
+        .get("Mosaicstg/broken-repo") as { mirrored_at: string | null } | null;
+      expect(brokenRepoRow?.mirrored_at).toBeNull();
+
+      database.close();
+    } finally {
+      rmSync(homeDirectory, { recursive: true, force: true });
+      rmSync(sourceDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test("gh CLI fallback retries on secondary rate limit stderr, then succeeds", async () => {
+    const homeDirectory = mkdtempSync(join(tmpdir(), "tempad-home-"));
+    try {
+      const dbPath = join(homeDirectory, "tempad.db");
+      const database = openDatabase(dbPath);
+      const config = { ...baseConfig(homeDirectory), ghToken: undefined };
+
+      let searchCommitsCalls = 0;
+      const runner: CommandRunner = {
+        async run(argv) {
+          const fullPath = argv[2] ?? "";
+          if (typeof fullPath === "string" && fullPath.includes("/search/commits")) {
+            searchCommitsCalls++;
+            if (searchCommitsCalls <= 2) {
+              return {
+                code: 1,
+                stdout: "",
+                stderr: "gh: You have exceeded a secondary rate limit. (HTTP 403)",
+              };
+            }
+            return {
+              code: 0,
+              stdout: JSON.stringify(loadFixture("search-commits.json")),
+              stderr: "",
+            };
+          }
+          if (typeof fullPath === "string" && fullPath.includes("reviewed-by")) {
+            return {
+              code: 0,
+              stdout: JSON.stringify(loadFixture("search-issues-reviewed.json")),
+              stderr: "",
+            };
+          }
+          if (typeof fullPath === "string" && fullPath.includes("/search/issues")) {
+            return {
+              code: 0,
+              stdout: JSON.stringify(loadFixture("search-issues-authored.json")),
+              stderr: "",
+            };
+          }
+          if (typeof fullPath === "string" && fullPath.includes("/pulls")) {
+            return { code: 0, stdout: JSON.stringify(loadFixture("pulls.json")), stderr: "" };
+          }
+          return { code: 0, stdout: JSON.stringify({ items: [], total_count: 0 }), stderr: "" };
+        },
+      };
+
+      const noopFetch: typeof fetch = (async () =>
+        jsonResponse({ items: [], total_count: 0 })) as unknown as typeof fetch;
+      const collector = createGithubCollector({ fetch: noopFetch, runner, ghCliRetryDelayMs: 0 });
+
+      const summary = await collector.sync(database, config, {});
+
+      expect(searchCommitsCalls).toBe(3);
+      expect(summary.source).toBe("github");
+
+      database.close();
+    } finally {
+      rmSync(homeDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test("gh CLI fallback retries when a call succeeds (code 0) but returns unparseable output", async () => {
+    const homeDirectory = mkdtempSync(join(tmpdir(), "tempad-home-"));
+    try {
+      const dbPath = join(homeDirectory, "tempad.db");
+      const database = openDatabase(dbPath);
+      const config = { ...baseConfig(homeDirectory), ghToken: undefined };
+
+      let pullsCalls = 0;
+      const runner: CommandRunner = {
+        async run(argv) {
+          const fullPath = argv[2] ?? "";
+          if (typeof fullPath === "string" && fullPath.includes("/search/commits")) {
+            return {
+              code: 0,
+              stdout: JSON.stringify(loadFixture("search-commits.json")),
+              stderr: "",
+            };
+          }
+          if (typeof fullPath === "string" && fullPath.includes("reviewed-by")) {
+            return {
+              code: 0,
+              stdout: JSON.stringify(loadFixture("search-issues-reviewed.json")),
+              stderr: "",
+            };
+          }
+          if (typeof fullPath === "string" && fullPath.includes("/search/issues")) {
+            return {
+              code: 0,
+              stdout: JSON.stringify(loadFixture("search-issues-authored.json")),
+              stderr: "",
+            };
+          }
+          if (typeof fullPath === "string" && fullPath.includes("/pulls")) {
+            pullsCalls++;
+            if (pullsCalls <= 2) {
+              return { code: 0, stdout: "", stderr: "" };
+            }
+            return { code: 0, stdout: JSON.stringify(loadFixture("pulls.json")), stderr: "" };
+          }
+          return { code: 0, stdout: JSON.stringify({ items: [], total_count: 0 }), stderr: "" };
+        },
+      };
+
+      const noopFetch: typeof fetch = (async () =>
+        jsonResponse({ items: [], total_count: 0 })) as unknown as typeof fetch;
+      const collector = createGithubCollector({ fetch: noopFetch, runner, ghCliRetryDelayMs: 0 });
+
+      const summary = await collector.sync(database, config, {});
+
+      expect(pullsCalls).toBe(3);
+      const pullRequestRows = database
+        .query("SELECT number FROM gh_pull_requests WHERE repo = ?")
+        .all("Mosaicstg/LiUNA-Campaigns") as { number: number }[];
+      expect(pullRequestRows).toEqual([{ number: 42 }]);
+      expect(summary.warnings).toEqual([]);
 
       database.close();
     } finally {
