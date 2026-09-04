@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDatabase } from "../src/db/database.ts";
-import { queryMondayItems } from "../src/report/queries.ts";
-import { TIME_ZONE } from "./fixtures/report-golden/seed.ts";
+import { queryCommits, queryMondayItems } from "../src/report/queries.ts";
+import { REPORT_CONFIG, seedReportFixtures, TIME_ZONE } from "./fixtures/report-golden/seed.ts";
 
 let dir: string;
 
@@ -133,6 +133,58 @@ describe("queryMondayItems", () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0]?.id).toBe(4);
+    database.close();
+  });
+
+  test("the org filter is case-insensitive", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    insertItem(database, {
+      id: 6,
+      boardName: "Beta Project",
+      updatedAt: "2026-09-01T12:00:00.000Z",
+    });
+
+    const rows = queryMondayItems(database, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+      timeZone: TIME_ZONE,
+      org: "MONDAY",
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(6);
+    database.close();
+  });
+});
+
+describe("queryCommits", () => {
+  test("the org filter matches case-insensitively (--org Mosaic behaves like --org mosaic)", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    const upper = queryCommits(database, {
+      from: "2026-08-31",
+      to: "2026-09-02",
+      timeZone: REPORT_CONFIG.tz,
+      org: "ACME",
+    });
+    const mixed = queryCommits(database, {
+      from: "2026-08-31",
+      to: "2026-09-02",
+      timeZone: REPORT_CONFIG.tz,
+      org: "Acme",
+    });
+    const lower = queryCommits(database, {
+      from: "2026-08-31",
+      to: "2026-09-02",
+      timeZone: REPORT_CONFIG.tz,
+      org: "acme",
+    });
+
+    expect(upper.length).toBeGreaterThan(0);
+    expect(upper.length).toBe(lower.length);
+    expect(mixed.length).toBe(lower.length);
+
     database.close();
   });
 });

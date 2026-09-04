@@ -101,7 +101,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
         let untitledMessages = 0;
         for (const session of bySession.values()) {
           if (isNamedTitleSource(session.titleSource)) {
-            parts.push(`${session.title as string} (${session.count} messages)`);
+            parts.push(`${session.title ?? "(untitled session)"} (${session.count} messages)`);
           } else {
             untitledCount += 1;
             untitledMessages += session.count;

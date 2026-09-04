@@ -132,6 +132,26 @@ describe("dailyReport", () => {
     database.close();
   });
 
+  test("a session with both title and title_source NULL renders as (untitled session), never the string 'null'", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(
+      `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, path_meta, title, title_source, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+       VALUES ('session-no-title', '~/.claude', 'dir', '/tmp/session-no-title.jsonl', NULL, 'acme', 'widgets', NULL, NULL, NULL, NULL, '2026-09-01T12:30:00.000Z', '2026-09-01T12:35:00.000Z', 2, 0, '[]', 'test-host', '2026-09-01T12:35:00.000Z')`,
+    );
+
+    const output = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+    });
+
+    expect(output).toContain("(untitled session), 09:30 to 09:35, 2 messages");
+    expect(output).not.toContain("- null,");
+
+    database.close();
+  });
+
   test("rebased copies of the same commit (same repo/subject/authored_at, different sha) print once with an (xN) suffix", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     seedReportFixtures(database);
