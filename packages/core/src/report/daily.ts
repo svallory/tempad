@@ -89,7 +89,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
         const startTime = localTime(session.startedAt, timeZone);
         const endTime = localTime(session.endedAt, timeZone);
         lines.push(
-          `- ${session.title as string}, ${startTime} to ${endTime}, ${session.messageCount} messages`,
+          `- ${session.title ?? "(untitled session)"}, ${startTime} to ${endTime}, ${session.messageCount} messages`,
         );
       }
       if (untitledSessions.length > 0) {
