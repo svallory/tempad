@@ -19,13 +19,24 @@ function projectKeyString(key: ProjectKey): string {
   return `${key.org}/${key.project}`;
 }
 
+// `gh_commits.branches` holds the short name of every ref containing the commit,
+// which in a mirror clone includes tags and GitHub's `pull/N/head` refs. Neither
+// names a branch someone worked on, so they are only used when nothing else is
+// left -- a commit whose source branch was deleted after its PR merged still has
+// to report something.
+function isWorkingBranch(ref: string): boolean {
+  return !ref.startsWith("pull/") && !ref.startsWith("tags/");
+}
+
 function inferBranch(branchesJson: string): string {
   const branches = JSON.parse(branchesJson) as string[];
-  const nonDefault = branches.filter((branch) => branch !== "main" && branch !== "dev");
-  const candidates = nonDefault.length > 0 ? nonDefault : branches;
-  return candidates.reduce(
+  const working = branches.filter(isWorkingBranch);
+  const candidates = working.length > 0 ? working : branches;
+  const nonDefault = candidates.filter((branch) => branch !== "main" && branch !== "dev");
+  const preferred = nonDefault.length > 0 ? nonDefault : candidates;
+  return preferred.reduce(
     (longest, current) => (current.length > longest.length ? current : longest),
-    candidates[0] ?? "unknown",
+    preferred[0] ?? "unknown",
   );
 }
 

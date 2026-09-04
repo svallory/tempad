@@ -67,6 +67,53 @@ describe("projectReport", () => {
     database.close();
   });
 
+  test("branch inference ignores pull/N/head and tag refs when a real branch is present", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    // `branches` holds every ref containing the commit, so a mirror clone contributes
+    // `pull/N/head` refs and tags. Both are longer than the real branch name here, so the
+    // longest-wins rule would pick one of them if they were not filtered out first.
+    database.exec(
+      `INSERT INTO gh_commits (sha, repo, branches, author_name, author_email, authored_at, committed_at, subject, body, files_changed, insertions, deletions)
+       VALUES ('ccccccc3333333333333333333333333333333', 'acme/widgets', '["fix/x", "pull/1234/head", "tags/v1.2.3-release"]', 'Octo Cat', 'octocat@example.com', '2026-09-01T15:30:00.000Z', '2026-09-01T15:30:00.000Z', 'fix(widgets): narrow ref set', NULL, 1, 1, 1)`,
+    );
+
+    const output = projectReport.render(database, REPORT_CONFIG, {
+      from: "2026-08-31",
+      to: "2026-09-02",
+      project: "widgets",
+    });
+
+    expect(output).toContain("| fix/x |");
+    expect(output).not.toContain("pull/1234/head");
+    expect(output).not.toContain("tags/v1.2.3-release");
+
+    database.close();
+  });
+
+  test("branch inference falls back to a pull ref when no real branch contains the commit", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    // A merged PR whose source branch was deleted leaves the commit on `pull/N/head`
+    // only. The row still has to name something, so the pull ref is used as a fallback.
+    database.exec(
+      `INSERT INTO gh_commits (sha, repo, branches, author_name, author_email, authored_at, committed_at, subject, body, files_changed, insertions, deletions)
+       VALUES ('ddddddd4444444444444444444444444444444', 'acme/widgets', '["pull/77/head"]', 'Octo Cat', 'octocat@example.com', '2026-09-01T16:30:00.000Z', '2026-09-01T16:30:00.000Z', 'fix(widgets): orphaned pull ref', NULL, 1, 1, 1)`,
+    );
+
+    const output = projectReport.render(database, REPORT_CONFIG, {
+      from: "2026-08-31",
+      to: "2026-09-02",
+      project: "widgets",
+    });
+
+    expect(output).toContain("| pull/77/head |");
+
+    database.close();
+  });
+
   test("an empty range still renders a title line and a no-evidence line, never an empty string", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     // no seed: empty database
