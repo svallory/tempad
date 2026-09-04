@@ -106,13 +106,22 @@ export async function logCommits(
   );
 }
 
-export async function branchesContaining(
+// Reachability policy: collection runs `git log --all`, which traverses EVERY ref
+// a `git clone --mirror` fetched -- branches, tags, and GitHub's `refs/pull/N/head`.
+// `git branch -a --contains` only reports branches, so a commit living solely on a
+// PR ref looked unreachable to reconcile and was deleted right after being inserted
+// (the 85-sha delete/reinsert flap: e.g. pubflow 865bbe7 is contained only by
+// refs/pull/68/head). We keep those commits -- a pushed PR branch is real authored
+// work even after the source branch is gone -- so reachability is decided with
+// `git for-each-ref --contains`, matching the full ref set `--all` collects.
+// `branches` therefore stores short names of all containing refs, not just branches.
+export async function refsContaining(
   mirrorDirectory: string,
   sha: string,
   runner: CommandRunner,
 ): Promise<string[]> {
   const result = await runner.run(
-    ["git", "branch", "-a", "--contains", sha, "--format=%(refname:short)"],
+    ["git", "for-each-ref", "--contains", sha, "--format=%(refname:short)"],
     mirrorDirectory,
   );
   if (result.code !== 0) return [];

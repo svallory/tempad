@@ -6,7 +6,11 @@ import type { CommandRunner } from "../src/collect/github/request.ts";
 import { createGithubCollector } from "../src/collect/github.ts";
 import type { Config } from "../src/config/env.ts";
 import { openDatabase } from "../src/db/database.ts";
-import { addCommit, buildRepository } from "./fixtures/git/build-repository.ts";
+import {
+  addCommit,
+  addCommitOnDetachedRef,
+  buildRepository,
+} from "./fixtures/git/build-repository.ts";
 
 const FIXTURES_DIR = join(import.meta.dir, "fixtures/github");
 
@@ -133,6 +137,65 @@ describe("github collector", () => {
       const secondSummary = await collector.sync(database, config, {});
       expect(secondSummary.inserted).toBe(0);
       expect(secondSummary.deleted).toBe(0);
+
+      database.close();
+    } finally {
+      rmSync(homeDirectory, { recursive: true, force: true });
+      rmSync(sourceDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test("a commit reachable only from refs/pull/N/head is kept and does not flap", async () => {
+    const homeDirectory = mkdtempSync(join(tmpdir(), "tempad-home-"));
+    const sourceDirectory = await buildRepository([
+      {
+        message: "commit on main",
+        authorName: "Saulo Vallory",
+        authorEmail: "me@saulo.engineer",
+        date: "2026-09-02T10:00:00-03:00",
+        files: { "readme.md": "hello" },
+      },
+    ]);
+
+    try {
+      // Reachable only from refs/pull/1/head: `git log --all` sees it, but
+      // `git branch -a --contains` does not. Before the reachability fix, this
+      // commit was inserted by collection and deleted by reconcile every run.
+      const pullRequestSha = await addCommitOnDetachedRef(sourceDirectory, "refs/pull/1/head", {
+        message: "commit only on a PR ref",
+        authorName: "Saulo Vallory",
+        authorEmail: "me@saulo.engineer",
+        date: "2026-09-03T11:00:00-03:00",
+        files: { "pull-request.md": "from a pull request" },
+      });
+
+      const dbPath = join(homeDirectory, "tempad.db");
+      const database = openDatabase(dbPath);
+      const config = baseConfig(homeDirectory);
+      const collector = createGithubCollector({
+        fetch: makeFetch(),
+        runner: makeRunner({ source: sourceDirectory }),
+      });
+
+      const firstSummary = await collector.sync(database, config, {});
+      expect(firstSummary.deleted).toBe(0);
+
+      const storedRow = database
+        .query("SELECT branches FROM gh_commits WHERE sha = ?")
+        .get(pullRequestSha) as { branches: string } | null;
+      expect(storedRow).not.toBeNull();
+      // `branches` holds short ref names from `for-each-ref --format=%(refname:short)`.
+      expect(JSON.parse(storedRow?.branches ?? "[]")).toContain("pull/1/head");
+
+      const secondSummary = await collector.sync(database, config, {});
+      expect(secondSummary.inserted).toBe(0);
+      expect(secondSummary.updated).toBe(0);
+      expect(secondSummary.deleted).toBe(0);
+
+      const stillStored = database
+        .query("SELECT sha FROM gh_commits WHERE sha = ?")
+        .get(pullRequestSha);
+      expect(stillStored).not.toBeNull();
 
       database.close();
     } finally {
