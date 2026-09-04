@@ -24,6 +24,7 @@ export interface SessionRow {
   org: string;
   project: string;
   title: string | null;
+  titleSource: string | null;
   gitBranch: string | null;
   startedAt: string;
   endedAt: string;
@@ -35,6 +36,7 @@ export interface SessionMessageHourRow {
   org: string;
   project: string;
   title: string | null;
+  titleSource: string | null;
   ts: string;
   count: number;
 }
@@ -63,14 +65,6 @@ export interface PullRequestRow {
   closedAt: string | null;
 }
 
-export function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
 function toDayBounds(range: DateRange): { start: string; end: string } {
   const fromBounds = localDayBoundsUtc(range.from, range.timeZone);
   const toBounds = localDayBoundsUtc(range.to, range.timeZone);
@@ -87,30 +81,22 @@ export function queryCommits(database: Database, range: DateRange): CommitRow[] 
     params.push(range.org);
   }
   if (range.project) {
-    conditions.push("LOWER(r.full_name) LIKE ?");
-    params.push(`%/${range.project.toLowerCase()}`);
+    conditions.push("LOWER(r.project) = ?");
+    params.push(range.project.toLowerCase());
   }
 
   const rows = database
     .query(
-      `SELECT c.sha as sha, c.repo as repo, r.org as org, c.authored_at as authoredAt,
-              c.subject as subject, c.branches as branches
+      `SELECT c.sha as sha, c.repo as repo, r.org as org, r.project as project,
+              c.authored_at as authoredAt, c.subject as subject, c.branches as branches
        FROM gh_commits c
        JOIN gh_repos r ON r.full_name = c.repo
        WHERE ${conditions.join(" AND ")}
        ORDER BY c.authored_at ASC`,
     )
-    .all(...params) as Array<Omit<CommitRow, "project">>;
+    .all(...params) as CommitRow[];
 
-  return rows.map((row) => ({
-    ...row,
-    project: repoNameFromFullName(row.repo).toLowerCase(),
-  }));
-}
-
-function repoNameFromFullName(fullName: string): string {
-  const slashIndex = fullName.lastIndexOf("/");
-  return slashIndex === -1 ? fullName : fullName.slice(slashIndex + 1);
+  return rows;
 }
 
 export function querySessions(database: Database, range: DateRange): SessionRow[] {
@@ -130,7 +116,7 @@ export function querySessions(database: Database, range: DateRange): SessionRow[
   return database
     .query(
       `SELECT s.id as id, s.org as org, s.project as project, s.title as title,
-              s.git_branch as gitBranch,
+              s.title_source as titleSource, s.git_branch as gitBranch,
               s.started_at as startedAt, s.ended_at as endedAt, s.message_count as messageCount
        FROM claude_sessions s
        WHERE ${conditions.join(" AND ")}
@@ -159,7 +145,7 @@ export function querySessionMessagesByHour(
   return database
     .query(
       `SELECT s.id as sessionId, s.org as org, s.project as project, s.title as title,
-              m.ts as ts, 1 as count
+              s.title_source as titleSource, m.ts as ts, 1 as count
        FROM claude_messages m
        JOIN claude_sessions s ON s.id = m.session_id
        WHERE ${conditions.join(" AND ")}
@@ -178,25 +164,27 @@ export function queryMondayItems(database: Database, range: DateRange): MondayIt
   ];
   const params: (string | number)[] = [endDay, range.from, start, end];
 
+  if (range.org) {
+    conditions.push("i.org = ?");
+    params.push(range.org);
+  }
+  if (range.project) {
+    conditions.push("LOWER(i.project) = ?");
+    params.push(range.project.toLowerCase());
+  }
+
   const rows = database
     .query(
       `SELECT i.id as id, i.board_name as boardName, i.name as name, i.status as status,
               i.timeline_start as timelineStart, i.timeline_end as timelineEnd,
-              i.updated_at as updatedAt
+              i.updated_at as updatedAt, i.org as org, i.project as project
        FROM monday_items i
        WHERE ${conditions.join(" AND ")}
        ORDER BY i.updated_at ASC`,
     )
-    .all(...params) as Array<Omit<MondayItemRow, "org" | "project">>;
+    .all(...params) as MondayItemRow[];
 
-  return rows
-    .map((row) => ({
-      ...row,
-      org: "monday",
-      project: slugify(row.boardName),
-    }))
-    .filter((row) => (range.project ? row.project === range.project.toLowerCase() : true))
-    .filter((row) => (range.org ? row.org === range.org : true));
+  return rows;
 }
 
 export function queryPullRequests(database: Database, range: DateRange): PullRequestRow[] {
@@ -211,23 +199,21 @@ export function queryPullRequests(database: Database, range: DateRange): PullReq
     params.push(range.org);
   }
   if (range.project) {
-    conditions.push("LOWER(r.full_name) LIKE ?");
-    params.push(`%/${range.project.toLowerCase()}`);
+    conditions.push("LOWER(r.project) = ?");
+    params.push(range.project.toLowerCase());
   }
 
   const rows = database
     .query(
-      `SELECT p.repo as repo, r.org as org, p.number as number, p.title as title, p.state as state,
+      `SELECT p.repo as repo, r.org as org, r.project as project, p.number as number,
+              p.title as title, p.state as state,
               p.created_at as createdAt, p.merged_at as mergedAt, p.closed_at as closedAt
        FROM gh_pull_requests p
        JOIN gh_repos r ON r.full_name = p.repo
        WHERE ${conditions.join(" AND ")}
        ORDER BY p.created_at ASC`,
     )
-    .all(...params) as Array<Omit<PullRequestRow, "project">>;
+    .all(...params) as PullRequestRow[];
 
-  return rows.map((row) => ({
-    ...row,
-    project: repoNameFromFullName(row.repo).toLowerCase(),
-  }));
+  return rows;
 }

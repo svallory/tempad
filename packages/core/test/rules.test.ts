@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadRules, resolvePath } from "../src/config/rules.ts";
+import { loadRules, resolveBoard, resolvePath, resolveRepository } from "../src/config/rules.ts";
 
 function writeToml(content: string): string {
   const path = join(tmpdir(), `tempad-rules-${Math.random().toString(36).slice(2)}.toml`);
@@ -87,6 +87,100 @@ project = "second-project"
     const path = writeToml(`
 [[projects]]
 pattern = "~/work/:rest*"
+`);
+    expect(() => loadRules(path)).toThrow();
+  });
+});
+
+describe("repositories", () => {
+  test("exact case-insensitive match on full_name, extra keys become meta", () => {
+    const path = writeToml(`
+[[repositories]]
+full_name = "Mosaicstg/LiUNA-Campaigns"
+org = "mosaic"
+project = "campaigns"
+
+[[repositories]]
+full_name = "Mosaicstg/liuna-campaigns-field"
+org = "mosaic"
+project = "campaigns"
+app = "field"
+`);
+    const rules = loadRules(path);
+
+    expect(resolveRepository(rules, "mosaicstg/liuna-campaigns")).toEqual({
+      org: "mosaic",
+      project: "campaigns",
+      meta: {},
+    });
+    expect(resolveRepository(rules, "Mosaicstg/LIUNA-CAMPAIGNS-FIELD")).toEqual({
+      org: "mosaic",
+      project: "campaigns",
+      meta: { app: "field" },
+    });
+  });
+
+  test("unmatched repository falls back to lowercase owner/repo", () => {
+    const path = writeToml(`
+[[repositories]]
+full_name = "Mosaicstg/LiUNA-Campaigns"
+org = "mosaic"
+project = "campaigns"
+`);
+    const rules = loadRules(path);
+    expect(resolveRepository(rules, "SomeOrg/SomeRepo")).toEqual({
+      org: "someorg",
+      project: "somerepo",
+      meta: {},
+    });
+  });
+
+  test("repository entry missing org or project throws at load time", () => {
+    const path = writeToml(`
+[[repositories]]
+full_name = "Mosaicstg/LiUNA-Campaigns"
+project = "campaigns"
+`);
+    expect(() => loadRules(path)).toThrow();
+  });
+});
+
+describe("boards", () => {
+  test("exact case-insensitive match on name", () => {
+    const path = writeToml(`
+[[boards]]
+name = "NJHCQI"
+org = "mosaic"
+project = "njhcqi"
+`);
+    const rules = loadRules(path);
+    expect(resolveBoard(rules, "njhcqi")).toEqual({
+      org: "mosaic",
+      project: "njhcqi",
+      meta: {},
+    });
+  });
+
+  test("unmatched board falls back to org=monday, project=slug", () => {
+    const path = writeToml(`
+[[boards]]
+name = "NJHCQI"
+org = "mosaic"
+project = "njhcqi"
+`);
+    const rules = loadRules(path);
+    expect(resolveBoard(rules, "My Cool Board!")).toEqual({
+      org: "monday",
+      project: "my-cool-board",
+      meta: {},
+    });
+  });
+
+  test("board entry missing org or project throws at load time", () => {
+    const path = writeToml(`
+[[boards]]
+name = "NJHCQI"
+project = "njhcqi"
 `);
     expect(() => loadRules(path)).toThrow();
   });

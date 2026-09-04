@@ -17,6 +17,27 @@ afterEach(() => {
 });
 
 describe("projectReport", () => {
+  test("a project with sessions but no commits or Monday items prints no evidence, not an empty table", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(
+      `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, path_meta, title, title_source, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+       VALUES ('session-9', '~/.claude', 'dir', '/tmp/session-9.jsonl', NULL, 'acme', 'empty-project', NULL, 'poking around', 'first-message', NULL, '2026-09-01T12:00:00.000Z', '2026-09-01T12:05:00.000Z', 1, 0, '[]', 'test-host', '2026-09-01T12:05:00.000Z')`,
+    );
+
+    const output = projectReport.render(database, REPORT_CONFIG, {
+      from: "2026-08-31",
+      to: "2026-09-02",
+      project: "empty-project",
+    });
+
+    expect(output).toContain("### acme/empty-project\n- no evidence");
+    expect(output).not.toContain("| task |");
+
+    database.close();
+  });
+
   test("matches golden output byte for byte", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     seedReportFixtures(database);

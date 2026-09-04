@@ -29,8 +29,8 @@ export const REPORT_CONFIG: Config = {
  */
 export function seedReportFixtures(database: Database): void {
   database.exec(
-    `INSERT INTO gh_repos (full_name, org, is_personal, default_branch, mirrored_at)
-     VALUES ('acme/widgets', 'acme', 0, 'main', '2026-09-01T00:00:00.000Z')`,
+    `INSERT INTO gh_repos (full_name, org, is_personal, default_branch, mirrored_at, project)
+     VALUES ('acme/widgets', 'acme', 0, 'main', '2026-09-01T00:00:00.000Z', 'widgets')`,
   );
 
   database.exec(
@@ -46,8 +46,8 @@ export function seedReportFixtures(database: Database): void {
   );
 
   database.exec(
-    `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, path_meta, title, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
-     VALUES ('session-1', '~/.claude', '-Users-octocat-work-acme-widgets', '/tmp/session-1.jsonl', '/Users/octocat/work/acme/widgets', 'acme', 'widgets', NULL, 'Polish report output', 'feature/report-polish', '2026-09-01T12:15:00.000Z', '2026-09-01T13:45:00.000Z', 3, 1, '["sonnet"]', 'test-host', '2026-09-01T13:45:00.000Z')`,
+    `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, path_meta, title, title_source, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+     VALUES ('session-1', '~/.claude', '-Users-octocat-work-acme-widgets', '/tmp/session-1.jsonl', '/Users/octocat/work/acme/widgets', 'acme', 'widgets', NULL, 'Polish report output', 'custom-title', 'feature/report-polish', '2026-09-01T12:15:00.000Z', '2026-09-01T13:45:00.000Z', 3, 1, '["sonnet"]', 'test-host', '2026-09-01T13:45:00.000Z')`,
   );
 
   database.exec(
@@ -59,7 +59,7 @@ export function seedReportFixtures(database: Database): void {
   );
 
   database.exec(
-    `INSERT INTO monday_items (id, board_id, board_name, group_name, name, status, assignees, timeline_start, timeline_end, time_tracked_seconds, created_at, updated_at, raw)
-     VALUES (901, 1, 'Beta Project', 'In Progress', 'Ship report polish', 'Working on it', '[{"id":1,"name":"Octo Cat"}]', '2026-09-01', '2026-09-02', 3600, '2026-08-30T00:00:00.000Z', '2026-09-01T16:00:00.000Z', '{}')`,
+    `INSERT INTO monday_items (id, board_id, board_name, group_name, name, status, assignees, timeline_start, timeline_end, time_tracked_seconds, created_at, updated_at, raw, org, project)
+     VALUES (901, 1, 'Beta Project', 'In Progress', 'Ship report polish', 'Working on it', '[{"id":1,"name":"Octo Cat"}]', '2026-09-01', '2026-09-02', 3600, '2026-08-30T00:00:00.000Z', '2026-09-01T16:00:00.000Z', '{}', 'monday', 'beta-project')`,
   );
 }

@@ -96,15 +96,25 @@ function render(database: Database, config: Config, options: ReportOptions): str
           })
         : branchRows(projectCommits, projectSessions);
 
-    const lines = [
-      heading(3, projectKeyString(key)),
-      "Elapsed is an upper bound.",
-      "",
-      table(
-        ["task", "first evidence", "last evidence", "elapsed (upper bound)", "commits", "sessions"],
-        rows,
-      ),
-    ];
+    const lines =
+      rows.length > 0
+        ? [
+            heading(3, projectKeyString(key)),
+            "Elapsed is an upper bound.",
+            "",
+            table(
+              [
+                "task",
+                "first evidence",
+                "last evidence",
+                "elapsed (upper bound)",
+                "commits",
+                "sessions",
+              ],
+              rows,
+            ),
+          ]
+        : [heading(3, projectKeyString(key)), "- no evidence"];
     sections.push(lines.join("\n"));
   }
 

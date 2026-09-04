@@ -53,8 +53,8 @@ describe("dailyReport", () => {
     // No timeline; the fallback is updated_at, which must bucket by local day
     // (America/Sao_Paulo, UTC-3): 2026-09-01T01:00Z is 2026-08-31 22:00 local.
     database.exec(
-      `INSERT INTO monday_items (id, board_id, board_name, group_name, name, status, assignees, timeline_start, timeline_end, time_tracked_seconds, created_at, updated_at, raw)
-       VALUES (902, 1, 'Beta Project', NULL, 'Late-night update', 'Done', '[]', NULL, NULL, NULL, '2026-09-01T01:00:00.000Z', '2026-09-01T01:00:00.000Z', '{}')`,
+      `INSERT INTO monday_items (id, board_id, board_name, group_name, name, status, assignees, timeline_start, timeline_end, time_tracked_seconds, created_at, updated_at, raw, org, project)
+       VALUES (902, 1, 'Beta Project', NULL, 'Late-night update', 'Done', '[]', NULL, NULL, NULL, '2026-09-01T01:00:00.000Z', '2026-09-01T01:00:00.000Z', '{}', 'monday', 'beta-project')`,
     );
 
     const output = dailyReport.render(database, REPORT_CONFIG, {
@@ -85,6 +85,29 @@ describe("dailyReport", () => {
 
     expect(output).toBe("# daily report 2026-09-05 to 2026-09-05\n\nno evidence");
     expect(output.length).toBeGreaterThan(0);
+
+    database.close();
+  });
+
+  test("named sessions are listed individually, unnamed sessions roll up into one line", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(
+      `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, path_meta, title, title_source, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+       VALUES
+       ('session-2', '~/.claude', 'dir', '/tmp/session-2.jsonl', NULL, 'acme', 'widgets', NULL, 'do the thing', 'first-message', NULL, '2026-09-01T12:00:00.000Z', '2026-09-01T12:05:00.000Z', 2, 0, '[]', 'test-host', '2026-09-01T12:05:00.000Z'),
+       ('session-3', '~/.claude', 'dir', '/tmp/session-3.jsonl', NULL, 'acme', 'widgets', NULL, NULL, 'none', NULL, '2026-09-01T12:10:00.000Z', '2026-09-01T12:12:00.000Z', 4, 0, '[]', 'test-host', '2026-09-01T12:12:00.000Z')`,
+    );
+
+    const output = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+    });
+
+    expect(output).toContain("Polish report output, 09:15 to 10:45, 3 messages");
+    expect(output).not.toContain("do the thing");
+    expect(output).toContain("- 2 untitled sessions (6 messages)");
 
     database.close();
   });
