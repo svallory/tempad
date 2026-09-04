@@ -89,6 +89,14 @@ function dispatchFetch(): typeof fetch {
           data: { boards: [{ items_page: { cursor: null, items: [] } }] },
         });
       }
+
+      if (boardId === "444") {
+        complexityAttempts++;
+        if (!hasFilter) {
+          throw new Error("board 444 should never be queried without the last-updated filter");
+        }
+        return jsonResponse(loadFixture("complexity-error-persistent"), 429);
+      }
     }
 
     throw new Error(`Unhandled query in test fetch mock: ${query}`);
@@ -151,6 +159,34 @@ describe("mondayCollector", () => {
     expect(notAssigned).toBeUndefined();
   });
 
+  test("extracts columns by type, not by column id (board 222 uses a differently-named people column)", async () => {
+    database
+      .query(
+        "INSERT INTO sync_state (source, last_sync_at, cursor) VALUES ('monday', '2026-08-01T00:00:00Z', NULL)",
+      )
+      .run();
+
+    await mondayCollector.sync(database, makeConfig(), { fetch: dispatchFetch() });
+
+    const boardsFixture = loadFixture("boards-page-1") as {
+      data: { boards: { id: string; columns: { id: string; type: string }[] }[] };
+    };
+    const board111People = boardsFixture.data.boards
+      .find((board) => board.id === "111")
+      ?.columns.find((column) => column.type === "people")?.id;
+    const board222People = boardsFixture.data.boards
+      .find((board) => board.id === "222")
+      ?.columns.find((column) => column.type === "people")?.id;
+    expect(board111People).toBe("person");
+    expect(board222People).toBe("people8");
+    expect(board111People).not.toBe(board222People);
+
+    const row = database.query("SELECT status FROM monday_items WHERE id = 2001").get() as {
+      status: string | null;
+    } | null;
+    expect(row?.status).toBe("To Do");
+  });
+
   test("falls back to unfiltered pull when the last-updated rule is rejected", async () => {
     database
       .query(
@@ -199,6 +235,46 @@ describe("mondayCollector", () => {
     expect(summary.warnings.length).toBe(0);
   });
 
+  test("propagates a retry-exhausted complexity error and fails the source (no fallback masking it)", async () => {
+    const config = makeConfig();
+
+    database
+      .query(
+        "INSERT INTO sync_state (source, last_sync_at, cursor) VALUES ('monday', '2026-08-01T00:00:00Z', NULL)",
+      )
+      .run();
+
+    const originalDispatch = dispatchFetch();
+    const fetchWithFourthBoard: typeof fetch = (async (url, init) => {
+      const parsed = JSON.parse(String((init as RequestInit).body)) as {
+        query: string;
+        variables: Record<string, unknown>;
+      };
+      if (parsed.query.includes("boards(limit:") && parsed.variables.page === 1) {
+        return jsonResponse({
+          data: {
+            boards: [{ id: "444", name: "Always Complex Board", columns: [] }],
+          },
+        });
+      }
+      if (parsed.query.includes("boards(limit:") && parsed.variables.page === 2) {
+        return jsonResponse({ data: { boards: [] } });
+      }
+      return originalDispatch(url, init);
+    }) as typeof fetch;
+
+    await expect(
+      mondayCollector.sync(database, config, { fetch: fetchWithFourthBoard }),
+    ).rejects.toThrow("Complexity budget exhausted");
+
+    expect(complexityAttempts).toBe(4);
+
+    const syncState = database
+      .query("SELECT last_sync_at FROM sync_state WHERE source = 'monday'")
+      .get() as { last_sync_at: string } | null;
+    expect(syncState?.last_sync_at).toBe("2026-08-01T00:00:00Z");
+  });
+
   test("idempotent: running twice yields the same row counts", async () => {
     await mondayCollector.sync(database, makeConfig(), { fetch: dispatchFetch() });
     const firstCount = (
@@ -219,6 +295,6 @@ describe("mondayCollector", () => {
 
     expect(secondCount).toBe(firstCount);
     expect(secondSummary.inserted).toBe(0);
-    expect(secondSummary.updated).toBe(3);
+    expect(secondSummary.updated).toBe(0);
   });
 });
