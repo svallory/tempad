@@ -47,6 +47,34 @@ describe("hourlyReport", () => {
     expect(output).toContain("Polish report output (1 messages)");
   });
 
+  test("untitled sessions in the same hour roll up into a single +N cell", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(
+      `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, path_meta, title, title_source, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+       VALUES
+       ('session-2', '~/.claude', 'dir', '/tmp/session-2.jsonl', NULL, 'acme', 'widgets', NULL, NULL, 'none', NULL, '2026-09-01T12:05:00.000Z', '2026-09-01T12:06:00.000Z', 1, 0, '[]', 'test-host', '2026-09-01T12:06:00.000Z'),
+       ('session-3', '~/.claude', 'dir', '/tmp/session-3.jsonl', NULL, 'acme', 'widgets', NULL, NULL, 'none', NULL, '2026-09-01T12:07:00.000Z', '2026-09-01T12:08:00.000Z', 2, 0, '[]', 'test-host', '2026-09-01T12:08:00.000Z')`,
+    );
+    database.exec(
+      `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, origin_kind, model, text_preview, tool_name, tokens_in, tokens_out)
+       VALUES
+       ('msg-4', 'session-2', '2026-09-01T12:05:30.000Z', 'user', 0, 'human', NULL, 'x', NULL, 5, NULL),
+       ('msg-5', 'session-3', '2026-09-01T12:07:30.000Z', 'user', 0, 'human', NULL, 'y', NULL, 5, NULL),
+       ('msg-6', 'session-3', '2026-09-01T12:07:45.000Z', 'assistant', 0, NULL, 'sonnet', 'z', NULL, NULL, 5)`,
+    );
+
+    const output = hourlyReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+    });
+
+    expect(output).toContain("+2 untitled (3 messages)");
+
+    database.close();
+  });
+
   test("a day with no evidence renders a single line", () => {
     const database = openDatabase(join(dir, "tempad.db"));
 

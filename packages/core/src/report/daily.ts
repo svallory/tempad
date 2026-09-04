@@ -76,11 +76,24 @@ function render(database: Database, config: Config, options: ReportOptions): str
       for (const commit of dayCommits.filter((row) => matchesKey(row, key))) {
         lines.push(`- ${commit.sha.slice(0, 7)} ${commit.subject} (${commit.repo})`);
       }
-      for (const session of daySessions.filter((row) => matchesKey(row, key))) {
+
+      const keySessions = daySessions.filter((row) => matchesKey(row, key));
+      const namedSessions = keySessions.filter((row) => isNamedTitle(row.titleSource));
+      const untitledSessions = keySessions.filter((row) => !isNamedTitle(row.titleSource));
+
+      for (const session of namedSessions) {
         const startTime = localTime(session.startedAt, timeZone);
         const endTime = localTime(session.endedAt, timeZone);
-        const title = session.title ?? "(untitled session)";
-        lines.push(`- ${title}, ${startTime} to ${endTime}, ${session.messageCount} messages`);
+        lines.push(
+          `- ${session.title as string}, ${startTime} to ${endTime}, ${session.messageCount} messages`,
+        );
+      }
+      if (untitledSessions.length > 0) {
+        const totalMessages = untitledSessions.reduce(
+          (sum, session) => sum + session.messageCount,
+          0,
+        );
+        lines.push(`- ${untitledSessions.length} untitled sessions (${totalMessages} messages)`);
       }
       for (const item of dayMondayItems.filter((row) => matchesKey(row, key))) {
         const timeline =
@@ -101,6 +114,10 @@ function render(database: Database, config: Config, options: ReportOptions): str
   if (sections.length === 1) sections.push("no evidence");
 
   return sections.join("\n\n");
+}
+
+function isNamedTitle(titleSource: string | null): boolean {
+  return titleSource === "custom-title" || titleSource === "agent-name";
 }
 
 function sessionTouchesDay(session: SessionRow, day: string, timeZone: string): boolean {

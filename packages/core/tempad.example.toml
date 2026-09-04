@@ -7,3 +7,22 @@ org = "personal"
 
 [[projects]]
 pattern = "/private/tmp/claude-501/-Users-svallory-work-:org-:project-:rest*"
+
+# Repository rules: map a GitHub repository to org/project so commits, PRs
+# and sessions line up in reports. Exact, case-insensitive match on full_name.
+# Unmatched repositories fall back to org = lowercase owner, project = lowercase repo name.
+# Any extra key becomes metadata JSON on the row.
+
+# [[repositories]]
+# full_name = "Acme/my-repo"
+# org = "acme"
+# project = "my-repo"
+
+# Board rules: map a Monday.com board to org/project the same way.
+# Exact, case-insensitive match on name.
+# Unmatched boards fall back to org = "monday", project = slug of the board name.
+
+# [[boards]]
+# name = "My Board"
+# org = "acme"
+# project = "my-project"

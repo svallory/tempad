@@ -74,20 +74,38 @@ function render(database: Database, config: Config, options: ReportOptions): str
             localHour(row.ts, timeZone) === hour,
         );
 
-        const bySession = new Map<string, { title: string | null; count: number }>();
+        const bySession = new Map<
+          string,
+          { title: string | null; titleSource: string | null; count: number }
+        >();
         for (const message of hourMessages) {
           const existing = bySession.get(message.sessionId);
           if (existing) {
             existing.count += 1;
           } else {
-            bySession.set(message.sessionId, { title: message.title, count: 1 });
+            bySession.set(message.sessionId, {
+              title: message.title,
+              titleSource: message.titleSource,
+              count: 1,
+            });
           }
         }
 
         const parts: string[] = [];
+        let untitledCount = 0;
+        let untitledMessages = 0;
         for (const session of bySession.values()) {
-          const title = session.title ?? "(untitled session)";
-          parts.push(`${title} (${session.count} messages)`);
+          const isNamed =
+            session.titleSource === "custom-title" || session.titleSource === "agent-name";
+          if (isNamed) {
+            parts.push(`${session.title as string} (${session.count} messages)`);
+          } else {
+            untitledCount += 1;
+            untitledMessages += session.count;
+          }
+        }
+        if (untitledCount > 0) {
+          parts.push(`+${untitledCount} untitled (${untitledMessages} messages)`);
         }
         for (const commit of cellCommits) {
           parts.push(commit.sha.slice(0, 7));

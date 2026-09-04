@@ -16,6 +16,14 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 function insertItem(
   database: ReturnType<typeof openDatabase>,
   overrides: {
@@ -26,16 +34,18 @@ function insertItem(
     updatedAt: string;
   },
 ): void {
+  const boardName = overrides.boardName ?? "Board";
   database.exec(
-    `INSERT INTO monday_items (id, board_id, board_name, group_name, name, status, assignees, timeline_start, timeline_end, time_tracked_seconds, created_at, updated_at, raw)
-     VALUES (?, 1, ?, NULL, 'item', NULL, '[]', ?, ?, NULL, ?, ?, '{}')`,
+    `INSERT INTO monday_items (id, board_id, board_name, group_name, name, status, assignees, timeline_start, timeline_end, time_tracked_seconds, created_at, updated_at, raw, org, project)
+     VALUES (?, 1, ?, NULL, 'item', NULL, '[]', ?, ?, NULL, ?, ?, '{}', 'monday', ?)`,
     [
       overrides.id,
-      overrides.boardName ?? "Board",
+      boardName,
       overrides.timelineStart ?? null,
       overrides.timelineEnd ?? null,
       overrides.updatedAt,
       overrides.updatedAt,
+      slugify(boardName),
     ],
   );
 }

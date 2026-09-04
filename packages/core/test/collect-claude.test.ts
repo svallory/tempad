@@ -132,6 +132,7 @@ describe("claude collector", () => {
       expect(session.org).toBe("acme");
       expect(session.project).toBe("widgets");
       expect(session.title).toBe("hello there");
+      expect(session.title_source).toBe("first-message");
       expect(session.git_branch).toBe("main");
 
       const messageCount = (
@@ -370,6 +371,85 @@ describe("claude collector", () => {
         database.query("SELECT COUNT(*) as count FROM claude_sessions").get() as { count: number }
       ).count;
       expect(count).toBe(0);
+
+      database.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("multi-line first-message title collapses to one line, and re-sync updates a changed title", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tempad-claude-"));
+    const home = join(root, "home");
+    const claudeDir = join(root, "claude");
+    mkdirSync(home, { recursive: true });
+    mkdirSync(join(claudeDir, "projects", "hook-project"), { recursive: true });
+
+    writeFileSync(
+      join(home, "tempad.toml"),
+      `[[projects]]\npattern = "~/work/:org/:project/:rest*"\n`,
+    );
+
+    const sessionFile = join(claudeDir, "projects", "hook-project", "session-5.jsonl");
+    writeJsonl(sessionFile, [
+      {
+        type: "user",
+        uuid: "u1",
+        sessionId: "sess-5",
+        timestamp: "2026-01-05T10:00:00.000Z",
+        origin: { kind: "human" },
+        message: {
+          role: "user",
+          content:
+            "Review this change for security vulnerabilities.\n\nChanged files:\n- a.ts\n- b.ts",
+        },
+      },
+    ]);
+
+    try {
+      const database = openDatabase(join(root, "tempad.db"));
+      const config = makeConfig(home, [claudeDir]);
+
+      await claudeCollector.sync(database, config, {});
+
+      const session = database
+        .query("SELECT title, title_source FROM claude_sessions WHERE id = 'sess-5'")
+        .get() as { title: string; title_source: string };
+      expect(session.title).toBe(
+        "Review this change for security vulnerabilities. Changed files: - a.ts - b.ts",
+      );
+      expect(session.title).not.toContain("\n");
+      expect(session.title_source).toBe("first-message");
+
+      // Re-sync after the title source changes: the changed-row check must catch it.
+      writeJsonl(sessionFile, [
+        {
+          type: "custom-title",
+          sessionId: "sess-5",
+          customTitle: "Security review",
+        },
+        {
+          type: "user",
+          uuid: "u1",
+          sessionId: "sess-5",
+          timestamp: "2026-01-05T10:00:00.000Z",
+          origin: { kind: "human" },
+          message: {
+            role: "user",
+            content:
+              "Review this change for security vulnerabilities.\n\nChanged files:\n- a.ts\n- b.ts",
+          },
+        },
+      ]);
+
+      const secondSummary = await claudeCollector.sync(database, config, {});
+      expect(secondSummary.updated).toBe(1);
+
+      const updated = database
+        .query("SELECT title, title_source FROM claude_sessions WHERE id = 'sess-5'")
+        .get() as { title: string; title_source: string };
+      expect(updated.title).toBe("Security review");
+      expect(updated.title_source).toBe("custom-title");
 
       database.close();
     } finally {

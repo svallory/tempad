@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
+import { join } from "node:path";
 import type { Config } from "../config/env.ts";
+import { loadRules, resolveRepository } from "../config/rules.ts";
 import { getSyncState, setSyncState } from "../db/sync-state.ts";
 import { discoverRepositories } from "./github/discover.ts";
 import { commitExists, logCommits, refsContaining } from "./github/log.ts";
@@ -33,17 +35,22 @@ function upsertRepository(
   database: Database,
   fullName: string,
   org: string,
+  project: string,
+  meta: string | null,
   isPersonal: boolean,
   defaultBranch: string | undefined,
 ): void {
   database
     .query(
-      `INSERT INTO gh_repos (full_name, org, is_personal, default_branch)
-       VALUES (?, ?, ?, ?)
+      `INSERT INTO gh_repos (full_name, org, is_personal, default_branch, project, meta)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(full_name) DO UPDATE SET
-         default_branch = COALESCE(excluded.default_branch, gh_repos.default_branch)`,
+         default_branch = COALESCE(excluded.default_branch, gh_repos.default_branch),
+         org = excluded.org,
+         project = excluded.project,
+         meta = excluded.meta`,
     )
-    .run(fullName, org, isPersonal ? 1 : 0, defaultBranch ?? null);
+    .run(fullName, org, isPersonal ? 1 : 0, defaultBranch ?? null, project, meta);
 }
 
 function setMirroredAt(database: Database, fullName: string, timestamp: string): void {
@@ -192,6 +199,8 @@ export function createGithubCollector(dependencies: GithubCollectorDependencies)
       const warnings: string[] = [];
       let anyMirrorFailed = false;
 
+      const rules = loadRules(join(config.home, "tempad.toml"));
+
       const discovery = await discoverRepositories(
         config.ghUser,
         config.ghOrgs,
@@ -201,10 +210,13 @@ export function createGithubCollector(dependencies: GithubCollectorDependencies)
       );
 
       for (const repository of discovery.repositories.values()) {
+        const resolved = resolveRepository(rules, repository.fullName);
         upsertRepository(
           database,
           repository.fullName,
-          repository.org,
+          resolved.org,
+          resolved.project,
+          Object.keys(resolved.meta).length > 0 ? JSON.stringify(resolved.meta) : null,
           repository.isPersonal,
           repository.defaultBranch,
         );

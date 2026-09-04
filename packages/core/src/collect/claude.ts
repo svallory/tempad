@@ -36,6 +36,8 @@ interface JsonlLine {
   message?: MessagePayload;
   customTitle?: string;
   agentName?: string;
+  entrypoint?: string;
+  userType?: string;
 }
 
 interface ParsedMessage {
@@ -69,6 +71,8 @@ interface SessionAccumulator {
   customTitle: string | undefined;
   agentName: string | undefined;
   firstHumanText: string | undefined;
+  entrypoint: string | undefined;
+  userType: string | undefined;
 }
 
 async function* readLines(path: string): AsyncGenerator<string> {
@@ -209,6 +213,12 @@ function parseLine(
         if (text !== undefined) sessionAccumulator.firstHumanText = text;
       }
     }
+    if (sessionAccumulator.entrypoint === undefined && typeof line.entrypoint === "string") {
+      sessionAccumulator.entrypoint = line.entrypoint;
+    }
+    if (sessionAccumulator.userType === undefined && typeof line.userType === "string") {
+      sessionAccumulator.userType = line.userType;
+    }
   }
 
   const role: string = line.message?.role ?? messageType;
@@ -244,13 +254,35 @@ function parseLine(
   return { message, malformed: false };
 }
 
-function resolveTitle(sessionAccumulator: SessionAccumulator): string | null {
-  const title =
-    sessionAccumulator.customTitle ??
-    sessionAccumulator.agentName ??
-    sessionAccumulator.firstHumanText;
-  if (title === undefined) return null;
-  return title.slice(0, 120);
+type TitleSource = "custom-title" | "agent-name" | "first-message" | "none";
+
+function collapseWhitespace(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function resolveTitle(sessionAccumulator: SessionAccumulator): {
+  title: string | null;
+  source: TitleSource;
+} {
+  if (sessionAccumulator.customTitle !== undefined) {
+    return {
+      title: collapseWhitespace(sessionAccumulator.customTitle).slice(0, 120),
+      source: "custom-title",
+    };
+  }
+  if (sessionAccumulator.agentName !== undefined) {
+    return {
+      title: collapseWhitespace(sessionAccumulator.agentName).slice(0, 120),
+      source: "agent-name",
+    };
+  }
+  if (sessionAccumulator.firstHumanText !== undefined) {
+    return {
+      title: collapseWhitespace(sessionAccumulator.firstHumanText).slice(0, 120),
+      source: "first-message",
+    };
+  }
+  return { title: null, source: "none" };
 }
 
 async function processFile(
@@ -280,6 +312,8 @@ async function processFile(
     customTitle: undefined,
     agentName: undefined,
     firstHumanText: undefined,
+    entrypoint: undefined,
+    userType: undefined,
   };
 
   const messages: ParsedMessage[] = [];
@@ -343,9 +377,10 @@ export const claudeCollector: Collector = {
 
     const upsertSession = database.query(
       `INSERT INTO claude_sessions
-        (id, claude_dir, project_dir, file_path, cwd, org, project, path_meta, title, git_branch,
-         started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, claude_dir, project_dir, file_path, cwd, org, project, path_meta, title, title_source,
+         entrypoint, user_type, git_branch, started_at, ended_at, message_count, tool_call_count,
+         models, host_slug, file_mtime)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          claude_dir = excluded.claude_dir,
          project_dir = excluded.project_dir,
@@ -355,6 +390,9 @@ export const claudeCollector: Collector = {
          project = excluded.project,
          path_meta = excluded.path_meta,
          title = excluded.title,
+         title_source = excluded.title_source,
+         entrypoint = excluded.entrypoint,
+         user_type = excluded.user_type,
          git_branch = excluded.git_branch,
          started_at = excluded.started_at,
          ended_at = excluded.ended_at,
@@ -366,7 +404,7 @@ export const claudeCollector: Collector = {
     );
 
     const selectExisting = database.query(
-      "SELECT file_mtime as fileMtime, message_count as messageCount FROM claude_sessions WHERE id = ?",
+      "SELECT file_mtime as fileMtime, message_count as messageCount, title as title FROM claude_sessions WHERE id = ?",
     );
 
     for (const claudeDir of config.claudeDirs) {
@@ -407,12 +445,16 @@ export const claudeCollector: Collector = {
         const existing = selectExisting.get(sessionId) as {
           fileMtime: string;
           messageCount: number;
+          title: string | null;
         } | null;
+
+        const { title, source: titleSource } = resolveTitle(session);
 
         const unchanged =
           existing !== null &&
           existing.fileMtime === fileMtime &&
-          existing.messageCount === session.messageCount;
+          existing.messageCount === session.messageCount &&
+          existing.title === title;
 
         if (!unchanged) {
           upsertSession.run(
@@ -424,7 +466,10 @@ export const claudeCollector: Collector = {
             resolved.org,
             resolved.project,
             Object.keys(resolved.meta).length > 0 ? JSON.stringify(resolved.meta) : null,
-            resolveTitle(session),
+            title,
+            titleSource,
+            session.entrypoint ?? null,
+            session.userType ?? null,
             session.gitBranch ?? null,
             session.startedAt as string,
             session.endedAt as string,

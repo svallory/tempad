@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
+import { join } from "node:path";
 import type { Config } from "../config/env.ts";
+import { loadRules, resolveBoard } from "../config/rules.ts";
 import { getSyncState } from "../db/sync-state.ts";
 import type { Collector, SyncOptions, SyncSummary } from "./types.ts";
 
@@ -326,6 +328,9 @@ function upsertItem(
   database: Database,
   board: Board,
   item: MondayItem,
+  org: string,
+  project: string,
+  meta: string | null,
 ): "inserted" | "updated" | "unchanged" {
   const existing = database
     .query("SELECT id, updated_at FROM monday_items WHERE id = ?")
@@ -343,8 +348,8 @@ function upsertItem(
   database
     .query(
       `INSERT INTO monday_items
-        (id, board_id, board_name, group_name, name, status, assignees, timeline_start, timeline_end, time_tracked_seconds, created_at, updated_at, raw)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, board_id, board_name, group_name, name, status, assignees, timeline_start, timeline_end, time_tracked_seconds, created_at, updated_at, raw, org, project, meta)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          board_id = excluded.board_id,
          board_name = excluded.board_name,
@@ -357,7 +362,10 @@ function upsertItem(
          time_tracked_seconds = excluded.time_tracked_seconds,
          created_at = excluded.created_at,
          updated_at = excluded.updated_at,
-         raw = excluded.raw`,
+         raw = excluded.raw,
+         org = excluded.org,
+         project = excluded.project,
+         meta = excluded.meta`,
     )
     .run(
       Number(item.id),
@@ -373,6 +381,9 @@ function upsertItem(
       item.created_at,
       item.updated_at,
       JSON.stringify(item.column_values),
+      org,
+      project,
+      meta,
     );
 
   return existing ? "updated" : "inserted";
@@ -389,6 +400,7 @@ export const mondayCollector: Collector = {
     const syncState = getSyncState(database, "monday");
     const userName = await fetchMyName(fetchFn, config.mondayApiToken);
     const boards = await fetchAllBoards(fetchFn, config.mondayApiToken);
+    const rules = loadRules(join(config.home, "tempad.toml"));
 
     for (const board of boards) {
       const items = await fetchBoardItems(
@@ -403,8 +415,11 @@ export const mondayCollector: Collector = {
         isAssignedToUser(item, config.mondayUser, userName),
       );
 
+      const resolved = resolveBoard(rules, board.name);
+      const meta = Object.keys(resolved.meta).length > 0 ? JSON.stringify(resolved.meta) : null;
+
       for (const item of assignedItems) {
-        const result = upsertItem(database, board, item);
+        const result = upsertItem(database, board, item, resolved.org, resolved.project, meta);
         if (result === "inserted") inserted++;
         else if (result === "updated") updated++;
       }

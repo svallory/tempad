@@ -17,16 +17,21 @@ CREATE TABLE monday_items (
   time_tracked_seconds INTEGER,
   created_at           TEXT NOT NULL,
   updated_at           TEXT NOT NULL,
-  raw                  TEXT NOT NULL      -- full column_values JSON
+  raw                  TEXT NOT NULL,     -- full column_values JSON
+  org                  TEXT,              -- mapped org, from tempad.toml [[boards]] (or fallback)
+  project              TEXT,              -- mapped project
+  meta                 TEXT               -- JSON of extra board-rule keys
 );
 CREATE INDEX monday_items_updated ON monday_items(updated_at);
 
 CREATE TABLE gh_repos (
   full_name      TEXT PRIMARY KEY,        -- org/repo
-  org            TEXT NOT NULL,
+  org            TEXT NOT NULL,           -- mapped org, from tempad.toml [[repositories]] (or fallback lowercase owner)
   is_personal    INTEGER NOT NULL,
   default_branch TEXT,
-  mirrored_at    TEXT
+  mirrored_at    TEXT,
+  project        TEXT,                    -- mapped project
+  meta           TEXT                     -- JSON of extra repository-rule keys
 );
 
 CREATE TABLE gh_commits (
@@ -75,7 +80,10 @@ CREATE TABLE claude_sessions (
   tool_call_count  INTEGER NOT NULL,
   models           TEXT NOT NULL,         -- JSON array
   host_slug        TEXT NOT NULL,
-  file_mtime       TEXT NOT NULL
+  file_mtime       TEXT NOT NULL,
+  title_source     TEXT,                  -- 'custom-title' | 'agent-name' | 'first-message' | 'none'
+  entrypoint       TEXT,                  -- top-level `entrypoint` from the first user line
+  user_type        TEXT                   -- top-level `userType` from the first user line
 );
 CREATE INDEX claude_sessions_started ON claude_sessions(started_at);
 
