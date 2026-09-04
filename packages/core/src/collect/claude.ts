@@ -221,8 +221,12 @@ function parseLine(
 
   const toolName = extractToolName(line.message?.content);
 
+  if (line.uuid === undefined) {
+    return { message: null, malformed: true };
+  }
+
   const message: ParsedMessage = {
-    uuid: line.uuid ?? crypto.randomUUID(),
+    uuid: line.uuid,
     sessionId: line.sessionId ?? sessionAccumulator.id ?? basename(sessionAccumulator.filePath),
     ts: timestamp,
     role,
@@ -360,7 +364,9 @@ export const claudeCollector: Collector = {
          file_mtime = excluded.file_mtime`,
     );
 
-    const selectExisting = database.query("SELECT id FROM claude_sessions WHERE id = ?");
+    const selectExisting = database.query(
+      "SELECT file_mtime as fileMtime, message_count as messageCount FROM claude_sessions WHERE id = ?",
+    );
 
     for (const claudeDir of config.claudeDirs) {
       const projectsGlob = new Bun.Glob("projects/*/*.jsonl");
@@ -397,32 +403,42 @@ export const claudeCollector: Collector = {
         const resolveTarget = cwd ?? decodeProjectDir(projectDir);
         const resolved = resolvePath(rules, resolveTarget);
 
-        const existing = selectExisting.get(sessionId) as { id: string } | null;
+        const existing = selectExisting.get(sessionId) as {
+          fileMtime: string;
+          messageCount: number;
+        } | null;
 
-        upsertSession.run(
-          sessionId,
-          claudeDir,
-          projectDir,
-          filePath,
-          cwd ?? null,
-          resolved.org,
-          resolved.project,
-          Object.keys(resolved.meta).length > 0 ? JSON.stringify(resolved.meta) : null,
-          resolveTitle(session),
-          session.gitBranch ?? null,
-          session.startedAt as string,
-          session.endedAt as string,
-          session.messageCount,
-          session.toolCallCount,
-          JSON.stringify([...session.models]),
-          config.hostSlug,
-          fileMtime,
-        );
+        const unchanged =
+          existing !== null &&
+          existing.fileMtime === fileMtime &&
+          existing.messageCount === session.messageCount;
 
-        if (existing === null) {
-          sessionsInserted += 1;
-        } else {
-          sessionsUpdated += 1;
+        if (!unchanged) {
+          upsertSession.run(
+            sessionId,
+            claudeDir,
+            projectDir,
+            filePath,
+            cwd ?? null,
+            resolved.org,
+            resolved.project,
+            Object.keys(resolved.meta).length > 0 ? JSON.stringify(resolved.meta) : null,
+            resolveTitle(session),
+            session.gitBranch ?? null,
+            session.startedAt as string,
+            session.endedAt as string,
+            session.messageCount,
+            session.toolCallCount,
+            JSON.stringify([...session.models]),
+            config.hostSlug,
+            fileMtime,
+          );
+
+          if (existing === null) {
+            sessionsInserted += 1;
+          } else {
+            sessionsUpdated += 1;
+          }
         }
 
         for (const message of messages) {
