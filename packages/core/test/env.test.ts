@@ -42,6 +42,28 @@ function writeEnvFile(content: string): void {
   writeFileSync(join(tempHome, ".env"), content);
 }
 
+const VALID_ENV: Record<string, string> = {
+  MONDAY_API_TOKEN: "token123",
+  MONDAY_USER: "42",
+  GH_USER: "svallory",
+  GH_ORGS: "mosaicstg",
+  GH_INCLUDE_PERSONAL: "true",
+  GIT_AUTHOR_EMAILS: "me@example.com",
+  CLAUDE_DIRS: "~/.claude",
+  HOST_SLUG: "laptop",
+  TZ: "America/Sao_Paulo",
+  SINCE: "2026-01-01",
+};
+
+function writeValidEnvWithOverride(name: string, value: string): void {
+  const values = { ...VALID_ENV, [name]: value };
+  writeEnvFile(
+    Object.entries(values)
+      .map(([key, val]) => `${key}=${val}`)
+      .join("\n"),
+  );
+}
+
 describe("loadConfig", () => {
   test("throws one error listing every missing variable", () => {
     writeEnvFile("");
@@ -101,5 +123,71 @@ describe("loadConfig", () => {
     );
 
     expect(() => loadConfig()).toThrow(/GH_INCLUDE_PERSONAL/);
+  });
+
+  test("empty value on a required var counts as missing", () => {
+    writeValidEnvWithOverride("MONDAY_API_TOKEN", "");
+    try {
+      loadConfig();
+      throw new Error("expected loadConfig to throw");
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toContain("MONDAY_API_TOKEN");
+      for (const name of REQUIRED_ENV_NAMES) {
+        if (name === "MONDAY_API_TOKEN") continue;
+        expect(message).not.toContain(name);
+      }
+    }
+  });
+
+  test("whitespace-only value on a required var counts as missing", () => {
+    writeValidEnvWithOverride("HOST_SLUG", "   ");
+    try {
+      loadConfig();
+      throw new Error("expected loadConfig to throw");
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toContain("HOST_SLUG");
+      for (const name of REQUIRED_ENV_NAMES) {
+        if (name === "HOST_SLUG") continue;
+        expect(message).not.toContain(name);
+      }
+    }
+  });
+
+  test("empty comma list counts as missing", () => {
+    writeValidEnvWithOverride("GH_ORGS", "");
+    try {
+      loadConfig();
+      throw new Error("expected loadConfig to throw");
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toContain("GH_ORGS");
+      for (const name of REQUIRED_ENV_NAMES) {
+        if (name === "GH_ORGS") continue;
+        expect(message).not.toContain(name);
+      }
+    }
+  });
+
+  test("comma list of only commas/whitespace counts as missing", () => {
+    writeValidEnvWithOverride("CLAUDE_DIRS", " , ,");
+    try {
+      loadConfig();
+      throw new Error("expected loadConfig to throw");
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toContain("CLAUDE_DIRS");
+      for (const name of REQUIRED_ENV_NAMES) {
+        if (name === "CLAUDE_DIRS") continue;
+        expect(message).not.toContain(name);
+      }
+    }
+  });
+
+  test("empty GH_TOKEN is allowed (optional)", () => {
+    writeValidEnvWithOverride("GH_TOKEN", "");
+    const config = loadConfig();
+    expect(config.ghToken).toBe("");
   });
 });

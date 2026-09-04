@@ -22,6 +22,8 @@ interface RequiredVar {
   envName: string;
 }
 
+const COMMA_LIST_NAMES = new Set(["GH_ORGS", "GIT_AUTHOR_EMAILS", "CLAUDE_DIRS"]);
+
 const REQUIRED_VARS: RequiredVar[] = [
   { key: "mondayApiToken", envName: "MONDAY_API_TOKEN" },
   { key: "mondayUser", envName: "MONDAY_USER" },
@@ -87,9 +89,16 @@ export function loadConfig(): Config {
 
   const read = (name: string): string | undefined => process.env[name] ?? fileValues[name];
 
+  const isMissing = (name: string): boolean => {
+    const raw = read(name);
+    if (raw === undefined || raw.trim().length === 0) return true;
+    if (COMMA_LIST_NAMES.has(name)) return parseCommaList(raw).length === 0;
+    return false;
+  };
+
   const missing: string[] = [];
   for (const { envName } of REQUIRED_VARS) {
-    if (read(envName) === undefined) missing.push(envName);
+    if (isMissing(envName)) missing.push(envName);
   }
   if (missing.length > 0) {
     throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
