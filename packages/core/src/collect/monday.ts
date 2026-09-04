@@ -304,9 +304,18 @@ function isAssignedToUser(item: MondayItem, mondayUser: string, userName: string
   return (peopleColumn.text ?? "").includes(userName);
 }
 
-function extractStatus(item: MondayItem): string | undefined {
-  const statusColumn = findColumnByType(item, "status");
-  return statusColumn?.text ?? undefined;
+function extractStatus(item: MondayItem, board: Board): string | undefined {
+  const statusColumns = item.column_values.filter((column) => column.type === "status");
+  if (statusColumns.length === 0) return undefined;
+
+  const titledStatusId = board.columns.find(
+    (column) => column.type === "status" && column.title.toLowerCase() === "status",
+  )?.id;
+  const preferred = titledStatusId
+    ? statusColumns.find((column) => column.id === titledStatusId)
+    : undefined;
+
+  return (preferred ?? statusColumns[0])?.text ?? undefined;
 }
 
 function extractTimeline(item: MondayItem): { start: string | undefined; end: string | undefined } {
@@ -324,6 +333,11 @@ function extractTimeTrackedSeconds(item: MondayItem): number | undefined {
   return typeof parsed?.duration === "number" ? parsed.duration : undefined;
 }
 
+function rowChanged(database: Database): boolean {
+  const row = database.query(`SELECT changes() AS changed`).get() as { changed: number };
+  return row.changed > 0;
+}
+
 function upsertItem(
   database: Database,
   board: Board,
@@ -333,18 +347,16 @@ function upsertItem(
   meta: string | null,
 ): "inserted" | "updated" | "unchanged" {
   const existing = database
-    .query("SELECT id, updated_at FROM monday_items WHERE id = ?")
-    .get(Number(item.id)) as { id: number; updated_at: string } | null;
+    .query("SELECT id FROM monday_items WHERE id = ?")
+    .get(Number(item.id)) as { id: number } | null;
 
-  if (existing !== null && existing.updated_at === item.updated_at) {
-    return "unchanged";
-  }
-
-  const status = extractStatus(item) ?? null;
+  const status = extractStatus(item, board) ?? null;
   const timeline = extractTimeline(item);
   const timeTrackedSeconds = extractTimeTrackedSeconds(item) ?? null;
   const assignees = extractAssignees(item);
 
+  // The DO UPDATE only fires when at least one stored column actually differs, so
+  // `changes()` stays 0 for a re-sync of unchanged rows and `updated` reports real edits.
   database
     .query(
       `INSERT INTO monday_items
@@ -365,7 +377,22 @@ function upsertItem(
          raw = excluded.raw,
          org = excluded.org,
          project = excluded.project,
-         meta = excluded.meta`,
+         meta = excluded.meta
+       WHERE monday_items.board_id IS NOT excluded.board_id
+         OR monday_items.board_name IS NOT excluded.board_name
+         OR monday_items.group_name IS NOT excluded.group_name
+         OR monday_items.name IS NOT excluded.name
+         OR monday_items.status IS NOT excluded.status
+         OR monday_items.assignees IS NOT excluded.assignees
+         OR monday_items.timeline_start IS NOT excluded.timeline_start
+         OR monday_items.timeline_end IS NOT excluded.timeline_end
+         OR monday_items.time_tracked_seconds IS NOT excluded.time_tracked_seconds
+         OR monday_items.created_at IS NOT excluded.created_at
+         OR monday_items.updated_at IS NOT excluded.updated_at
+         OR monday_items.raw IS NOT excluded.raw
+         OR monday_items.org IS NOT excluded.org
+         OR monday_items.project IS NOT excluded.project
+         OR monday_items.meta IS NOT excluded.meta`,
     )
     .run(
       Number(item.id),
@@ -386,7 +413,8 @@ function upsertItem(
       meta,
     );
 
-  return existing ? "updated" : "inserted";
+  if (!existing) return "inserted";
+  return rowChanged(database) ? "updated" : "unchanged";
 }
 
 export const mondayCollector: Collector = {

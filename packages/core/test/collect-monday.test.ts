@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mondayCollector } from "../src/collect/monday.ts";
 import type { Config } from "../src/config/env.ts";
@@ -19,7 +20,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
-function makeConfig(): Config {
+function makeConfig(home = "/tmp/tempad-test-home"): Config {
   return {
     mondayApiToken: "test-token",
     mondayUser: "1234567",
@@ -32,7 +33,7 @@ function makeConfig(): Config {
     hostSlug: "test-host",
     tz: "America/Sao_Paulo",
     since: "2026-07-01",
-    home: "/tmp/tempad-test-home",
+    home,
   };
 }
 
@@ -296,5 +297,120 @@ describe("mondayCollector", () => {
     expect(secondCount).toBe(firstCount);
     expect(secondSummary.inserted).toBe(0);
     expect(secondSummary.updated).toBe(0);
+  });
+
+  test("re-syncing after a config change updates org/project even though updated_at is unchanged", async () => {
+    const home = mkdtempSync(join(tmpdir(), "tempad-monday-config-"));
+    try {
+      await mondayCollector.sync(database, makeConfig(home), { fetch: dispatchFetch() });
+
+      const before = database
+        .query("SELECT org, project FROM monday_items WHERE id = 1001")
+        .get() as { org: string; project: string };
+      expect(before.org).toBe("monday");
+
+      writeFileSync(
+        join(home, "tempad.toml"),
+        `[[boards]]\nname = "Engineering"\norg = "mosaic"\nproject = "campaigns"\n`,
+      );
+
+      complexityAttempts = 0;
+      const summary = await mondayCollector.sync(database, makeConfig(home), {
+        fetch: dispatchFetch(),
+      });
+
+      expect(summary.inserted).toBe(0);
+      expect(summary.updated).toBe(2);
+
+      const after = database
+        .query("SELECT org, project FROM monday_items WHERE id = 1001")
+        .get() as { org: string; project: string };
+      expect(after.org).toBe("mosaic");
+      expect(after.project).toBe("campaigns");
+
+      complexityAttempts = 0;
+      const rerun = await mondayCollector.sync(database, makeConfig(home), {
+        fetch: dispatchFetch(),
+      });
+      expect(rerun.inserted).toBe(0);
+      expect(rerun.updated).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("prefers the status column titled Status over an earlier status-type column", async () => {
+    const priorityFirstFetch: typeof fetch = (async (_url, init) => {
+      const body = JSON.parse(String((init as RequestInit).body)) as {
+        query: string;
+        variables: Record<string, unknown>;
+      };
+      const query = body.query;
+
+      if (query.includes("me {")) return jsonResponse(loadFixture("me"));
+
+      if (query.includes("boards(limit:")) {
+        if (body.variables.page === 1) {
+          return jsonResponse({
+            data: {
+              boards: [
+                {
+                  id: "555",
+                  name: "Campaigns",
+                  columns: [
+                    { id: "priority", title: "Priority", type: "status" },
+                    { id: "status", title: "Status", type: "status" },
+                    { id: "person", title: "Assignee", type: "people" },
+                  ],
+                },
+              ],
+            },
+          });
+        }
+        return jsonResponse(loadFixture("boards-page-2-empty"));
+      }
+
+      if (query.includes("items_page(limit:")) {
+        return jsonResponse({
+          data: {
+            boards: [
+              {
+                items_page: {
+                  cursor: null,
+                  items: [
+                    {
+                      id: "3001",
+                      name: "Campaign item",
+                      group: { title: "Active" },
+                      created_at: "2026-08-01T10:00:00Z",
+                      updated_at: "2026-08-20T10:00:00Z",
+                      column_values: [
+                        {
+                          id: "person",
+                          type: "people",
+                          text: "Saulo Vallory",
+                          value: '{"personsAndTeams":[{"id":1234567,"kind":"person"}]}',
+                        },
+                        { id: "priority", type: "status", text: "High", value: "{}" },
+                        { id: "status", type: "status", text: "Working on it", value: "{}" },
+                      ],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        });
+      }
+
+      throw new Error(`Unhandled query in test fetch mock: ${query}`);
+    }) as typeof fetch;
+
+    await mondayCollector.sync(database, makeConfig(), { fetch: priorityFirstFetch });
+
+    const row = database.query("SELECT status FROM monday_items WHERE id = 3001").get() as {
+      status: string | null;
+    };
+    expect(row.status).toBe("Working on it");
   });
 });
