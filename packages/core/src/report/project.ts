@@ -48,7 +48,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
     projectKeyString(a).localeCompare(projectKeyString(b)),
   );
 
-  const sections: string[] = [];
+  const sections: string[] = [heading(1, `project report ${options.from} to ${options.to}`)];
 
   for (const key of sortedKeys) {
     const projectCommits = commits.filter(
@@ -90,6 +90,8 @@ function render(database: Database, config: Config, options: ReportOptions): str
     ];
     sections.push(lines.join("\n"));
   }
+
+  if (sections.length === 1) sections.push("no evidence");
 
   return sections.join("\n\n");
 }

@@ -55,7 +55,21 @@ describe("hourlyReport", () => {
       to: "2026-09-10",
     });
 
-    expect(output).toBe("## 2026-09-10\nno evidence");
+    expect(output).toBe("# hourly report 2026-09-10 to 2026-09-10\n\n## 2026-09-10\nno evidence");
+
+    database.close();
+  });
+
+  test("an empty range still renders a non-empty title line, never an empty string", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+
+    const output = hourlyReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+    });
+
+    expect(output.startsWith("# hourly report 2026-09-01 to 2026-09-01")).toBe(true);
+    expect(output.length).toBeGreaterThan(0);
 
     database.close();
   });

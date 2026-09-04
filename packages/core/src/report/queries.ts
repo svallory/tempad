@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { localDayBoundsUtc } from "./markdown.ts";
+import { localDay, localDayBoundsUtc } from "./markdown.ts";
 
 export interface DateRange {
   from: string;
@@ -168,15 +168,13 @@ export function querySessionMessagesByHour(
 
 export function queryMondayItems(database: Database, range: DateRange): MondayItemRow[] {
   const { start, end } = toDayBounds(range);
+  // timeline_start/timeline_end are bare local dates (YYYY-MM-DD, no zone), so the exclusive
+  // end of the range as a day string comes from formatting the (already zone-aware) end instant.
+  const endDay = localDay(end, range.timeZone);
   const conditions = [
-    "((i.timeline_start IS NOT NULL AND i.timeline_end IS NOT NULL AND i.timeline_start <= ? AND i.timeline_end >= ?) OR (i.updated_at >= ? AND i.updated_at < ?))",
+    "((i.timeline_start IS NOT NULL AND i.timeline_end IS NOT NULL AND i.timeline_start < ? AND i.timeline_end >= ?) OR (i.updated_at >= ? AND i.updated_at < ?))",
   ];
-  const params: (string | number)[] = [range.to, range.from, start, end];
-
-  if (range.project) {
-    conditions.push("LOWER(?) = ?");
-    params.push(range.project.toLowerCase(), range.project.toLowerCase());
-  }
+  const params: (string | number)[] = [endDay, range.from, start, end];
 
   const rows = database
     .query(

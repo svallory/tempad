@@ -38,7 +38,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
   const pullRequests = queryPullRequests(database, range);
 
   const days = dayRange(options.from, options.to);
-  const sections: string[] = [];
+  const sections: string[] = [heading(1, `daily report ${options.from} to ${options.to}`)];
 
   for (const day of days) {
     const dayCommits = commits.filter((row) => localDay(row.authoredAt, timeZone) === day);
@@ -97,6 +97,8 @@ function render(database: Database, config: Config, options: ReportOptions): str
 
     sections.push(lines.join("\n"));
   }
+
+  if (sections.length === 1) sections.push("no evidence");
 
   return sections.join("\n\n");
 }
