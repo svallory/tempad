@@ -1,0 +1,62 @@
+{
+  "data": {
+    "boards": [
+      {
+        "items_page": {
+          "cursor": "cursor-abc",
+          "items": [
+            {
+              "id": "1001",
+              "name": "Fix login bug",
+              "group": { "title": "In Progress" },
+              "created_at": "2026-08-01T10:00:00Z",
+              "updated_at": "2026-08-20T10:00:00Z",
+              "column_values": [
+                {
+                  "id": "person",
+                  "type": "people",
+                  "text": "Saulo Vallory",
+                  "value": "{\"changed_at\":\"2026-08-20T10:00:00.000Z\",\"personsAndTeams\":[{\"id\":1234567,\"kind\":\"person\"}]}"
+                },
+                {
+                  "id": "status",
+                  "type": "status",
+                  "text": "Working on it",
+                  "value": "{\"index\":0}"
+                },
+                {
+                  "id": "timeline",
+                  "type": "timeline",
+                  "text": "2026-08-01 - 2026-08-15",
+                  "value": "{\"to\":\"2026-08-15\",\"from\":\"2026-08-01\",\"changed_at\":\"2026-08-01T10:00:00.000Z\"}"
+                },
+                {
+                  "id": "time_tracking",
+                  "type": "time_tracking",
+                  "text": "1h 30m",
+                  "value": "{\"duration\":5400,\"running\":false}"
+                }
+              ]
+            },
+            {
+              "id": "1002",
+              "name": "Not my item",
+              "group": { "title": "In Progress" },
+              "created_at": "2026-08-02T10:00:00Z",
+              "updated_at": "2026-08-19T10:00:00Z",
+              "column_values": [
+                {
+                  "id": "person",
+                  "type": "people",
+                  "text": "Someone Else",
+                  "value": "{\"changed_at\":\"2026-08-19T10:00:00.000Z\",\"personsAndTeams\":[{\"id\":9999999,\"kind\":\"person\"}]}"
+                },
+                { "id": "status", "type": "status", "text": "Done", "value": "{\"index\":1}" }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

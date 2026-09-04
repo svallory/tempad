@@ -1,0 +1,5 @@
+{
+  "errors": [
+    { "message": "Invalid rule: column_id __last_updated__ is not supported for this board" }
+  ]
+}
