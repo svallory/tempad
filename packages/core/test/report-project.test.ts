@@ -79,11 +79,9 @@ describe("projectReport", () => {
     });
 
     expect(output).toContain(
-      "| feature/report-polish | 2026-09-01T14:00:00.000Z | 2026-09-01T14:00:00.000Z | 0h 0m | 1 | 1 |",
+      "| feature/report-polish | 2026-09-01 11:00 | 2026-09-01 11:00 | 0h 0m | 1 | 1 |",
     );
-    expect(output).toContain(
-      "| main | 2026-09-01T02:30:00.000Z | 2026-09-01T02:30:00.000Z | 0h 0m | 1 | 0 |",
-    );
+    expect(output).toContain("| main | 2026-08-31 23:30 | 2026-08-31 23:30 | 0h 0m | 1 | 0 |");
 
     database.close();
   });
@@ -113,12 +111,13 @@ describe("projectReport", () => {
     database.close();
   });
 
-  test("branch inference falls back to a pull ref when no real branch contains the commit", () => {
+  test("branch inference falls back to a pull ref when no real branch contains the commit, rendered as a PR label", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     seedReportFixtures(database);
 
     // A merged PR whose source branch was deleted leaves the commit on `pull/N/head`
-    // only. The row still has to name something, so the pull ref is used as a fallback.
+    // only. The row still has to name something, so the pull ref is used as a fallback
+    // and rendered as "PR #N <title>" (or bare "PR #N" when the PR isn't in the db).
     database.exec(
       `INSERT INTO gh_commits (sha, repo, branches, author_name, author_email, authored_at, committed_at, subject, body, files_changed, insertions, deletions)
        VALUES ('ddddddd4444444444444444444444444444444', 'acme/widgets', '["pull/77/head"]', 'Octo Cat', 'octocat@example.com', '2026-09-01T16:30:00.000Z', '2026-09-01T16:30:00.000Z', 'fix(widgets): orphaned pull ref', NULL, 1, 1, 1)`,
@@ -130,7 +129,32 @@ describe("projectReport", () => {
       project: "widgets",
     });
 
-    expect(output).toContain("| pull/77/head |");
+    expect(output).toContain("| PR #77 |");
+    expect(output).not.toContain("pull/77/head");
+
+    database.close();
+  });
+
+  test("a pull ref resolves to the PR's title when the PR is in the database", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(
+      `INSERT INTO gh_commits (sha, repo, branches, author_name, author_email, authored_at, committed_at, subject, body, files_changed, insertions, deletions)
+       VALUES ('eeeeeee5555555555555555555555555555555', 'acme/widgets', '["pull/88/head"]', 'Octo Cat', 'octocat@example.com', '2026-09-01T17:30:00.000Z', '2026-09-01T17:30:00.000Z', 'fix(widgets): another orphaned pull ref', NULL, 1, 1, 1)`,
+    );
+    database.exec(
+      `INSERT INTO gh_pull_requests (repo, number, title, state, author, role, created_at, merged_at, closed_at)
+       VALUES ('acme/widgets', 88, 'Fix the orphaned ref bug', 'merged', 'octocat', 'author', '2026-08-01T00:00:00.000Z', '2026-08-02T00:00:00.000Z', NULL)`,
+    );
+
+    const output = projectReport.render(database, REPORT_CONFIG, {
+      from: "2026-08-31",
+      to: "2026-09-02",
+      project: "widgets",
+    });
+
+    expect(output).toContain("| PR #88 Fix the orphaned ref bug |");
 
     database.close();
   });

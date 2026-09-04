@@ -31,6 +31,11 @@ moon run :test        # same through moon
 - Tests in `bun test`, colocated as `*.test.ts`. Fixtures under `packages/core/test/fixtures`.
 - Commits: `type(scope): summary`.
 
+## CLI
+
+- `tempad sync [monday|github|claude] [--full]` — `--full` clears that source's `sync_state` row before syncing, so the collector ignores the last-sync cursor and rescans everything back to `SINCE` (or, for Claude, re-reads every session file regardless of mtime). Use it to backfill columns added by a migration (e.g. `title_source`) on rows a normal incremental sync wouldn't touch.
+- `tempad report <daily|project|hourly> --from <date> --to <date> [--org X] [--project Y] [--out path]`
+
 ## Gotchas
 
 - Monday.com's API `people` column filter by numeric id returns nothing. Filter client-side by name or id from the column's JSON value.
