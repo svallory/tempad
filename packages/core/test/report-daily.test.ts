@@ -48,6 +48,32 @@ describe("dailyReport", () => {
     database.close();
   });
 
+  test("a Monday item updated at 2026-09-01T01:00Z appears under the 2026-08-31 local day", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    // No timeline; the fallback is updated_at, which must bucket by local day
+    // (America/Sao_Paulo, UTC-3): 2026-09-01T01:00Z is 2026-08-31 22:00 local.
+    database.exec(
+      `INSERT INTO monday_items (id, board_id, board_name, group_name, name, status, assignees, timeline_start, timeline_end, time_tracked_seconds, created_at, updated_at, raw)
+       VALUES (902, 1, 'Beta Project', NULL, 'Late-night update', 'Done', '[]', NULL, NULL, NULL, '2026-09-01T01:00:00.000Z', '2026-09-01T01:00:00.000Z', '{}')`,
+    );
+
+    const output = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-08-31",
+      to: "2026-08-31",
+    });
+
+    expect(output).toContain("## 2026-08-31 (Monday)");
+    expect(output).toContain("Late-night update");
+
+    const outOfRange = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+    });
+    expect(outOfRange).not.toContain("Late-night update");
+
+    database.close();
+  });
+
   test("an empty range still renders a title line and a no-evidence line, never an empty string", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     // no seed: empty database, a single weekend day with nothing at all

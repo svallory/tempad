@@ -43,7 +43,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
   for (const day of days) {
     const dayCommits = commits.filter((row) => localDay(row.authoredAt, timeZone) === day);
     const daySessions = sessions.filter((row) => sessionTouchesDay(row, day, timeZone));
-    const dayMondayItems = mondayItems.filter((row) => mondayTouchesDay(row, day));
+    const dayMondayItems = mondayItems.filter((row) => mondayTouchesDay(row, day, timeZone));
     const dayPullRequests = pullRequests.filter((row) => pullRequestTouchesDay(row, day, timeZone));
 
     const hasEvidence =
@@ -109,11 +109,11 @@ function sessionTouchesDay(session: SessionRow, day: string, timeZone: string): 
   );
 }
 
-function mondayTouchesDay(item: MondayItemRow, day: string): boolean {
+function mondayTouchesDay(item: MondayItemRow, day: string, timeZone: string): boolean {
   if (item.timelineStart && item.timelineEnd) {
     if (item.timelineStart <= day && item.timelineEnd >= day) return true;
   }
-  return item.updatedAt.slice(0, 10) === day;
+  return localDay(item.updatedAt, timeZone) === day;
 }
 
 function pullRequestTouchesDay(pr: PullRequestRow, day: string, timeZone: string): boolean {

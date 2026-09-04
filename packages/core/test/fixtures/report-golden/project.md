@@ -6,7 +6,7 @@ Elapsed is an upper bound.
 | task | first evidence | last evidence | elapsed (upper bound) | commits | sessions |
 | --- | --- | --- | --- | --- | --- |
 | feature/report-polish | 2026-09-01T14:00:00.000Z | 2026-09-01T14:00:00.000Z | 0h 0m | 1 | 1 |
-| main | 2026-09-01T02:30:00.000Z | 2026-09-01T02:30:00.000Z | 0h 0m | 1 | 1 |
+| main | 2026-09-01T02:30:00.000Z | 2026-09-01T02:30:00.000Z | 0h 0m | 1 | 0 |
 
 ### monday/beta-project
 Elapsed is an upper bound.
