@@ -185,6 +185,11 @@ function parseLine(
   }
   const timestamp = line.timestamp;
 
+  if (line.uuid === undefined) {
+    return { message: null, malformed: true };
+  }
+  const uuid = line.uuid;
+
   if (sessionAccumulator.cwd === undefined && typeof line.cwd === "string") {
     sessionAccumulator.cwd = line.cwd;
   }
@@ -221,12 +226,8 @@ function parseLine(
 
   const toolName = extractToolName(line.message?.content);
 
-  if (line.uuid === undefined) {
-    return { message: null, malformed: true };
-  }
-
   const message: ParsedMessage = {
-    uuid: line.uuid,
+    uuid,
     sessionId: line.sessionId ?? sessionAccumulator.id ?? basename(sessionAccumulator.filePath),
     ts: timestamp,
     role,
