@@ -1,3 +1,5 @@
+# daily report 2026-08-31 to 2026-09-02
+
 ## 2026-08-31 (Monday)
 ### acme/widgets
 - aaaaaaa fix(widgets): handle midnight boundary (acme/widgets)

@@ -1,3 +1,5 @@
+# hourly report 2026-08-31 to 2026-09-02
+
 ## 2026-08-31
 
 | hour | acme/widgets |

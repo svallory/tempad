@@ -48,6 +48,21 @@ describe("dailyReport", () => {
     database.close();
   });
 
+  test("an empty range still renders a title line and a no-evidence line, never an empty string", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    // no seed: empty database, a single weekend day with nothing at all
+
+    const output = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-05", // Saturday
+      to: "2026-09-05",
+    });
+
+    expect(output).toBe("# daily report 2026-09-05 to 2026-09-05\n\nno evidence");
+    expect(output.length).toBeGreaterThan(0);
+
+    database.close();
+  });
+
   test("a weekday with nothing prints no evidence, a weekend with nothing is omitted", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     // no seed: empty database
@@ -61,8 +76,8 @@ describe("dailyReport", () => {
     expect(output).toContain("## 2026-09-03 (Thursday)");
     expect(output).toContain("- no evidence");
     expect(output).toContain("## 2026-09-04 (Friday)");
-    expect(output).not.toContain("2026-09-05");
-    expect(output).not.toContain("2026-09-06");
+    expect(output).not.toContain("## 2026-09-05");
+    expect(output).not.toContain("## 2026-09-06");
 
     database.close();
   });

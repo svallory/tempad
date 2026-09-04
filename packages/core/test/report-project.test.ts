@@ -44,4 +44,19 @@ describe("projectReport", () => {
     expect(output).toContain("### monday/beta-project");
     expect(output).toContain("Ship report polish");
   });
+
+  test("an empty range still renders a title line and a no-evidence line, never an empty string", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    // no seed: empty database
+
+    const output = projectReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+    });
+
+    expect(output).toBe("# project report 2026-09-01 to 2026-09-01\n\nno evidence");
+    expect(output.length).toBeGreaterThan(0);
+
+    database.close();
+  });
 });
