@@ -66,6 +66,13 @@ function isComplexityError(error: GraphQlError): boolean {
   return error.message.includes("Complexity");
 }
 
+const RULE_REJECTION_PATTERN = /\b(rule|column|query_params|invalid argument)\b/i;
+
+function isRuleRejectionError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return RULE_REJECTION_PATTERN.test(error.message);
+}
+
 async function mondayRequest<T>(
   fetchFn: typeof fetch,
   token: string,
@@ -222,7 +229,7 @@ async function fetchBoardItems(
       cursor = page.cursor;
     } while (cursor !== null);
   } catch (error) {
-    if (!useFilter) throw error;
+    if (!useFilter || !isRuleRejectionError(error)) throw error;
     const message = error instanceof Error ? error.message : String(error);
     warnings.push(
       `board ${board.id} (${board.name}): last-updated rule rejected (${message}), falling back to unfiltered pull`,
@@ -315,10 +322,18 @@ function extractTimeTrackedSeconds(item: MondayItem): number | undefined {
   return typeof parsed?.duration === "number" ? parsed.duration : undefined;
 }
 
-function upsertItem(database: Database, board: Board, item: MondayItem): "inserted" | "updated" {
+function upsertItem(
+  database: Database,
+  board: Board,
+  item: MondayItem,
+): "inserted" | "updated" | "unchanged" {
   const existing = database
-    .query("SELECT id FROM monday_items WHERE id = ?")
-    .get(Number(item.id)) as { id: number } | null;
+    .query("SELECT id, updated_at FROM monday_items WHERE id = ?")
+    .get(Number(item.id)) as { id: number; updated_at: string } | null;
+
+  if (existing !== null && existing.updated_at === item.updated_at) {
+    return "unchanged";
+  }
 
   const status = extractStatus(item) ?? null;
   const timeline = extractTimeline(item);
@@ -391,7 +406,7 @@ export const mondayCollector: Collector = {
       for (const item of assignedItems) {
         const result = upsertItem(database, board, item);
         if (result === "inserted") inserted++;
-        else updated++;
+        else if (result === "updated") updated++;
       }
     }
 
