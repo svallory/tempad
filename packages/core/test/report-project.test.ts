@@ -45,6 +45,28 @@ describe("projectReport", () => {
     expect(output).toContain("Ship report polish");
   });
 
+  test("branch rows scope the session count to sessions on that branch, not the whole project", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    // The seeded session's git_branch is "feature/report-polish"; the "main" branch row
+    // (from the other commit) has no session on it and must show 0, not the project total.
+    const output = projectReport.render(database, REPORT_CONFIG, {
+      from: "2026-08-31",
+      to: "2026-09-02",
+      project: "widgets",
+    });
+
+    expect(output).toContain(
+      "| feature/report-polish | 2026-09-01T14:00:00.000Z | 2026-09-01T14:00:00.000Z | 0h 0m | 1 | 1 |",
+    );
+    expect(output).toContain(
+      "| main | 2026-09-01T02:30:00.000Z | 2026-09-01T02:30:00.000Z | 0h 0m | 1 | 0 |",
+    );
+
+    database.close();
+  });
+
   test("an empty range still renders a title line and a no-evidence line, never an empty string", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     // no seed: empty database

@@ -1,7 +1,13 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
 import { elapsedLabel, heading, table } from "./markdown.ts";
-import { type CommitRow, queryCommits, queryMondayItems, querySessions } from "./queries.ts";
+import {
+  type CommitRow,
+  queryCommits,
+  queryMondayItems,
+  querySessions,
+  type SessionRow,
+} from "./queries.ts";
 import type { Report, ReportOptions } from "./types.ts";
 
 interface ProjectKey {
@@ -96,10 +102,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
   return sections.join("\n\n");
 }
 
-function branchRows(
-  commits: CommitRow[],
-  sessions: { startedAt: string; endedAt: string }[],
-): string[][] {
+function branchRows(commits: CommitRow[], sessions: SessionRow[]): string[][] {
   const byBranch = new Map<string, CommitRow[]>();
   for (const commit of commits) {
     const branch = inferBranch(commit.branches);
@@ -113,6 +116,7 @@ function branchRows(
     const branchCommits = (byBranch.get(branch) ?? []).sort((a, b) =>
       a.authoredAt.localeCompare(b.authoredAt),
     );
+    const branchSessions = sessions.filter((session) => session.gitBranch === branch);
     const first = branchCommits[0]?.authoredAt ?? "";
     const last = branchCommits[branchCommits.length - 1]?.authoredAt ?? "";
     return [
@@ -121,7 +125,7 @@ function branchRows(
       last,
       elapsedLabel(first, last),
       String(branchCommits.length),
-      String(sessions.length),
+      String(branchSessions.length),
     ];
   });
 }
