@@ -1,0 +1,9 @@
+[[projects]]
+pattern = "~/work/:org/:project/:rest*"
+
+[[projects]]
+pattern = "~/projects/:project/:rest*"
+org = "personal"
+
+[[projects]]
+pattern = "/private/tmp/claude-501/-Users-svallory-work-:org-:project-:rest*"
