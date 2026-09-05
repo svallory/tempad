@@ -115,6 +115,40 @@ describe("queryOpenQuestions", () => {
 });
 
 describe("queryQuests", () => {
+  test("an activity whose only trace matches the SQL range but clips to zero width is dropped, not a crash", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    // The day's start boundary is "2026-09-01T03:00:00.000Z". A trace ending
+    // at "2026-09-01T03:00:00Z" (no milliseconds) is lexically greater than
+    // that string, so queryTraceIntervals' SQL WHERE (`t.ended_at > start`)
+    // includes it -- but as an actual instant it equals `start`, so the
+    // numeric clip in clippedEvidenceByActivity skips it entirely, leaving
+    // the activity with zero evidence.
+    database.exec(
+      `INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at)
+       VALUES ('quest-4', 'hero', 'hero-1', 'Edge quest', 'zero-width edge case', 1, 1, 'started', '2026-09-01T02:00:00.000Z')`,
+    );
+    database.exec(
+      `INSERT INTO activities (id, quest_id, objective, opened_at, closed_at, outcome, revision)
+       VALUES ('activity-4', 'quest-4', 'edge activity', '2026-09-01T02:00:00.000Z', '2026-09-01T03:00:00.000Z', NULL, 1)`,
+    );
+    database.exec(
+      `INSERT INTO traces (id, activity_id, tool, place, source, source_ref, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+       VALUES ('trace-5', 'activity-4', 'edit', '/Users/octocat/work/acme/widgets', 'session', 'session-1', '2026-09-01T02:00:00.000Z', '2026-09-01T03:00:00Z', 'hero-1', 'edge edit', 'edge case', '/Users/octocat/work/acme/widgets', 'assistant edit', 0.9, 'model', 'session-1', '2026-09-01T03:00:00.000Z')`,
+    );
+    database.exec(
+      `INSERT INTO trace_links (trace_id, activity_id, linked_at, superseded_at, reason)
+       VALUES ('trace-5', 'activity-4', '2026-09-01T03:00:00.000Z', NULL, NULL)`,
+    );
+
+    expect(() => queryQuests(database, RANGE)).not.toThrow();
+    const quests = queryQuests(database, RANGE);
+    expect(quests.find((quest) => quest.id === "quest-4")).toBeUndefined();
+
+    database.close();
+  });
+
   test("first/last evidence come from trace intervals, not activity opened_at/closed_at", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     seedReportFixtures(database);
@@ -158,6 +192,29 @@ describe("queryQuests", () => {
     // trace's own timestamps.
     const outOfRange = queryQuests(database, { ...RANGE, from: "2026-08-31", to: "2026-08-31" });
     expect(outOfRange.find((quest) => quest.id === "quest-1")).toBeUndefined();
+
+    database.close();
+  });
+
+  test("--client excludes a quest whose traces belong to another client's session", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    // quest-1's traces are all linked to session-1, which has no client in
+    // path_meta -- filtering by any client must drop it.
+    const filteredOut = queryQuests(database, { ...RANGE, client: "liuna" });
+    expect(filteredOut.find((quest) => quest.id === "quest-1")).toBeUndefined();
+
+    // Give session-1 a client and confirm quest-1 comes back through that
+    // filter, proving the client actually threads down to trace resolution.
+    database.exec(
+      `UPDATE claude_sessions SET path_meta = '{"client":"liuna"}' WHERE id = 'session-1'`,
+    );
+    const filteredIn = queryQuests(database, { ...RANGE, client: "liuna" });
+    expect(filteredIn.find((quest) => quest.id === "quest-1")).toBeDefined();
+
+    const wrongClient = queryQuests(database, { ...RANGE, client: "other" });
+    expect(wrongClient.find((quest) => quest.id === "quest-1")).toBeUndefined();
 
     database.close();
   });

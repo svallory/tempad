@@ -123,4 +123,23 @@ describe("--client", () => {
 
     database.close();
   });
+
+  test("matches case-insensitively, like --org and --project", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(
+      `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, path_meta, title, title_source, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+       VALUES ('session-liuna-2', '~/.claude', 'dir', '/tmp/session-liuna-2.jsonl', NULL, 'acme', 'widgets', '{"client":"LiUNA"}', 'other case client work', 'custom-title', NULL, '2026-09-01T16:00:00.000Z', '2026-09-01T16:30:00.000Z', 2, 0, '[]', 'test-host', '2026-09-01T16:30:00.000Z')`,
+    );
+
+    const filtered = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+      client: "liuna",
+    });
+    expect(filtered).toContain("other case client work");
+
+    database.close();
+  });
 });

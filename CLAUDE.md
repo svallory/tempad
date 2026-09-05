@@ -34,7 +34,7 @@ moon run :test        # same through moon
 ## CLI
 
 - `tempad sync [monday|github|claude] [--full]` — `--full` clears that source's `sync_state` row before syncing, so the collector ignores the last-sync cursor and rescans everything back to `SINCE` (or, for Claude, re-reads every session file regardless of mtime). Use it to backfill columns added by a migration (e.g. `title_source`) on rows a normal incremental sync wouldn't touch.
-- `tempad report <daily|project|hourly|weekly> --from <date> --to <date> [--org X] [--project Y] [--out path]`
+- `tempad report <daily|project|hourly|weekly> --from <date> --to <date> [--org X] [--project Y] [--out path] [--as-of <iso>] [--party <slug>] [--client <slug>]`
 - Intent layer: `tempad hero init`, `tempad party add|leave|list`, `tempad client add`, `tempad goal add|reword|replace|end|edit|list`, `tempad quest add|reword|replace|end|edit|confirm|merge|pause|resume|done|abandon|branch|return|list`, `tempad activity list`, `tempad trace list`, `tempad answer`, `tempad rebuild [--until <iso>]`. See "Intent layer" below.
 - w5 hook: `tempad w5 enqueue --session <id> [--forced]`, `tempad w5 context --session <id>`, `tempad w5 run [--detached]`, `tempad w5 hook install|uninstall [--scope user|project]`, `tempad quiet <2h|30m>`, `tempad review`. See "w5 hook" below.
 
