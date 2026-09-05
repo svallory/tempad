@@ -137,7 +137,7 @@ export const activityProjection: Projection = {
       case "question.asked":
         database
           .query(
-            "INSERT OR REPLACE INTO questions (id, trace_id, session_id, text, kind, state, asked_at, turns_watched) VALUES (?, ?, ?, ?, ?, 'asked', ?, 0)",
+            "INSERT OR REPLACE INTO questions (id, trace_id, session_id, text, kind, state, turns_watched) VALUES (?, ?, ?, ?, ?, 'watching', 0)",
           )
           .run(
             event.subject,
@@ -145,7 +145,6 @@ export const activityProjection: Projection = {
             event.sessionId,
             String(payload.text),
             String(payload.kind),
-            event.at,
           );
         return;
       case "question.answered": {
