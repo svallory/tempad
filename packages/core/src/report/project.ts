@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
+import { queryActivities, queryQuests, querySideQuests } from "./intent-queries.ts";
 import { elapsedLabel, heading, localDateTime, table } from "./markdown.ts";
 import {
   type CommitRow,
@@ -11,6 +12,13 @@ import {
   type SessionRow,
 } from "./queries.ts";
 import type { Report, ReportOptions } from "./types.ts";
+
+function minutesLabel(totalMinutes: number): string {
+  const rounded = Math.round(totalMinutes);
+  const hours = Math.floor(rounded / 60);
+  const minutes = rounded % 60;
+  return `${hours}h ${minutes}m`;
+}
 
 interface ProjectKey {
   org: string;
@@ -54,9 +62,19 @@ function render(database: Database, config: Config, options: ReportOptions): str
   const commits = queryCommits(database, range);
   const sessions = querySessions(database, range);
   const mondayItems = queryMondayItems(database, range);
+  const quests = queryQuests(database, range);
+  const sideQuests = querySideQuests(database, range);
+  const activities = queryActivities(database, range);
 
   const keys = new Map<string, ProjectKey>();
   for (const row of [...commits, ...sessions, ...mondayItems]) {
+    keys.set(projectKeyString({ org: row.org, project: row.project }), {
+      org: row.org,
+      project: row.project,
+    });
+  }
+  for (const row of [...quests, ...sideQuests]) {
+    if (!row.org || !row.project) continue;
     keys.set(projectKeyString({ org: row.org, project: row.project }), {
       org: row.org,
       project: row.project,
@@ -79,8 +97,25 @@ function render(database: Database, config: Config, options: ReportOptions): str
     const projectMondayItems = mondayItems.filter(
       (row) => row.org === key.org && row.project === key.project,
     );
+    const projectQuests = quests.filter(
+      (row) => row.org === key.org && row.project === key.project,
+    );
+    const projectSideQuests = sideQuests.filter(
+      (row) => row.org === key.org && row.project === key.project,
+    );
 
-    const rows: string[][] =
+    const questRows: string[][] = projectQuests.map((quest) => [
+      quest.confirmed ? quest.title : `${quest.title} [unconfirmed]`,
+      localDateTime(quest.firstEvidence, range.timeZone),
+      localDateTime(quest.lastEvidence, range.timeZone),
+      elapsedLabel(quest.firstEvidence, quest.lastEvidence),
+      "-",
+      "-",
+      String(quest.activities),
+      minutesLabel(quest.sideQuestMinutes),
+    ]);
+
+    const otherRows: string[][] = (
       projectMondayItems.length > 0
         ? projectMondayItems.map((item) => {
             const first = item.timelineStart ?? item.updatedAt;
@@ -101,7 +136,23 @@ function render(database: Database, config: Config, options: ReportOptions): str
             projectSessions,
             queryPullRequestsByRepo(database, key.org, key.project),
             range.timeZone,
-          );
+          )
+    ).map((row) => [...row, "-", "-"]);
+
+    const rows = [...questRows, ...otherRows];
+
+    const sideQuestMinutes = projectSideQuests.reduce((sum, quest) => sum + quest.minutes, 0);
+    const mainActivityMinutes = activities
+      .filter((activity) => activity.org === key.org && activity.project === key.project)
+      .reduce((sum, activity) => sum + activity.minutes, 0);
+    const totalMinutes = sideQuestMinutes + mainActivityMinutes;
+    const percent = totalMinutes > 0 ? Math.round((sideQuestMinutes / totalMinutes) * 100) : 0;
+    const sideQuestFooter =
+      projectSideQuests.length > 0
+        ? [
+            `side quests: ${projectSideQuests.length}, ${minutesLabel(sideQuestMinutes)} (${percent}% of project time)`,
+          ]
+        : [];
 
     const lines =
       rows.length > 0
@@ -117,9 +168,12 @@ function render(database: Database, config: Config, options: ReportOptions): str
                 "elapsed (upper bound)",
                 "commits",
                 "sessions",
+                "activities",
+                "side-quest minutes",
               ],
               rows,
             ),
+            ...sideQuestFooter,
           ]
         : [heading(3, projectKeyString(key)), "- no evidence"];
     sections.push(lines.join("\n"));
