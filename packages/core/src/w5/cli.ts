@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Config } from "../config/env";
 import type { IntentConfig } from "../intent/config";
+import { backfill } from "./backfill";
 import { AnthropicClassifier, type Classifier } from "./classifier";
 import { buildAdditionalContext, installHooks, uninstallHooks } from "./hooks";
 import { enqueueJob } from "./jobs";
@@ -27,12 +28,12 @@ function log(config: Config, line: string): void {
   appendFileSync(path, `${new Date().toISOString()} ${line}\n`);
 }
 
-function buildClassifier(intentConfig: IntentConfig): Classifier {
+function buildClassifier(intentConfig: IntentConfig, model?: string): Classifier {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     throw new Error("ANTHROPIC_API_KEY is required to run the w5 classifier");
   }
-  return new AnthropicClassifier({ apiKey, model: intentConfig.w5.model });
+  return new AnthropicClassifier({ apiKey, model: model ?? intentConfig.w5.model });
 }
 
 function runEnqueue(args: string[], context: W5Context): number {
@@ -204,6 +205,42 @@ function runHook(args: string[]): number {
   return 2;
 }
 
+async function runBackfill(args: string[], context: W5Context): Promise<number> {
+  const { values } = parseArgs({
+    args,
+    options: {
+      days: { type: "string" },
+      model: { type: "string" },
+    },
+    strict: true,
+  });
+
+  const days = values.days
+    ? Number.parseInt(values.days, 10)
+    : context.intentConfig.w5.backfillDays;
+  const classifier = buildClassifier(context.intentConfig, values.model);
+
+  const result = await backfill(
+    context.database,
+    context.config,
+    context.intentConfig.w5,
+    classifier,
+    {
+      days,
+      now: new Date().toISOString(),
+      log: (line) => {
+        log(context.config, line);
+        context.stdout(line);
+      },
+    },
+  );
+
+  context.stdout(
+    `backfill: classified ${result.sessionsClassified} session(s), skipped ${result.sessionsSkipped}`,
+  );
+  return 0;
+}
+
 export async function runW5Command(args: string[], context: W5Context): Promise<number> {
   const [subcommand, ...rest] = args;
 
@@ -211,6 +248,7 @@ export async function runW5Command(args: string[], context: W5Context): Promise<
   if (subcommand === "context") return runContext(rest, context);
   if (subcommand === "run") return runRun(rest, context);
   if (subcommand === "hook") return runHook(rest);
+  if (subcommand === "backfill") return runBackfill(rest, context);
 
   return 2;
 }
