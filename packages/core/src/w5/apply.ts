@@ -198,6 +198,7 @@ export function applyResult(
           sessionId: window.sessionId,
           kind,
           text: kind,
+          isSwitch: segment.isSwitch,
           actor: options.actor,
         });
         summary.questionsWatching += 1;
