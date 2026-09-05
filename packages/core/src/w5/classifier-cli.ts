@@ -13,7 +13,9 @@ export type CliSpawn = (
   options: { cwd: string; stdin: string; timeoutMs: number },
 ) => Promise<CliSpawnResult>;
 
-const defaultSpawn: CliSpawn = async (argv, options) => {
+const KILL_GRACE_MS = 5_000;
+
+export const defaultSpawn: CliSpawn = async (argv, options) => {
   const child = Bun.spawn(argv, {
     cwd: options.cwd,
     stdin: "pipe",
@@ -24,25 +26,26 @@ const defaultSpawn: CliSpawn = async (argv, options) => {
   child.stdin.write(options.stdin);
   child.stdin.end();
 
-  let timedOut = false;
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    child.kill();
-  }, options.timeoutMs);
+  const collected = Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]).then(([stdout, stderr, code]) => ({ code, stdout, stderr }) as CliSpawnResult);
 
-  try {
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-      child.exited,
-    ]);
-    if (timedOut) {
-      throw new Error(`claude cli timed out after ${options.timeoutMs}ms`);
-    }
-    return { code, stdout, stderr };
-  } finally {
-    clearTimeout(timeout);
-  }
+  const timedOut = new Promise<never>((_resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      const killTimer = setTimeout(() => {
+        child.kill("SIGKILL");
+      }, KILL_GRACE_MS);
+      // Do not let the kill timer keep the process alive if it fires after exit.
+      collected.finally(() => clearTimeout(killTimer));
+      reject(new Error(`claude cli timed out after ${options.timeoutMs}ms`));
+    }, options.timeoutMs);
+    collected.finally(() => clearTimeout(timeout));
+  });
+
+  return Promise.race([collected, timedOut]);
 };
 
 export interface ClaudeCliClassifierOptions {

@@ -4,6 +4,7 @@ import {
   ClaudeCliClassifier,
   type CliSpawn,
   type CliSpawnResult,
+  defaultSpawn,
 } from "../../src/w5/classifier-cli";
 
 const window: ClassifierWindow = {
@@ -168,4 +169,23 @@ describe("ClaudeCliClassifier", () => {
 
     await expect(classifier.classify(window)).rejects.toThrow(/timed out/);
   });
+
+  test("defaultSpawn does not hang when the child ignores SIGTERM", async () => {
+    // Traps SIGTERM and never exits on its own, simulating a child (or a grandchild
+    // holding the pipes open) that survives the first kill signal.
+    const start = Date.now();
+    await expect(
+      defaultSpawn(["sh", "-c", "trap '' TERM; while true; do sleep 0.05; done"], {
+        cwd: "/tmp",
+        stdin: "",
+        timeoutMs: 50,
+      }),
+    ).rejects.toThrow(/timed out after 50ms/);
+    // Must reject promptly on the timeout, not after waiting on the hung pipes/exit.
+    expect(Date.now() - start).toBeLessThan(2_000);
+
+    // Wait past the SIGKILL grace period so the harder kill actually lands and this
+    // test doesn't leave an orphaned process running after the suite exits.
+    await new Promise((resolve) => setTimeout(resolve, 5_500));
+  }, 10_000);
 });
