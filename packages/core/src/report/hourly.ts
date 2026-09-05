@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
+import { querySideQuests } from "./intent-queries.ts";
 import { dayRange, heading, localDay, localHour, table } from "./markdown.ts";
 import {
   groupDuplicateCommits,
@@ -37,12 +38,26 @@ function render(database: Database, config: Config, options: ReportOptions): str
   for (const day of days) {
     const dayCommits = commits.filter((row) => localDay(row.authoredAt, timeZone) === day);
     const dayMessages = messages.filter((row) => localDay(row.ts, timeZone) === day);
+    const daySideQuests = querySideQuests(database, {
+      from: day,
+      to: day,
+      timeZone,
+      org: options.org,
+      project: options.project,
+    });
 
     const keys = new Map<string, ProjectKey>();
     for (const row of [...dayCommits, ...dayMessages]) {
       keys.set(projectKeyString({ org: row.org, project: row.project }), {
         org: row.org,
         project: row.project,
+      });
+    }
+    for (const sideQuest of daySideQuests) {
+      if (!sideQuest.org || !sideQuest.project) continue;
+      keys.set(projectKeyString({ org: sideQuest.org, project: sideQuest.project }), {
+        org: sideQuest.org,
+        project: sideQuest.project,
       });
     }
     const projectKeys = [...keys.values()].sort((a, b) =>
@@ -113,6 +128,16 @@ function render(database: Database, config: Config, options: ReportOptions): str
         for (const group of groupDuplicateCommits(cellCommits)) {
           const suffix = group.count > 1 ? ` (x${group.count})` : "";
           parts.push(`${group.sha.slice(0, 7)}${suffix}`);
+        }
+
+        for (const sideQuest of daySideQuests) {
+          if (
+            sideQuest.org === key.org &&
+            sideQuest.project === key.project &&
+            localHour(sideQuest.branchedAt, timeZone) === hour
+          ) {
+            parts.push(`↳ ${sideQuest.title}`);
+          }
         }
 
         row.push(parts.join("; "));

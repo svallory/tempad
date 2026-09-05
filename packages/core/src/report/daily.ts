@@ -1,5 +1,12 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
+import {
+  type ActivityRow,
+  queryActivities,
+  queryOpenQuestions,
+  querySideQuests,
+  type SideQuestRow,
+} from "./intent-queries.ts";
 import { dayRange, heading, isWeekend, localDay, localTime, localWeekday } from "./markdown.ts";
 import {
   type CommitRow,
@@ -47,12 +54,23 @@ function render(database: Database, config: Config, options: ReportOptions): str
     const daySessions = sessions.filter((row) => sessionTouchesDay(row, day, timeZone));
     const dayMondayItems = mondayItems.filter((row) => mondayTouchesDay(row, day, timeZone));
     const dayPullRequests = pullRequests.filter((row) => pullRequestTouchesDay(row, day, timeZone));
+    const dayRangeOptions = {
+      from: day,
+      to: day,
+      timeZone,
+      org: options.org,
+      project: options.project,
+    };
+    const dayActivities = queryActivities(database, dayRangeOptions);
+    const daySideQuests = querySideQuests(database, dayRangeOptions);
 
     const hasEvidence =
       dayCommits.length > 0 ||
       daySessions.length > 0 ||
       dayMondayItems.length > 0 ||
-      dayPullRequests.length > 0;
+      dayPullRequests.length > 0 ||
+      dayActivities.length > 0 ||
+      daySideQuests.length > 0;
 
     if (!hasEvidence && isWeekend(day, timeZone)) continue;
 
@@ -70,6 +88,8 @@ function render(database: Database, config: Config, options: ReportOptions): str
       daySessions,
       dayMondayItems,
       dayPullRequests,
+      dayActivities,
+      daySideQuests,
     );
 
     for (const key of projectKeys) {
@@ -110,6 +130,40 @@ function render(database: Database, config: Config, options: ReportOptions): str
         const action = prAction(pr, day, timeZone);
         lines.push(`- #${pr.number} ${pr.title}, ${action}`);
       }
+
+      const keyActivities = dayActivities.filter((row) => matchesKey(row, key));
+      if (keyActivities.length > 0) {
+        lines.push("Quests");
+        for (const [questTitle, questActivities] of groupByQuest(keyActivities)) {
+          const unconfirmed = questActivities[0]?.questConfirmed === false ? " [unconfirmed]" : "";
+          const objectives = questActivities.map((activity) => activity.objective).join("; ");
+          const minutes = questActivities.reduce((sum, activity) => sum + activity.minutes, 0);
+          lines.push(`- ${questTitle}${unconfirmed}: ${objectives} (${minutesLabel(minutes)})`);
+        }
+      }
+
+      const keySideQuests = daySideQuests.filter((row) => matchesKey(row, key));
+      if (keySideQuests.length > 0) {
+        lines.push("Side quests");
+        for (const sideQuest of keySideQuests) {
+          const branchTime = localTime(sideQuest.branchedAt, timeZone);
+          const returned = sideQuest.returnedAt
+            ? `back ${localTime(sideQuest.returnedAt, timeZone)}`
+            : "not returned";
+          lines.push(
+            `- ${sideQuest.title}, branched ${branchTime} from "${sideQuest.fromActivityObjective ?? "unknown"}", trigger: "${sideQuest.trigger ?? "unknown"}", ${returned} (${minutesLabel(sideQuest.minutes)})`,
+          );
+        }
+      }
+
+      const tracesAwaitingReview = queryOpenQuestions(database, {
+        ...dayRangeOptions,
+        org: key.org,
+        project: key.project,
+      });
+      if (tracesAwaitingReview > 0) {
+        lines.push(`- ${tracesAwaitingReview} traces awaiting review`);
+      }
     }
 
     sections.push(lines.join("\n"));
@@ -147,7 +201,7 @@ function prAction(pr: PullRequestRow, day: string, timeZone: string): string {
   return pr.state;
 }
 
-function matchesKey(row: { org: string; project: string }, key: ProjectKey): boolean {
+function matchesKey(row: { org: string | null; project: string | null }, key: ProjectKey): boolean {
   return row.org === key.org && row.project === key.project;
 }
 
@@ -156,13 +210,39 @@ function collectProjectKeys(
   sessions: SessionRow[],
   mondayItems: MondayItemRow[],
   pullRequests: PullRequestRow[],
+  activities: ActivityRow[],
+  sideQuests: SideQuestRow[],
 ): ProjectKey[] {
   const keys = new Map<string, ProjectKey>();
   for (const row of [...commits, ...sessions, ...mondayItems, ...pullRequests]) {
     const key = { org: row.org, project: row.project };
     keys.set(projectKeyString(key), key);
   }
+  for (const row of [...activities, ...sideQuests]) {
+    if (!row.org || !row.project) continue;
+    const key = { org: row.org, project: row.project };
+    keys.set(projectKeyString(key), key);
+  }
   return [...keys.values()].sort((a, b) => projectKeyString(a).localeCompare(projectKeyString(b)));
+}
+
+function minutesLabel(totalMinutes: number): string {
+  const rounded = Math.round(totalMinutes);
+  const hours = Math.floor(rounded / 60);
+  const minutes = rounded % 60;
+  return `${hours}h ${minutes}m`;
+}
+
+/** Activities grouped by their quest title, in first-seen order. */
+function groupByQuest(activities: ActivityRow[]): [string, ActivityRow[]][] {
+  const groups = new Map<string, ActivityRow[]>();
+  for (const activity of activities) {
+    const title = activity.questTitle ?? "(no quest)";
+    const list = groups.get(title) ?? [];
+    list.push(activity);
+    groups.set(title, list);
+  }
+  return [...groups.entries()];
 }
 
 export const dailyReport: Report = {
