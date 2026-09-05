@@ -246,6 +246,7 @@ function runGoalCommand(args: string[], context: IntentContext): number {
       console.error('usage: tempad goal reword <id> "<title>" [--statement]');
       return 2;
     }
+    assertEditIntent(context.database, "goal", id, "reword");
     applyIncremental(
       context.database,
       store.append({
@@ -277,6 +278,7 @@ function runGoalCommand(args: string[], context: IntentContext): number {
       console.error(`unknown goal: ${id}`);
       return 1;
     }
+    assertEditIntent(context.database, "goal", id, "replace");
     const newId = newUlid();
     applyIncremental(
       context.database,
@@ -388,6 +390,16 @@ function findQuest(
   } | null;
 }
 
+function questExists(database: Database, id: string): boolean {
+  return database.query("SELECT 1 FROM quests WHERE id = ?").get(id) !== null;
+}
+
+/** Resolves a possibly-merged quest id and confirms the underlying quest exists. */
+function resolveExistingQuest(database: Database, id: string): string | null {
+  const resolved = resolveQuest(database, id);
+  return questExists(database, resolved) ? resolved : null;
+}
+
 function runQuestCommand(args: string[], context: IntentContext): number {
   const [subcommand, ...rest] = args;
   const store = new EventStore(context.database);
@@ -449,6 +461,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       console.error('usage: tempad quest reword <id> "<title>" [--objective]');
       return 2;
     }
+    assertEditIntent(context.database, "quest", id, "reword");
     applyIncremental(
       context.database,
       store.append({
@@ -478,6 +491,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       console.error(`unknown quest: ${id}`);
       return 1;
     }
+    assertEditIntent(context.database, "quest", id, "replace");
     const newId = newUlid();
     applyIncremental(
       context.database,
@@ -549,12 +563,17 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       console.error("usage: tempad quest confirm <id>");
       return 2;
     }
+    const resolved = resolveExistingQuest(context.database, id);
+    if (!resolved) {
+      console.error(`unknown quest ${id}`);
+      return 1;
+    }
     applyIncremental(
       context.database,
       store.append({
         actor: "hero",
         kind: "quest.confirmed",
-        subject: resolveQuest(context.database, id),
+        subject: resolved,
         payload: {},
       }),
     );
@@ -573,13 +592,27 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       console.error("usage: tempad quest merge <id> --into <id>");
       return 2;
     }
+    const source = resolveExistingQuest(context.database, id);
+    if (!source) {
+      console.error(`unknown quest ${id}`);
+      return 1;
+    }
+    const target = resolveExistingQuest(context.database, values.into);
+    if (!target) {
+      console.error(`unknown quest ${values.into}`);
+      return 1;
+    }
+    if (source === target) {
+      console.error(`quest ${id} cannot be merged into itself`);
+      return 1;
+    }
     applyIncremental(
       context.database,
       store.append({
         actor: "hero",
         kind: "quest.merged",
-        subject: id,
-        payload: { into: values.into },
+        subject: source,
+        payload: { into: target },
       }),
     );
     return 0;
@@ -597,6 +630,11 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       console.error(`usage: tempad quest ${subcommand} <id> [--reason]`);
       return 2;
     }
+    const resolved = resolveExistingQuest(context.database, id);
+    if (!resolved) {
+      console.error(`unknown quest ${id}`);
+      return 1;
+    }
     const stateBySubcommand: Record<string, string> = {
       pause: "paused",
       resume: "resumed",
@@ -608,7 +646,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       store.append({
         actor: "hero",
         kind: "quest.lifecycle",
-        subject: resolveQuest(context.database, id),
+        subject: resolved,
         payload: { state: stateBySubcommand[subcommand as string], reason: values.reason },
       }),
     );
@@ -633,12 +671,17 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       );
       return 2;
     }
+    const resolved = resolveExistingQuest(context.database, id);
+    if (!resolved) {
+      console.error(`unknown quest ${id}`);
+      return 1;
+    }
     applyIncremental(
       context.database,
       store.append({
         actor: "hero",
         kind: "quest.branched",
-        subject: resolveQuest(context.database, id),
+        subject: resolved,
         payload: {
           from_activity: values["from-activity"],
           trigger: values.trigger,
@@ -661,13 +704,23 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       console.error("usage: tempad quest return <id> --to <quest-id>");
       return 2;
     }
+    const resolved = resolveExistingQuest(context.database, id);
+    if (!resolved) {
+      console.error(`unknown quest ${id}`);
+      return 1;
+    }
+    const target = resolveExistingQuest(context.database, values.to);
+    if (!target) {
+      console.error(`unknown quest ${values.to}`);
+      return 1;
+    }
     applyIncremental(
       context.database,
       store.append({
         actor: "hero",
         kind: "quest.returned",
-        subject: resolveQuest(context.database, id),
-        payload: { to_quest: resolveQuest(context.database, values.to) },
+        subject: resolved,
+        payload: { to_quest: target },
       }),
     );
     return 0;
@@ -818,9 +871,8 @@ function runAnswerCommand(args: string[], context: IntentContext): number {
   }
 
   const store = new EventStore(context.database);
-  answerQuestion(store, context.database, questionId, values.quest, values.why, "hero");
 
-  let questId = values.quest;
+  let questId: string;
   if (values.quest.startsWith("new:")) {
     const title = values.quest.slice("new:".length);
     const heroId = requireHero(context.database);
@@ -835,8 +887,10 @@ function runAnswerCommand(args: string[], context: IntentContext): number {
       }),
     );
   } else {
-    questId = resolveQuest(context.database, questId);
+    questId = resolveQuest(context.database, values.quest);
   }
+
+  answerQuestion(store, context.database, questionId, questId, values.why, "hero");
   assignActivity(store, context.database, trace.activity_id, questId, "hero");
   return 0;
 }
@@ -844,6 +898,11 @@ function runAnswerCommand(args: string[], context: IntentContext): number {
 function runRebuildCommand(args: string[], context: IntentContext): number {
   const { values } = parseArgs({ args, options: { until: { type: "string" } }, strict: true });
   rebuildAll(context.database, { until: values.until });
+  if (values.until) {
+    context.stdout(
+      `projections now reflect state as of ${values.until}; run tempad rebuild to restore`,
+    );
+  }
   return 0;
 }
 

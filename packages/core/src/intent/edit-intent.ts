@@ -32,6 +32,8 @@ export function assertEditIntent(
 ): void {
   if (intent !== undefined) return;
   if (countAttachments(database, entity, id) > 0) {
-    throw new Error(`${entity} ${id} has attachments; pass --reword or --replace`);
+    throw new Error(
+      `${entity} ${id} has attachments; use tempad ${entity} reword ${id} "<title>" or tempad ${entity} replace ${id} "<title>" --reason ...`,
+    );
   }
 }

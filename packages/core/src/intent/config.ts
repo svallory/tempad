@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 export interface W5Config {
   model: string;
@@ -40,6 +40,9 @@ function requireString(record: Record<string, unknown>, key: string, where: stri
 }
 
 export function loadIntentConfig(tomlPath: string): IntentConfig {
+  if (!existsSync(tomlPath)) {
+    return defaultIntentConfig();
+  }
   const parsed = Bun.TOML.parse(readFileSync(tomlPath, "utf8")) as Record<string, unknown>;
   const config = defaultIntentConfig();
   const hero = parsed.hero as Record<string, unknown> | undefined;

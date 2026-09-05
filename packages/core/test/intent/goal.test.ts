@@ -93,4 +93,48 @@ describe("goals", () => {
     await run(["hero", "init", "S"]);
     expect(await run(["goal", "add", "--owner", "party:nope", "G"])).toBe(1);
   });
+
+  test("reword without --statement keeps the existing statement (no NULL write)", async () => {
+    const { run, database } = harness();
+    await run(["hero", "init", "S"]);
+    await run(["goal", "add", "--owner", "hero", "G", "--statement", "Original statement"]);
+    const goal = database.query("SELECT id FROM goals").get() as { id: string };
+    expect(await run(["goal", "reword", goal.id, "New title"])).toBe(0);
+    const row = database.query("SELECT title, statement FROM goals WHERE id = ?").get(goal.id) as {
+      title: string;
+      statement: string | null;
+    };
+    expect(row.title).toBe("New title");
+    expect(row.statement).toBe("Original statement");
+  });
+
+  test("reword refuses a bare edit path when attached, but is allowed with attachments", async () => {
+    const { run, database } = harness();
+    await run(["hero", "init", "S"]);
+    await run(["goal", "add", "--owner", "hero", "G"]);
+    const goal = database.query("SELECT id FROM goals").get() as { id: string };
+    const store = new EventStore(database);
+    const quest = newUlid();
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "quest.created",
+        subject: quest,
+        payload: { owner: { kind: "hero", id: "x" }, goal: goal.id, title: "Q", confirmed: true },
+      }),
+    );
+    // reword is explicit wording-change intent: allowed even with attachments
+    expect(await run(["goal", "reword", goal.id, "G reworded"])).toBe(0);
+    // bare edit is still refused, and message names reword/replace subcommands
+    const originalError = console.error;
+    let message = "";
+    console.error = (line: string) => {
+      message = line;
+    };
+    expect(await run(["goal", "edit", goal.id, "G edited"])).toBe(1);
+    console.error = originalError;
+    expect(message).toContain(`tempad goal reword ${goal.id}`);
+    expect(message).toContain(`tempad goal replace ${goal.id}`);
+  });
 });
