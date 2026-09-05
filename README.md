@@ -35,7 +35,9 @@ TemPad is a self-awareness tool, not a surveillance tool. It exists to show what
 - **Project**: an undertaking with a name, people, and places.
 - **Place**: one spot where work leaves a trace: a repo, a board, a folder, a channel. A place belongs to one project and is reached through one tool.
 - **Tool**: what you work through: Claude Code, git, Monday, a browser.
-- **Person**: you, or someone a project involves.
+- **Hero**: you. The root everything hangs from.
+- **Party**: a group the hero belongs to, with a membership span. Goals and quests can belong to the hero or to a party.
+- **Client**: who a project is for. Not a party.
 
 Rule of thumb: **Goals** give direction, **Quests** are planned, **Activities** are what happened, **Traces** are the proof, **Places** are where, **Tools** are how, **Projects** are whose and what for.
 
