@@ -97,7 +97,7 @@ function hasIntentTables(database: Database): boolean {
  */
 function queryTraceIntervals(database: Database, range: DateRange): TraceIntervalRow[] {
   const { start, end } = toDayBounds(range);
-  const conditions = ["t.started_at < ?", "t.ended_at > ?"];
+  const conditions = ["t.retracted_at IS NULL", "t.started_at < ?", "t.ended_at > ?"];
   const params: (string | number)[] = [end, start];
 
   if (range.org) {
@@ -221,7 +221,7 @@ export function queryActivityTraceIntervals(
       `SELECT a.id as id, a.objective as objective, q.title as questTitle
        FROM activities a
        LEFT JOIN quests q ON q.id = a.quest_id
-       WHERE a.id IN (${[...activityIds].map(() => "?").join(", ")})`,
+       WHERE a.retracted_at IS NULL AND a.id IN (${[...activityIds].map(() => "?").join(", ")})`,
     )
     .all(...activityIds) as { id: string; objective: string; questTitle: string | null }[];
   const activitiesById = new Map(activityRows.map((row) => [row.id, row]));
@@ -263,7 +263,7 @@ export function queryActivities(database: Database, range: DateRange): ActivityR
               q.title as questTitle, q.confirmed as questConfirmed
        FROM activities a
        LEFT JOIN quests q ON q.id = a.quest_id
-       WHERE a.id IN (${[...activityIds].map(() => "?").join(", ")})`,
+       WHERE a.retracted_at IS NULL AND a.id IN (${[...activityIds].map(() => "?").join(", ")})`,
     )
     .all(...activityIds) as {
     id: string;
@@ -303,7 +303,12 @@ export function querySideQuests(database: Database, range: DateRange): SideQuest
   const minutesByQuestActivity = minutesByActivity(intervals, start, end);
   const projects = projectByActivity(intervals);
 
-  const conditions = ["q.branched_at IS NOT NULL", "q.branched_at >= ?", "q.branched_at < ?"];
+  const conditions = [
+    "q.retracted_at IS NULL",
+    "q.branched_at IS NOT NULL",
+    "q.branched_at >= ?",
+    "q.branched_at < ?",
+  ];
   const params: (string | number)[] = [start, end];
 
   const rows = database
@@ -384,7 +389,9 @@ export function queryQuests(database: Database, range: DateRange): QuestSummaryR
 
   const activityRows = database
     .query(
-      `SELECT id, quest_id as questId FROM activities WHERE id IN (${[...activityIds]
+      `SELECT id, quest_id as questId FROM activities WHERE retracted_at IS NULL AND id IN (${[
+        ...activityIds,
+      ]
         .map(() => "?")
         .join(", ")})`,
     )
@@ -397,7 +404,9 @@ export function queryQuests(database: Database, range: DateRange): QuestSummaryR
 
   const questRows = database
     .query(
-      `SELECT id, title, confirmed, state FROM quests WHERE id IN (${[...questIds]
+      `SELECT id, title, confirmed, state FROM quests WHERE retracted_at IS NULL AND id IN (${[
+        ...questIds,
+      ]
         .map(() => "?")
         .join(", ")})`,
     )
@@ -464,7 +473,7 @@ export function queryQuests(database: Database, range: DateRange): QuestSummaryR
 export function queryOpenQuestions(database: Database, range: DateRange): number {
   if (!hasIntentTables(database)) return 0;
   const { start, end } = toDayBounds(range);
-  const conditions = ["t.recorded_at >= ?", "t.recorded_at < ?"];
+  const conditions = ["t.retracted_at IS NULL", "t.recorded_at >= ?", "t.recorded_at < ?"];
   const params: (string | number)[] = [start, end];
 
   if (range.org) {

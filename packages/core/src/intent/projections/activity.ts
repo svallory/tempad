@@ -11,7 +11,8 @@ export const activityProjection: Projection = {
       opened_at TEXT NOT NULL,
       closed_at TEXT,
       outcome TEXT,
-      revision INTEGER NOT NULL DEFAULT 1
+      revision INTEGER NOT NULL DEFAULT 1,
+      retracted_at TEXT
     );
     CREATE TABLE IF NOT EXISTS traces (
       id TEXT PRIMARY KEY,
@@ -30,7 +31,8 @@ export const activityProjection: Projection = {
       confidence REAL NOT NULL,
       classified_by TEXT NOT NULL,
       session_id TEXT,
-      recorded_at TEXT NOT NULL
+      recorded_at TEXT NOT NULL,
+      retracted_at TEXT
     );
     CREATE TABLE IF NOT EXISTS trace_links (
       trace_id TEXT NOT NULL,
@@ -176,6 +178,18 @@ export const activityProjection: Projection = {
       }
       case "question.expired":
         database.query("UPDATE questions SET state = 'expired' WHERE id = ?").run(event.subject);
+        return;
+      case "retracted":
+        // `event.subject` is the id of the retracted row. It names at most
+        // one of a trace or an activity (ids are ULIDs from one global
+        // sequence, so exactly one of these UPDATEs ever matches a row);
+        // the quest case lives in quest.ts's own apply.
+        database
+          .query("UPDATE traces SET retracted_at = ? WHERE id = ? AND retracted_at IS NULL")
+          .run(event.at, event.subject);
+        database
+          .query("UPDATE activities SET retracted_at = ? WHERE id = ? AND retracted_at IS NULL")
+          .run(event.at, event.subject);
         return;
       default:
         return;
