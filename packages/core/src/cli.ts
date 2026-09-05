@@ -7,8 +7,22 @@ import type { Collector, SyncSummary } from "./collect/types.ts";
 import { loadConfig } from "./config/env.ts";
 import { openDatabase } from "./db/database.ts";
 import { setSyncState } from "./db/sync-state.ts";
+import { runIntentCommand } from "./intent/cli.ts";
+import { loadIntentConfig } from "./intent/config.ts";
 import { reports } from "./report/index.ts";
 import type { Report, ReportOptions } from "./report/types.ts";
+
+const INTENT_COMMANDS = new Set([
+  "hero",
+  "party",
+  "client",
+  "goal",
+  "quest",
+  "activity",
+  "trace",
+  "answer",
+  "rebuild",
+]);
 
 function printUsage(): void {
   console.error("Usage:");
@@ -135,6 +149,18 @@ async function runReportCommand(args: string[]): Promise<number> {
   return 0;
 }
 
+async function runIntentDispatch(command: string, rest: string[]): Promise<number> {
+  const config = loadConfig();
+  const database = openDatabase(join(config.home, "tempad.db"));
+  const intentConfig = loadIntentConfig(join(config.home, "tempad.toml"));
+  return runIntentCommand([command, ...rest], {
+    database,
+    config,
+    intentConfig,
+    stdout: (line: string) => console.log(line),
+  });
+}
+
 async function main(): Promise<number> {
   const [command, ...rest] = process.argv.slice(2);
 
@@ -143,6 +169,9 @@ async function main(): Promise<number> {
   }
   if (command === "report") {
     return runReportCommand(rest);
+  }
+  if (command !== undefined && INTENT_COMMANDS.has(command)) {
+    return runIntentDispatch(command, rest);
   }
 
   printUsage();

@@ -1,3 +1,28 @@
+[hero]
+name = "Saulo Vallory"
+
+[[parties]]
+slug = "mosaic"
+name = "Mosaic Strategies"
+joined = "2025-07-01"
+
+[[parties]]
+slug = "saulo-engineer"
+name = "saulo.engineer"
+
+[[clients]]
+slug = "liuna"
+name = "LiUNA"
+
+[w5]
+model = "claude-haiku-4-5-20251001"
+throttle_minutes = 10
+watch_turns = 3
+ask_min_activity_minutes = 20
+ask_budget_minutes = 30
+ask_expire_turns = 2
+backfill_days = 15
+
 [[projects]]
 pattern = "~/work/:org/:project/:rest*"
 

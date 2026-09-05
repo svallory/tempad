@@ -19,7 +19,7 @@ export function listProjections(): Projection[] {
   return [...registry.values()];
 }
 
-function ensureTables(database: Database): void {
+export function ensureTables(database: Database): void {
   for (const projection of registry.values()) database.exec(projection.createSql);
 }
 
