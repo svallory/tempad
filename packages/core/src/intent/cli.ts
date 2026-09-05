@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { parseArgs } from "node:util";
 import type { Config } from "../config/env";
 import type { IntentConfig } from "./config";
+import { assertEditIntent } from "./edit-intent";
 import { newUlid } from "./ids";
 import { applyIncremental, ensureTables, rebuildAll } from "./projections";
 import { registerAllProjections } from "./projections/register";
@@ -190,6 +191,179 @@ function runClientCommand(args: string[], context: IntentContext): number {
   return 2;
 }
 
+function parseOwnerFlag(
+  database: Database,
+  values: Record<string, unknown>,
+): { kind: "hero" | "party"; id: string } {
+  const owner = values.owner;
+  if (typeof owner !== "string") throw new Error("--owner is required (hero or party:<slug>)");
+  return resolveOwner(database, owner);
+}
+
+function runGoalCommand(args: string[], context: IntentContext): number {
+  const [subcommand, ...rest] = args;
+  const store = new EventStore(context.database);
+
+  if (subcommand === "add") {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: { owner: { type: "string" }, statement: { type: "string" } },
+      strict: true,
+      allowPositionals: true,
+    });
+    const title = positionals[0];
+    if (!title) {
+      console.error(
+        'usage: tempad goal add --owner hero|party:<slug> "<title>" [--statement "..."]',
+      );
+      return 2;
+    }
+    const owner = parseOwnerFlag(context.database, values);
+    applyIncremental(
+      context.database,
+      store.append({
+        actor: "hero",
+        kind: "goal.created",
+        subject: newUlid(),
+        payload: { owner, title, statement: values.statement },
+      }),
+    );
+    return 0;
+  }
+
+  if (subcommand === "reword") {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: { statement: { type: "string" } },
+      strict: true,
+      allowPositionals: true,
+    });
+    const [id, title] = positionals;
+    if (!id || !title) {
+      console.error('usage: tempad goal reword <id> "<title>" [--statement]');
+      return 2;
+    }
+    applyIncremental(
+      context.database,
+      store.append({
+        actor: "hero",
+        kind: "goal.reworded",
+        subject: id,
+        payload: { title, statement: values.statement },
+      }),
+    );
+    return 0;
+  }
+
+  if (subcommand === "replace") {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: { statement: { type: "string" }, reason: { type: "string" } },
+      strict: true,
+      allowPositionals: true,
+    });
+    const [id, title] = positionals;
+    if (!id || !title || !values.reason) {
+      console.error('usage: tempad goal replace <id> "<title>" [--statement] --reason "..."');
+      return 2;
+    }
+    const old = context.database
+      .query("SELECT owner_kind, owner_id FROM goals WHERE id = ?")
+      .get(id) as { owner_kind: "hero" | "party"; owner_id: string } | null;
+    if (!old) {
+      console.error(`unknown goal: ${id}`);
+      return 1;
+    }
+    const newId = newUlid();
+    applyIncremental(
+      context.database,
+      store.append({
+        actor: "hero",
+        kind: "goal.created",
+        subject: newId,
+        payload: {
+          owner: { kind: old.owner_kind, id: old.owner_id },
+          title,
+          statement: values.statement,
+        },
+      }),
+    );
+    applyIncremental(
+      context.database,
+      store.append({
+        actor: "hero",
+        kind: "goal.ended",
+        subject: id,
+        payload: { reason: "replaced", replaced_by: newId, note: values.reason },
+      }),
+    );
+    return 0;
+  }
+
+  if (subcommand === "end") {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: { reason: { type: "string" } },
+      strict: true,
+      allowPositionals: true,
+    });
+    const id = positionals[0];
+    if (!id || !values.reason) {
+      console.error("usage: tempad goal end <id> --reason achieved|abandoned");
+      return 2;
+    }
+    applyIncremental(
+      context.database,
+      store.append({
+        actor: "hero",
+        kind: "goal.ended",
+        subject: id,
+        payload: { reason: values.reason },
+      }),
+    );
+    return 0;
+  }
+
+  if (subcommand === "edit") {
+    const [id, title] = rest;
+    if (!id || !title) {
+      console.error('usage: tempad goal edit <id> "<title>"');
+      return 2;
+    }
+    assertEditIntent(context.database, "goal", id, undefined);
+    applyIncremental(
+      context.database,
+      store.append({ actor: "hero", kind: "goal.reworded", subject: id, payload: { title } }),
+    );
+    return 0;
+  }
+
+  if (subcommand === "list") {
+    const { values } = parseArgs({
+      args: rest,
+      options: { all: { type: "boolean", default: false } },
+      strict: true,
+    });
+    const where = values.all ? "" : "WHERE ended_at IS NULL";
+    const rows = context.database
+      .query(`SELECT id, title, owner_kind, end_reason FROM goals ${where} ORDER BY created_at`)
+      .all() as {
+      id: string;
+      title: string;
+      owner_kind: string;
+      end_reason: string | null;
+    }[];
+    for (const row of rows) {
+      const suffix = row.end_reason ? ` [ended ${row.end_reason}]` : "";
+      context.stdout(`${row.id}  ${row.title}  (${row.owner_kind})${suffix}`);
+    }
+    return 0;
+  }
+
+  console.error("usage: tempad goal add|reword|replace|end|edit|list ...");
+  return 2;
+}
+
 function runRebuildCommand(args: string[], context: IntentContext): number {
   const { values } = parseArgs({ args, options: { until: { type: "string" } }, strict: true });
   rebuildAll(context.database, { until: values.until });
@@ -207,6 +381,8 @@ export async function runIntentCommand(args: string[], context: IntentContext): 
         return runPartyCommand(rest, context);
       case "client":
         return runClientCommand(rest, context);
+      case "goal":
+        return runGoalCommand(rest, context);
       case "rebuild":
         return runRebuildCommand(rest, context);
       default:
