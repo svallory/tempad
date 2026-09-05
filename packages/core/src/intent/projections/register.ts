@@ -1,3 +1,4 @@
+import { activityProjection } from "./activity";
 import { goalProjection } from "./goal";
 import { heroProjection } from "./hero";
 import { registerProjection } from "./index";
@@ -12,5 +13,6 @@ export function registerAllProjections(): void {
   registerProjection(partyProjection);
   registerProjection(goalProjection);
   registerProjection(questProjection);
+  registerProjection(activityProjection);
   registered = true;
 }
