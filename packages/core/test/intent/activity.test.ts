@@ -106,4 +106,96 @@ describe("activities and traces", () => {
       ).quest_id,
     ).toBe(quest.id);
   });
+
+  test("answer stores why text when --why is given", async () => {
+    const database = openDatabase(":memory:");
+    const store = new EventStore(database);
+    const lines: string[] = [];
+    const context = {
+      database,
+      config: {} as never,
+      intentConfig: defaultIntentConfig(),
+      stdout: (line: string) => lines.push(line),
+    };
+    await runIntentCommand(["hero", "init", "S"], context);
+    const activity = openActivity(store, database, { objective: "compare Astryx", actor: "hook" });
+    const trace = recordTrace(store, database, {
+      activity,
+      tool: "claude-code",
+      place: "p",
+      source: "session",
+      sourceRef: "s",
+      startedAt: "2026-09-04T15:00:00.000Z",
+      endedAt: "2026-09-04T15:30:00.000Z",
+      who: "hero",
+      what: "x",
+      why: "unknown",
+      where: "w",
+      how: "h",
+      confidence: 0.3,
+      classifiedBy: "hook",
+      actor: "hook",
+    });
+    const question = askQuestion(store, database, {
+      trace,
+      kind: "which_quest",
+      text: "Side quest or new direction?",
+      actor: "hook",
+    });
+    expect(
+      await runIntentCommand(
+        ["answer", question, "--quest", "new:Compare Astryx", "--why", "curiosity"],
+        context,
+      ),
+    ).toBe(0);
+    const row = database
+      .query("SELECT answer, answered_by FROM questions WHERE id = ?")
+      .get(question) as { answer: string; answered_by: string };
+    expect(row.answer).toBe("curiosity");
+    expect(row.answered_by).toBe("hero");
+  });
+
+  test("answer falls back to the quest reference when --why is omitted", async () => {
+    const database = openDatabase(":memory:");
+    const store = new EventStore(database);
+    const lines: string[] = [];
+    const context = {
+      database,
+      config: {} as never,
+      intentConfig: defaultIntentConfig(),
+      stdout: (line: string) => lines.push(line),
+    };
+    await runIntentCommand(["hero", "init", "S"], context);
+    await runIntentCommand(["quest", "add", "--owner", "hero", "Existing quest"], context);
+    const quest = database.query("SELECT id FROM quests").get() as { id: string };
+    const activity = openActivity(store, database, { objective: "compare Astryx", actor: "hook" });
+    const trace = recordTrace(store, database, {
+      activity,
+      tool: "claude-code",
+      place: "p",
+      source: "session",
+      sourceRef: "s",
+      startedAt: "2026-09-04T15:00:00.000Z",
+      endedAt: "2026-09-04T15:30:00.000Z",
+      who: "hero",
+      what: "x",
+      why: "unknown",
+      where: "w",
+      how: "h",
+      confidence: 0.3,
+      classifiedBy: "hook",
+      actor: "hook",
+    });
+    const question = askQuestion(store, database, {
+      trace,
+      kind: "which_quest",
+      text: "Side quest or new direction?",
+      actor: "hook",
+    });
+    expect(await runIntentCommand(["answer", question, "--quest", quest.id], context)).toBe(0);
+    const row = database.query("SELECT answer FROM questions WHERE id = ?").get(question) as {
+      answer: string;
+    };
+    expect(row.answer).toBe(quest.id);
+  });
 });

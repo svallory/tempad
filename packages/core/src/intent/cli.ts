@@ -6,6 +6,7 @@ import type { IntentConfig } from "./config";
 import { assertEditIntent } from "./edit-intent";
 import { newUlid } from "./ids";
 import { applyIncremental, ensureTables, rebuildAll } from "./projections";
+import { resolveQuest } from "./projections/quest";
 import { registerAllProjections } from "./projections/register";
 import { EventStore } from "./store";
 import { stateAsOf } from "./time-travel";
@@ -550,7 +551,12 @@ function runQuestCommand(args: string[], context: IntentContext): number {
     }
     applyIncremental(
       context.database,
-      store.append({ actor: "hero", kind: "quest.confirmed", subject: id, payload: {} }),
+      store.append({
+        actor: "hero",
+        kind: "quest.confirmed",
+        subject: resolveQuest(context.database, id),
+        payload: {},
+      }),
     );
     return 0;
   }
@@ -602,7 +608,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       store.append({
         actor: "hero",
         kind: "quest.lifecycle",
-        subject: id,
+        subject: resolveQuest(context.database, id),
         payload: { state: stateBySubcommand[subcommand as string], reason: values.reason },
       }),
     );
@@ -632,7 +638,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       store.append({
         actor: "hero",
         kind: "quest.branched",
-        subject: id,
+        subject: resolveQuest(context.database, id),
         payload: {
           from_activity: values["from-activity"],
           trigger: values.trigger,
@@ -660,8 +666,8 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       store.append({
         actor: "hero",
         kind: "quest.returned",
-        subject: id,
-        payload: { to_quest: values.to },
+        subject: resolveQuest(context.database, id),
+        payload: { to_quest: resolveQuest(context.database, values.to) },
       }),
     );
     return 0;
@@ -682,7 +688,10 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       ? stateAsOf(context.database, values["as-of"])
       : context.database;
     const clauses: string[] = [];
-    if (!values.all) clauses.push("ended_at IS NULL");
+    if (!values.all) {
+      clauses.push("ended_at IS NULL");
+      clauses.push("merged_into IS NULL");
+    }
     if (values.unconfirmed) clauses.push("confirmed = 0");
     if (values.side) clauses.push("origin_activity_id IS NOT NULL");
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
@@ -809,7 +818,7 @@ function runAnswerCommand(args: string[], context: IntentContext): number {
   }
 
   const store = new EventStore(context.database);
-  answerQuestion(store, context.database, questionId, values.quest, "hero");
+  answerQuestion(store, context.database, questionId, values.quest, values.why, "hero");
 
   let questId = values.quest;
   if (values.quest.startsWith("new:")) {
@@ -825,6 +834,8 @@ function runAnswerCommand(args: string[], context: IntentContext): number {
         payload: { owner: { kind: "hero", id: heroId }, title, confirmed: false },
       }),
     );
+  } else {
+    questId = resolveQuest(context.database, questId);
   }
   assignActivity(store, context.database, trace.activity_id, questId, "hero");
   return 0;
