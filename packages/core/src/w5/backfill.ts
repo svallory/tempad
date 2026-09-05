@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env";
 import type { W5Config } from "../intent/config";
+import { applyIncremental } from "../intent/projections";
 import { registerAllProjections } from "../intent/projections/register";
 import { EventStore } from "../intent/store";
 import { applyResult } from "./apply";
@@ -35,8 +36,10 @@ function isWindowCovered(
   windowEndedAt: string,
 ): boolean {
   const row = database
-    .query("SELECT id FROM traces WHERE session_id = ? AND started_at = ? AND ended_at = ? LIMIT 1")
-    .get(sessionId, windowStartedAt, windowEndedAt) as { id: string } | null;
+    .query(
+      "SELECT rowid FROM w5_windows WHERE session_id = ? AND started_at = ? AND ended_at = ? LIMIT 1",
+    )
+    .get(sessionId, windowStartedAt, windowEndedAt) as { rowid: number } | null;
   return row !== null;
 }
 
@@ -111,6 +114,8 @@ export async function backfill(
 
     for (const { chunk, index } of pendingChunks) {
       const chunkWindow = { ...fullWindow, messages: chunk };
+      const startedAt = chunk[0]?.ts ?? session.ended_at;
+      const endedAt = chunk.at(-1)?.ts ?? session.ended_at;
 
       try {
         let result: Awaited<ReturnType<typeof classifier.classify>>;
@@ -124,6 +129,17 @@ export async function backfill(
           askingEnabled: false,
           now: options.now,
         });
+        applyIncremental(
+          database,
+          store.append({
+            actor: "backfill",
+            kind: "window.classified",
+            subject: session.id,
+            sessionId: session.id,
+            payload: { session: session.id, startedAt, endedAt },
+            at: options.now,
+          }),
+        );
         windowsClassified += 1;
         sessionHadSuccess = true;
       } catch (error) {

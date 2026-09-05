@@ -137,71 +137,79 @@ describe("backfill", () => {
     expect(secondResult.windowsClassified).toBe(0);
   });
 
-  test("window-level idempotence: a window whose exact (started_at, ended_at) trace already exists is skipped even if a crashed run left an earlier window uncovered", async () => {
+  test("coverage is segment-independent: a window a classifier splits into 2+ segments is still recognized as covered on the next run", async () => {
     const database = openDatabase(":memory:");
     seedHero(database);
-    // Two windows spaced 40 minutes apart (> windowMinutes = 30): a crashed
-    // run that only classified the second (later) window would, under the
-    // old ended_at >= check, make the first window look "covered" too since
-    // its ended_at is earlier than the recorded trace's ended_at is wrong --
-    // the bug this brief fixes. Here we simulate the crashed run recording
-    // only the second window's trace, and confirm the first window is still
-    // classified on the next run while the second is correctly skipped.
-    seedSession(database, {
-      id: "s1",
-      endedAt: "2026-09-04T15:40:00.000Z",
-      messageTimestamps: ["2026-09-04T15:00:00.000Z", "2026-09-04T15:40:00.000Z"],
-    });
+    seedSession(database, { id: "s1", endedAt: "2026-09-04T15:20:00.000Z" });
 
-    const store = new EventStore(database);
-    applyIncremental(
-      database,
-      store.append({
-        actor: "hook",
-        kind: "activity.opened",
-        subject: "A1",
-        payload: { objective: "work" },
-        at: "2026-09-04T15:40:00.000Z",
-      }),
-    );
-    applyIncremental(
-      database,
-      store.append({
-        actor: "backfill",
-        kind: "trace.recorded",
-        subject: "T1",
-        sessionId: "s1",
-        payload: {
-          activity: "A1",
-          tool: "claude-code",
-          place: "p",
-          source: "session",
-          started_at: "2026-09-04T15:40:00.000Z",
-          ended_at: "2026-09-04T15:40:00.000Z",
-          who: "hero",
-          what: "work",
-          why: "ship",
-          where: "personal/p",
-          how: "claude-code",
-          confidence: 0.9,
-          classified_by: "assistant",
-        },
-      }),
-    );
+    class TwoSegmentClassifier implements Classifier {
+      public calls = 0;
+      async classify(window: ClassifierWindow): Promise<ClassifierResult> {
+        this.calls += 1;
+        const first = window.messages[0]?.ts ?? "2026-09-04T15:00:00.000Z";
+        const last = window.messages.at(-1)?.ts ?? first;
+        const mid = new Date((Date.parse(first) + Date.parse(last)) / 2).toISOString();
+        return {
+          segments: [
+            {
+              startedAt: first,
+              endedAt: mid,
+              what: "work part 1",
+              why: "ship",
+              matchedQuest: null,
+              proposedQuest: null,
+              matchedActivity: null,
+              isSwitch: false,
+              trigger: null,
+              confidence: 0.9,
+              questions: [],
+            },
+            {
+              startedAt: mid,
+              endedAt: last,
+              what: "work part 2",
+              why: "ship",
+              matchedQuest: null,
+              proposedQuest: null,
+              matchedActivity: null,
+              isSwitch: false,
+              trigger: null,
+              confidence: 0.9,
+              questions: [],
+            },
+          ],
+        };
+      }
+    }
 
-    const classifier = new FakeClassifier();
+    const classifier = new TwoSegmentClassifier();
     const logs: string[] = [];
 
-    const result = await backfill(database, makeConfig(), config, classifier, {
+    const firstResult = await backfill(database, makeConfig(), config, classifier, {
       days: 15,
-      now: "2026-09-04T18:00:00.000Z",
+      now: "2026-09-04T17:00:00.000Z",
       log: (line) => logs.push(line),
     });
 
-    // Only the first window (15:00) is missing a trace with matching exact
-    // bounds; the second window (15:40) already has one and is skipped.
-    expect(result.windowsClassified).toBe(1);
-    expect(result.windowsSkipped).toBe(1);
+    expect(firstResult.windowsClassified).toBe(1);
+    // Two segments -> two traces, neither of which individually spans the
+    // whole window -- the bug this test guards against would have neither
+    // trace match the window's exact bounds, so the window looks uncovered
+    // forever and gets reclassified every run.
+    const traceCount = database.query("SELECT COUNT(*) as count FROM traces").get() as {
+      count: number;
+    };
+    expect(traceCount.count).toBe(2);
+
+    const secondResult = await backfill(database, makeConfig(), config, classifier, {
+      days: 15,
+      now: "2026-09-04T17:00:00.000Z",
+      log: (line) => logs.push(line),
+    });
+
+    expect(secondResult.windowsClassified).toBe(0);
+    expect(secondResult.windowsSkipped).toBe(1);
+    expect(classifier.calls).toBe(1);
   });
 
   test("a failed final window does not stop earlier windows and is retried next run", async () => {

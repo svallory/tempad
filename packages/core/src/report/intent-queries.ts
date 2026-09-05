@@ -332,7 +332,7 @@ export function querySideQuests(database: Database, range: DateRange): SideQuest
 
   return rows.map((row) => {
     const questActivities = database
-      .query("SELECT id FROM activities WHERE quest_id = ?")
+      .query("SELECT id FROM activities WHERE quest_id = ? AND retracted_at IS NULL")
       .all(row.id) as { id: string }[];
 
     let minutes = 0;
