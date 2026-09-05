@@ -147,12 +147,18 @@ export function answerQuestion(
   store: EventStore,
   database: Database,
   questionId: string,
-  answer: string,
+  quest: string,
+  why: string | undefined,
   actor: Actor,
 ): void {
   applyIncremental(
     database,
-    store.append({ actor, kind: "question.answered", subject: questionId, payload: { answer } }),
+    store.append({
+      actor,
+      kind: "question.answered",
+      subject: questionId,
+      payload: { quest, why, answeredBy: actor },
+    }),
   );
 }
 

@@ -148,18 +148,21 @@ export const activityProjection: Projection = {
             event.at,
           );
         return;
-      case "question.answered":
+      case "question.answered": {
+        const why = payload.why ? String(payload.why) : undefined;
+        const answer = why ?? (payload.quest ? String(payload.quest) : null);
         database
           .query(
             "UPDATE questions SET state = 'answered', answered_at = ?, answer = ?, answered_by = ? WHERE id = ?",
           )
           .run(
             event.at,
-            payload.answer ? String(payload.answer) : null,
-            String(event.actor),
+            answer,
+            payload.answeredBy ? String(payload.answeredBy) : String(event.actor),
             event.subject,
           );
         return;
+      }
       case "question.expired":
         database.query("UPDATE questions SET state = 'expired' WHERE id = ?").run(event.subject);
         return;

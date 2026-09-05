@@ -1,7 +1,9 @@
-import { ulid } from "ulid";
+import { monotonicFactory } from "ulid";
+
+const monotonicUlid = monotonicFactory();
 
 export function newUlid(): string {
-  return ulid();
+  return monotonicUlid();
 }
 
 export function isUlid(value: string): boolean {

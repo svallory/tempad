@@ -119,4 +119,64 @@ describe("quests", () => {
       ).merged_into,
     ).toBe(a?.id ?? "");
   });
+
+  test("list hides merged quests unless --all is passed", async () => {
+    const { run, database, lines } = harness();
+    await run(["hero", "init", "S"]);
+    await run(["quest", "add", "--owner", "hero", "A"]);
+    await run(["quest", "add", "--owner", "hero", "B"]);
+    const [a, b] = database.query("SELECT id FROM quests ORDER BY title").all() as { id: string }[];
+    await run(["quest", "merge", b?.id ?? "", "--into", a?.id ?? ""]);
+
+    lines.length = 0;
+    await run(["quest", "list"]);
+    expect(lines.some((line) => line.startsWith(`${b?.id}  `))).toBe(false);
+    expect(lines.some((line) => line.startsWith(`${a?.id}  `))).toBe(true);
+
+    lines.length = 0;
+    await run(["quest", "list", "--all"]);
+    expect(lines.some((line) => line.startsWith(`${b?.id}  `))).toBe(true);
+  });
+
+  test("assigning an activity to a merged quest resolves through the merge", async () => {
+    const { run, database } = harness();
+    await run(["hero", "init", "S"]);
+    await run(["quest", "add", "--owner", "hero", "A"]);
+    await run(["quest", "add", "--owner", "hero", "B"]);
+    const [a, b] = database.query("SELECT id FROM quests ORDER BY title").all() as { id: string }[];
+    expect(await run(["quest", "merge", b?.id ?? "", "--into", a?.id ?? ""])).toBe(0);
+
+    const { askQuestion, openActivity, recordTrace } = await import("../../src/intent/api");
+    const { EventStore } = await import("../../src/intent/store");
+    const store = new EventStore(database);
+    const activity = openActivity(store, database, { objective: "work", actor: "hook" });
+    const trace = recordTrace(store, database, {
+      activity,
+      tool: "claude-code",
+      place: "p",
+      source: "session",
+      sourceRef: "s",
+      startedAt: "2026-09-04T15:00:00.000Z",
+      endedAt: "2026-09-04T15:30:00.000Z",
+      who: "hero",
+      what: "x",
+      why: "unknown",
+      where: "w",
+      how: "h",
+      confidence: 0.3,
+      classifiedBy: "hook",
+      actor: "hook",
+    });
+    const question = askQuestion(store, database, {
+      trace,
+      kind: "which_quest",
+      text: "Which quest?",
+      actor: "hook",
+    });
+    expect(await run(["answer", question, "--quest", b?.id ?? ""])).toBe(0);
+    const row = database.query("SELECT quest_id FROM activities WHERE id = ?").get(activity) as {
+      quest_id: string;
+    };
+    expect(row.quest_id).toBe(a?.id ?? "");
+  });
 });
