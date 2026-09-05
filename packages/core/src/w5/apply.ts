@@ -176,7 +176,7 @@ export function applyResult(
       activity: activityId,
       tool: "claude-code",
       place: `${window.org}/${window.project}`,
-      source: "w5",
+      source: "session",
       startedAt: segment.startedAt,
       endedAt: segment.endedAt,
       who: "hero",

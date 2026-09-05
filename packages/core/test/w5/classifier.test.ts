@@ -111,4 +111,47 @@ describe("classifier", () => {
     const classifier = new AnthropicClassifier({ apiKey: "k", model: "m", fetch: fakeFetch });
     await expect(classifier.classify(window)).rejects.toThrow();
   });
+
+  test("validateResult rejects a segment whose timestamps fall outside the window", () => {
+    expect(() =>
+      validateResult(
+        {
+          segments: [{ ...good.segments[0], startedAt: "2026-09-04T13:00:00.000Z" }],
+        },
+        window,
+      ),
+    ).toThrow(/outside the window/);
+
+    expect(() =>
+      validateResult(
+        {
+          segments: [{ ...good.segments[0], endedAt: "2026-09-04T18:00:00.000Z" }],
+        },
+        window,
+      ),
+    ).toThrow(/outside the window/);
+
+    expect(validateResult(good, window).segments.length).toBe(2);
+  });
+
+  test("anthropic client throws with status and body excerpt on a non-2xx response, never the key", async () => {
+    const secretKey = "sk-ant-super-secret-do-not-leak";
+    const fakeFetch = (async () =>
+      new Response("unauthorized: invalid x-api-key header", {
+        status: 401,
+      })) as unknown as typeof fetch;
+    const classifier = new AnthropicClassifier({ apiKey: secretKey, model: "m", fetch: fakeFetch });
+
+    let message = "";
+    try {
+      await classifier.classify(window);
+      throw new Error("should have thrown");
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain("401");
+    expect(message).toContain("unauthorized: invalid x-api-key header");
+    expect(message).not.toContain(secretKey);
+  });
 });

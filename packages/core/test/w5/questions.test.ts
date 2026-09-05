@@ -32,7 +32,7 @@ function seedActivityAndTrace(
   database
     .query(
       `INSERT INTO traces (id, activity_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
-       VALUES (?, ?, 'claude-code', 'p', 'w5', '2026-09-04T15:00:00.000Z', '2026-09-04T15:20:00.000Z', 'hero', 'what', 'why', 'p', 'claude-code', 0.6, 'assistant', ?, '2026-09-04T15:20:00.000Z')`,
+       VALUES (?, ?, 'claude-code', 'p', 'session', '2026-09-04T15:00:00.000Z', '2026-09-04T15:20:00.000Z', 'hero', 'what', 'why', 'p', 'claude-code', 0.6, 'assistant', ?, '2026-09-04T15:20:00.000Z')`,
     )
     .run(traceId, input.activityId, input.sessionId);
   return traceId;

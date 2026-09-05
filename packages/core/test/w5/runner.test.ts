@@ -168,6 +168,48 @@ describe("runOnce", () => {
     expect(result.ran).toBe(false);
   });
 
+  test("computes sessionActivityMinutes from claude_messages instead of hardcoding 0", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-runner-test-"));
+    try {
+      const database = openDatabase(":memory:");
+      seedHero(database);
+      seedSessionWithMessages(database, join(dir, "s1.jsonl"));
+      enqueueJob(database, { sessionId: "s1", forced: false, throttleMinutes: 10 });
+
+      const withQuestion: ClassifierResult = {
+        segments: [
+          {
+            startedAt: "2026-09-04T15:00:00.000Z",
+            endedAt: "2026-09-04T15:20:00.000Z",
+            what: "fix walk order",
+            why: "unknown",
+            matchedQuest: null,
+            proposedQuest: null,
+            matchedActivity: null,
+            isSwitch: false,
+            trigger: null,
+            confidence: 0.6,
+            questions: ["why"],
+          },
+        ],
+      };
+      const classifier = new FakeClassifier(withQuestion);
+      const lowWatchConfig: W5Config = { ...config, watchTurns: 2, askMinActivityMinutes: 20 };
+
+      await runOnce(database, makeConfig(dir), lowWatchConfig, classifier, {
+        now: "2026-09-04T15:21:00.000Z",
+        log: () => {},
+      });
+
+      // session spans exactly 20 minutes (15:00 -> 15:20), meeting askMinActivityMinutes;
+      // with sessionActivityMinutes hardcoded to 0 this question would never qualify to be asked.
+      const question = database.query("SELECT state FROM questions").get() as { state: string };
+      expect(question.state).toBe("asked");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("a classifier that throws marks the job failed and does not throw", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tempad-runner-test-"));
     try {

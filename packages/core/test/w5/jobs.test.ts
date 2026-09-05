@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { openDatabase } from "../../src/db/database";
-import { claimNextJob, completeJob, enqueueJob, failJob } from "../../src/w5/jobs";
+import { claimNextJob, completeJob, enqueueJob, failJob, isThrottled } from "../../src/w5/jobs";
 
 describe("w5 jobs", () => {
   test("enqueue, throttle, duplicate upgrade, claim, complete", () => {
@@ -60,6 +60,21 @@ describe("w5 jobs", () => {
         throttleMinutes: 10,
       }).enqueued,
     ).toBe(false);
+  });
+
+  test("isThrottled reflects w5_runs.last_run_at directly", () => {
+    const database = openDatabase(":memory:");
+    expect(isThrottled(database, "s3", "2026-09-05T10:00:00.000Z", 10)).toBe(false);
+    enqueueJob(database, {
+      sessionId: "s3",
+      forced: true,
+      now: "2026-09-05T10:00:00.000Z",
+      throttleMinutes: 10,
+    });
+    const job = claimNextJob(database, "2026-09-05T10:00:00.000Z");
+    completeJob(database, job?.id ?? 0, null);
+    expect(isThrottled(database, "s3", "2026-09-05T10:05:00.000Z", 10)).toBe(true);
+    expect(isThrottled(database, "s3", "2026-09-05T10:15:00.000Z", 10)).toBe(false);
   });
 
   test("failJob records the error and frees the queue", () => {
