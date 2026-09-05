@@ -228,6 +228,100 @@ export function querySideQuests(database: Database, range: DateRange): SideQuest
   });
 }
 
+export interface QuestSummaryRow {
+  id: string;
+  title: string;
+  confirmed: boolean;
+  state: string;
+  org: string | null;
+  project: string | null;
+  firstEvidence: string;
+  lastEvidence: string;
+  activities: number;
+  sideQuestMinutes: number;
+}
+
+/**
+ * One row per quest with an activity touched in range (a linked trace
+ * started or ended in range), for the project report's quest table.
+ * `commits`/`sessions` are not counted here -- quests carry no direct link
+ * to `gh_commits`/`claude_sessions` rows, only to traces, which the caller
+ * already has by org/project from `queryCommits`/`querySessions`.
+ */
+export function queryQuests(database: Database, range: DateRange): QuestSummaryRow[] {
+  if (!hasIntentTables(database)) return [];
+  const intervals = queryTraceIntervals(database, range);
+  const projects = projectByActivity(intervals);
+
+  const activityIds = new Set(intervals.map((interval) => interval.activityId));
+  if (activityIds.size === 0) return [];
+
+  const activityRows = database
+    .query(
+      `SELECT id, quest_id as questId, opened_at as openedAt, closed_at as closedAt
+       FROM activities WHERE id IN (${[...activityIds].map(() => "?").join(", ")})`,
+    )
+    .all(...activityIds) as {
+    id: string;
+    questId: string | null;
+    openedAt: string;
+    closedAt: string | null;
+  }[];
+
+  const questIds = new Set(
+    activityRows.map((row) => row.questId).filter((id): id is string => id !== null),
+  );
+  if (questIds.size === 0) return [];
+
+  const questRows = database
+    .query(
+      `SELECT id, title, confirmed, state FROM quests WHERE id IN (${[...questIds]
+        .map(() => "?")
+        .join(", ")})`,
+    )
+    .all(...questIds) as { id: string; title: string; confirmed: number; state: string }[];
+
+  const sideQuestMinutesByQuestId = new Map<string, number>();
+  for (const sideQuest of querySideQuests(database, range)) {
+    const origin = database
+      .query("SELECT origin_activity_id as originActivityId FROM quests WHERE id = ?")
+      .get(sideQuest.id) as { originActivityId: string | null } | null;
+    const parentId = activityRows.find((row) => row.id === origin?.originActivityId)?.questId;
+    if (!parentId) continue;
+    sideQuestMinutesByQuestId.set(
+      parentId,
+      (sideQuestMinutesByQuestId.get(parentId) ?? 0) + sideQuest.minutes,
+    );
+  }
+
+  return questRows.map((quest) => {
+    const questActivities = activityRows.filter((row) => row.questId === quest.id);
+    const evidenceTimes = questActivities.flatMap((row) =>
+      row.closedAt ? [row.openedAt, row.closedAt] : [row.openedAt],
+    );
+    const firstEvidence = evidenceTimes.reduce((min, time) => (time < min ? time : min));
+    const lastEvidence = evidenceTimes.reduce((max, time) => (time > max ? time : max));
+
+    let project: { org: string; project: string } | null = null;
+    for (const activity of questActivities) {
+      project ??= projects.get(activity.id) ?? null;
+    }
+
+    return {
+      id: quest.id,
+      title: quest.title,
+      confirmed: quest.confirmed === 1,
+      state: quest.state,
+      org: project?.org ?? null,
+      project: project?.project ?? null,
+      firstEvidence,
+      lastEvidence,
+      activities: questActivities.length,
+      sideQuestMinutes: sideQuestMinutesByQuestId.get(quest.id) ?? 0,
+    };
+  });
+}
+
 /**
  * Traces `tempad review` will surface: those attached to an expired question,
  * or classified with zero confidence (the model dropped them per spec's error

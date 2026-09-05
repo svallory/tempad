@@ -9,6 +9,6 @@ export interface ReportOptions {
 }
 
 export interface Report {
-  kind: "daily" | "project" | "hourly";
+  kind: "daily" | "project" | "hourly" | "weekly";
   render(database: Database, config: Config, options: ReportOptions): string;
 }

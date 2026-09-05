@@ -1,0 +1,183 @@
+import type { Database } from "bun:sqlite";
+import type { Config } from "../config/env.ts";
+import { queryActivities, queryQuests, querySideQuests } from "./intent-queries.ts";
+import { dayRange, heading, isWeekend, localWeekday, table } from "./markdown.ts";
+import type { Report, ReportOptions } from "./types.ts";
+
+interface ProjectKey {
+  org: string;
+  project: string;
+}
+
+function projectKeyString(key: ProjectKey): string {
+  return `${key.org}/${key.project}`;
+}
+
+function minutesLabel(totalMinutes: number): string {
+  const rounded = Math.round(totalMinutes);
+  const hours = Math.floor(rounded / 60);
+  const minutes = rounded % 60;
+  return `${hours}h ${minutes}m`;
+}
+
+interface DayProjectStats {
+  activities: number;
+  questsTouched: number;
+  shipped: number;
+  abandoned: number;
+  sideQuests: number;
+  sideQuestMinutes: number;
+  unconfirmedQuests: number;
+}
+
+function emptyStats(): DayProjectStats {
+  return {
+    activities: 0,
+    questsTouched: 0,
+    shipped: 0,
+    abandoned: 0,
+    sideQuests: 0,
+    sideQuestMinutes: 0,
+    unconfirmedQuests: 0,
+  };
+}
+
+function addStats(a: DayProjectStats, b: DayProjectStats): DayProjectStats {
+  return {
+    activities: a.activities + b.activities,
+    questsTouched: a.questsTouched + b.questsTouched,
+    shipped: a.shipped + b.shipped,
+    abandoned: a.abandoned + b.abandoned,
+    sideQuests: a.sideQuests + b.sideQuests,
+    sideQuestMinutes: a.sideQuestMinutes + b.sideQuestMinutes,
+    unconfirmedQuests: a.unconfirmedQuests + b.unconfirmedQuests,
+  };
+}
+
+function statsRow(label: string, stats: DayProjectStats): string[] {
+  return [
+    label,
+    String(stats.activities),
+    String(stats.questsTouched),
+    String(stats.shipped),
+    String(stats.abandoned),
+    String(stats.sideQuests),
+    minutesLabel(stats.sideQuestMinutes),
+    String(stats.unconfirmedQuests),
+  ];
+}
+
+const HEADERS = [
+  "project",
+  "activities",
+  "quests touched",
+  "shipped",
+  "abandoned",
+  "side quests",
+  "side-quest minutes",
+  "unconfirmed quests",
+];
+
+function render(database: Database, config: Config, options: ReportOptions): string {
+  const timeZone = config.tz;
+  const days = dayRange(options.from, options.to);
+  const sections: string[] = [heading(1, `weekly report ${options.from} to ${options.to}`)];
+
+  const weekTotals = new Map<string, { key: ProjectKey; stats: DayProjectStats }>();
+
+  for (const day of days) {
+    const dayRangeOptions = {
+      from: day,
+      to: day,
+      timeZone,
+      org: options.org,
+      project: options.project,
+    };
+    const activities = queryActivities(database, dayRangeOptions);
+    const quests = queryQuests(database, dayRangeOptions);
+    const sideQuests = querySideQuests(database, dayRangeOptions);
+
+    const hasEvidence = activities.length > 0 || quests.length > 0 || sideQuests.length > 0;
+    if (!hasEvidence && isWeekend(day, timeZone)) continue;
+
+    const keys = new Map<string, ProjectKey>();
+    for (const row of [...activities, ...quests, ...sideQuests]) {
+      if (!row.org || !row.project) continue;
+      keys.set(projectKeyString({ org: row.org, project: row.project }), {
+        org: row.org,
+        project: row.project,
+      });
+    }
+
+    const weekday = localWeekday(day, timeZone);
+    const lines = [heading(2, `${day} (${weekday})`)];
+
+    if (keys.size === 0) {
+      lines.push("no evidence");
+      sections.push(lines.join("\n"));
+      continue;
+    }
+
+    const sortedKeys = [...keys.values()].sort((a, b) =>
+      projectKeyString(a).localeCompare(projectKeyString(b)),
+    );
+
+    const rows: string[][] = [];
+    let dayTotal = emptyStats();
+
+    for (const key of sortedKeys) {
+      const stats: DayProjectStats = {
+        activities: activities.filter((row) => row.org === key.org && row.project === key.project)
+          .length,
+        questsTouched: quests.filter((row) => row.org === key.org && row.project === key.project)
+          .length,
+        shipped: quests.filter(
+          (row) => row.org === key.org && row.project === key.project && row.state === "done",
+        ).length,
+        abandoned: quests.filter(
+          (row) => row.org === key.org && row.project === key.project && row.state === "abandoned",
+        ).length,
+        sideQuests: sideQuests.filter((row) => row.org === key.org && row.project === key.project)
+          .length,
+        sideQuestMinutes: sideQuests
+          .filter((row) => row.org === key.org && row.project === key.project)
+          .reduce((sum, row) => sum + row.minutes, 0),
+        unconfirmedQuests: quests.filter(
+          (row) => row.org === key.org && row.project === key.project && !row.confirmed,
+        ).length,
+      };
+
+      rows.push(statsRow(projectKeyString(key), stats));
+      dayTotal = addStats(dayTotal, stats);
+
+      const existing = weekTotals.get(projectKeyString(key));
+      weekTotals.set(projectKeyString(key), {
+        key,
+        stats: addStats(existing?.stats ?? emptyStats(), stats),
+      });
+    }
+
+    rows.push(statsRow("Totals", dayTotal));
+
+    lines.push("", table(HEADERS, rows));
+    sections.push(lines.join("\n"));
+  }
+
+  if (weekTotals.size > 0) {
+    const sortedWeekKeys = [...weekTotals.values()].sort((a, b) =>
+      projectKeyString(a.key).localeCompare(projectKeyString(b.key)),
+    );
+    const rows = sortedWeekKeys.map(({ key, stats }) => statsRow(projectKeyString(key), stats));
+    const weekTotal = sortedWeekKeys.reduce((sum, { stats }) => addStats(sum, stats), emptyStats());
+    rows.push(statsRow("Totals", weekTotal));
+
+    sections.push([heading(2, "Week"), "", table(HEADERS, rows)].join("\n"));
+  }
+
+  return sections.join("\n\n");
+}
+
+export const weeklyReport: Report = {
+  kind: "weekly",
+  render,
+};

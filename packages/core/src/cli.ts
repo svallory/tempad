@@ -29,7 +29,7 @@ function printUsage(): void {
   console.error("Usage:");
   console.error("  tempad sync [monday|github|claude] [--full]");
   console.error(
-    "  tempad report <daily|project|hourly> --from <date> --to <date> [--org X] [--project Y] [--out path]",
+    "  tempad report <daily|project|hourly|weekly> --from <date> --to <date> [--org X] [--project Y] [--out path]",
   );
   console.error('  tempad hero init "<name>"');
   console.error(
