@@ -124,7 +124,7 @@ export async function backfill(
 
     if (sessionHadSuccess) {
       sessionsClassified += 1;
-      options.log(`backfill: classified ${session.id} (${chunks.length} window(s))`);
+      options.log(`backfill: classified ${session.id} (${pendingChunks.length} window(s))`);
     }
   }
 
