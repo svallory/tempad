@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { parseArgs } from "node:util";
 import type { Config } from "../config/env";
+import { answerQuestion, assignActivity } from "./api";
 import type { IntentConfig } from "./config";
 import { assertEditIntent } from "./edit-intent";
 import { newUlid } from "./ids";
@@ -693,6 +694,134 @@ function runQuestCommand(args: string[], context: IntentContext): number {
   return 2;
 }
 
+function runActivityCommand(args: string[], context: IntentContext): number {
+  const [subcommand, ...rest] = args;
+  if (subcommand === "list") {
+    const { values } = parseArgs({
+      args: rest,
+      options: { open: { type: "boolean", default: false }, quest: { type: "string" } },
+      strict: true,
+    });
+    const clauses: string[] = [];
+    const parameters: string[] = [];
+    if (values.open) clauses.push("closed_at IS NULL");
+    if (values.quest) {
+      clauses.push("quest_id = ?");
+      parameters.push(values.quest);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = context.database
+      .query(
+        `SELECT id, objective, quest_id, closed_at FROM activities ${where} ORDER BY opened_at`,
+      )
+      .all(...parameters) as {
+      id: string;
+      objective: string;
+      quest_id: string | null;
+      closed_at: string | null;
+    }[];
+    for (const row of rows) {
+      const status = row.closed_at ? "closed" : "open";
+      context.stdout(
+        `${row.id}  ${row.objective}  (${status})${row.quest_id ? ` quest=${row.quest_id}` : ""}`,
+      );
+    }
+    return 0;
+  }
+  console.error("usage: tempad activity list [--open] [--quest <id>]");
+  return 2;
+}
+
+function runTraceCommand(args: string[], context: IntentContext): number {
+  const [subcommand, ...rest] = args;
+  if (subcommand === "list") {
+    const { values } = parseArgs({
+      args: rest,
+      options: { since: { type: "string" }, activity: { type: "string" } },
+      strict: true,
+    });
+    const clauses: string[] = [];
+    const parameters: string[] = [];
+    if (values.since) {
+      clauses.push("started_at >= ?");
+      parameters.push(values.since);
+    }
+    if (values.activity) {
+      clauses.push("activity_id = ?");
+      parameters.push(values.activity);
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = context.database
+      .query(
+        `SELECT id, activity_id, what, why, confidence FROM traces ${where} ORDER BY started_at`,
+      )
+      .all(...parameters) as {
+      id: string;
+      activity_id: string;
+      what: string;
+      why: string;
+      confidence: number;
+    }[];
+    for (const row of rows) {
+      context.stdout(
+        `${row.id}  ${row.what}  why=${row.why}  confidence=${row.confidence}  activity=${row.activity_id}`,
+      );
+    }
+    return 0;
+  }
+  console.error("usage: tempad trace list [--since <iso>] [--activity <id>]");
+  return 2;
+}
+
+function runAnswerCommand(args: string[], context: IntentContext): number {
+  const { values, positionals } = parseArgs({
+    args,
+    options: { quest: { type: "string" }, why: { type: "string" } },
+    strict: true,
+    allowPositionals: true,
+  });
+  const questionId = positionals[0];
+  if (!questionId || !values.quest) {
+    console.error('usage: tempad answer <question-id> --quest <id|new:"title"> [--why "..."]');
+    return 2;
+  }
+  const question = context.database
+    .query("SELECT trace_id FROM questions WHERE id = ?")
+    .get(questionId) as { trace_id: string } | null;
+  if (!question) {
+    console.error(`unknown question: ${questionId}`);
+    return 1;
+  }
+  const trace = context.database
+    .query("SELECT activity_id FROM traces WHERE id = ?")
+    .get(question.trace_id) as { activity_id: string } | null;
+  if (!trace) {
+    console.error(`unknown trace: ${question.trace_id}`);
+    return 1;
+  }
+
+  const store = new EventStore(context.database);
+  answerQuestion(store, context.database, questionId, values.quest, "hero");
+
+  let questId = values.quest;
+  if (values.quest.startsWith("new:")) {
+    const title = values.quest.slice("new:".length);
+    const heroId = requireHero(context.database);
+    questId = newUlid();
+    applyIncremental(
+      context.database,
+      store.append({
+        actor: "hero",
+        kind: "quest.created",
+        subject: questId,
+        payload: { owner: { kind: "hero", id: heroId }, title, confirmed: false },
+      }),
+    );
+  }
+  assignActivity(store, context.database, trace.activity_id, questId, "hero");
+  return 0;
+}
+
 function runRebuildCommand(args: string[], context: IntentContext): number {
   const { values } = parseArgs({ args, options: { until: { type: "string" } }, strict: true });
   rebuildAll(context.database, { until: values.until });
@@ -714,6 +843,12 @@ export async function runIntentCommand(args: string[], context: IntentContext): 
         return runGoalCommand(rest, context);
       case "quest":
         return runQuestCommand(rest, context);
+      case "activity":
+        return runActivityCommand(rest, context);
+      case "trace":
+        return runTraceCommand(rest, context);
+      case "answer":
+        return runAnswerCommand(rest, context);
       case "rebuild":
         return runRebuildCommand(rest, context);
       default:
