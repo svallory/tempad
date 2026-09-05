@@ -67,8 +67,7 @@ describe("goals", () => {
     expect(rows[0]?.replaced_by).toBe(rows[1]?.id);
   });
 
-  // enabled in Task 5 (needs the real quests projection to exist)
-  test.skip("bare edit is refused once the goal has attachments", async () => {
+  test("bare edit is refused once the goal has attachments", async () => {
     const { run, database } = harness();
     await run(["hero", "init", "S"]);
     await run(["goal", "add", "--owner", "hero", "G"]);
