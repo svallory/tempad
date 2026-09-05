@@ -2,6 +2,7 @@ import { goalProjection } from "./goal";
 import { heroProjection } from "./hero";
 import { registerProjection } from "./index";
 import { partyProjection } from "./party";
+import { questProjection } from "./quest";
 
 let registered = false;
 
@@ -10,5 +11,6 @@ export function registerAllProjections(): void {
   registerProjection(heroProjection);
   registerProjection(partyProjection);
   registerProjection(goalProjection);
+  registerProjection(questProjection);
   registered = true;
 }

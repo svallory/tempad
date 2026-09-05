@@ -364,6 +364,335 @@ function runGoalCommand(args: string[], context: IntentContext): number {
   return 2;
 }
 
+function parseBudget(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const match = /^(\d+)(h|m)$/.exec(raw);
+  if (!match?.[1] || !match[2]) throw new Error(`invalid --budget: ${raw} (expected Nh or Nm)`);
+  const amount = Number.parseInt(match[1], 10);
+  return match[2] === "h" ? amount * 60 : amount;
+}
+
+function findQuest(
+  database: Database,
+  id: string,
+): { owner_kind: string; owner_id: string } | null {
+  return database.query("SELECT owner_kind, owner_id FROM quests WHERE id = ?").get(id) as {
+    owner_kind: string;
+    owner_id: string;
+  } | null;
+}
+
+function runQuestCommand(args: string[], context: IntentContext): number {
+  const [subcommand, ...rest] = args;
+  const store = new EventStore(context.database);
+
+  if (subcommand === "add") {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: {
+        owner: { type: "string" },
+        goal: { type: "string" },
+        objective: { type: "string" },
+        done: { type: "string" },
+        due: { type: "string" },
+        budget: { type: "string" },
+        commitment: { type: "string" },
+      },
+      strict: true,
+      allowPositionals: true,
+    });
+    const title = positionals[0];
+    if (!title) {
+      console.error(
+        'usage: tempad quest add --owner hero|party:<slug> [--goal <id>] "<title>" ...',
+      );
+      return 2;
+    }
+    const owner = parseOwnerFlag(context.database, values);
+    applyIncremental(
+      context.database,
+      store.append({
+        actor: "hero",
+        kind: "quest.created",
+        subject: newUlid(),
+        payload: {
+          owner,
+          goal: values.goal,
+          title,
+          objective: values.objective,
+          done_condition: values.done,
+          due: values.due,
+          budget_minutes: parseBudget(values.budget),
+          commitment: values.commitment,
+          confirmed: true,
+        },
+      }),
+    );
+    return 0;
+  }
+
+  if (subcommand === "reword") {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: { objective: { type: "string" } },
+      strict: true,
+      allowPositionals: true,
+    });
+    const [id, title] = positionals;
+    if (!id || !title) {
+      console.error('usage: tempad quest reword <id> "<title>" [--objective]');
+      return 2;
+    }
+    applyIncremental(
+      context.database,
+      store.append({
+        actor: "hero",
+        kind: "quest.reworded",
+        subject: id,
+        payload: { title, objective: values.objective },
+      }),
+    );
+    return 0;
+  }
+
+  if (subcommand === "replace") {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: { objective: { type: "string" }, reason: { type: "string" } },
+      strict: true,
+      allowPositionals: true,
+    });
+    const [id, title] = positionals;
+    if (!id || !title || !values.reason) {
+      console.error('usage: tempad quest replace <id> "<title>" [--objective] --reason "..."');
+      return 2;
+    }
+    const old = findQuest(context.database, id);
+    if (!old) {
+      console.error(`unknown quest: ${id}`);
+      return 1;
+    }
+    const newId = newUlid();
+    applyIncremental(
+      context.database,
+      store.append({
+        actor: "hero",
+        kind: "quest.created",
+        subject: newId,
+        payload: {
+          owner: { kind: old.owner_kind, id: old.owner_id },
+          title,
+          objective: values.objective,
+          confirmed: true,
+        },
+      }),
+    );
+    applyIncremental(
+      context.database,
+      store.append({
+        actor: "hero",
+        kind: "quest.ended",
+        subject: id,
+        payload: { reason: "replaced", replaced_by: newId, note: values.reason },
+      }),
+    );
+    return 0;
+  }
+
+  if (subcommand === "end") {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: { reason: { type: "string" } },
+      strict: true,
+      allowPositionals: true,
+    });
+    const id = positionals[0];
+    if (!id || !values.reason) {
+      console.error("usage: tempad quest end <id> --reason ...");
+      return 2;
+    }
+    applyIncremental(
+      context.database,
+      store.append({
+        actor: "hero",
+        kind: "quest.ended",
+        subject: id,
+        payload: { reason: values.reason },
+      }),
+    );
+    return 0;
+  }
+
+  if (subcommand === "edit") {
+    const [id, title] = rest;
+    if (!id || !title) {
+      console.error('usage: tempad quest edit <id> "<title>"');
+      return 2;
+    }
+    assertEditIntent(context.database, "quest", id, undefined);
+    applyIncremental(
+      context.database,
+      store.append({ actor: "hero", kind: "quest.reworded", subject: id, payload: { title } }),
+    );
+    return 0;
+  }
+
+  if (subcommand === "confirm") {
+    const id = rest[0];
+    if (!id) {
+      console.error("usage: tempad quest confirm <id>");
+      return 2;
+    }
+    applyIncremental(
+      context.database,
+      store.append({ actor: "hero", kind: "quest.confirmed", subject: id, payload: {} }),
+    );
+    return 0;
+  }
+
+  if (subcommand === "merge") {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: { into: { type: "string" } },
+      strict: true,
+      allowPositionals: true,
+    });
+    const id = positionals[0];
+    if (!id || !values.into) {
+      console.error("usage: tempad quest merge <id> --into <id>");
+      return 2;
+    }
+    applyIncremental(
+      context.database,
+      store.append({
+        actor: "hero",
+        kind: "quest.merged",
+        subject: id,
+        payload: { into: values.into },
+      }),
+    );
+    return 0;
+  }
+
+  if (["pause", "resume", "done", "abandon"].includes(subcommand ?? "")) {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: { reason: { type: "string" } },
+      strict: true,
+      allowPositionals: true,
+    });
+    const id = positionals[0];
+    if (!id) {
+      console.error(`usage: tempad quest ${subcommand} <id> [--reason]`);
+      return 2;
+    }
+    const stateBySubcommand: Record<string, string> = {
+      pause: "paused",
+      resume: "resumed",
+      done: "done",
+      abandon: "abandoned",
+    };
+    applyIncremental(
+      context.database,
+      store.append({
+        actor: "hero",
+        kind: "quest.lifecycle",
+        subject: id,
+        payload: { state: stateBySubcommand[subcommand as string], reason: values.reason },
+      }),
+    );
+    return 0;
+  }
+
+  if (subcommand === "branch") {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: {
+        "from-activity": { type: "string" },
+        trigger: { type: "string" },
+        kind: { type: "string", default: "unknown" },
+      },
+      strict: true,
+      allowPositionals: true,
+    });
+    const id = positionals[0];
+    if (!id || !values["from-activity"] || !values.trigger) {
+      console.error(
+        'usage: tempad quest branch <id> --from-activity <activity-id> --trigger "..." [--kind ...]',
+      );
+      return 2;
+    }
+    applyIncremental(
+      context.database,
+      store.append({
+        actor: "hero",
+        kind: "quest.branched",
+        subject: id,
+        payload: {
+          from_activity: values["from-activity"],
+          trigger: values.trigger,
+          kind: values.kind,
+        },
+      }),
+    );
+    return 0;
+  }
+
+  if (subcommand === "return") {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: { to: { type: "string" } },
+      strict: true,
+      allowPositionals: true,
+    });
+    const id = positionals[0];
+    if (!id || !values.to) {
+      console.error("usage: tempad quest return <id> --to <quest-id>");
+      return 2;
+    }
+    applyIncremental(
+      context.database,
+      store.append({
+        actor: "hero",
+        kind: "quest.returned",
+        subject: id,
+        payload: { to_quest: values.to },
+      }),
+    );
+    return 0;
+  }
+
+  if (subcommand === "list") {
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        all: { type: "boolean", default: false },
+        unconfirmed: { type: "boolean", default: false },
+        side: { type: "boolean", default: false },
+      },
+      strict: true,
+    });
+    const clauses: string[] = [];
+    if (!values.all) clauses.push("ended_at IS NULL");
+    if (values.unconfirmed) clauses.push("confirmed = 0");
+    if (values.side) clauses.push("origin_activity_id IS NOT NULL");
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = context.database
+      .query(`SELECT id, title, state, confirmed FROM quests ${where} ORDER BY created_at`)
+      .all() as { id: string; title: string; state: string; confirmed: number }[];
+    for (const row of rows) {
+      const unconfirmed = row.confirmed === 0 ? " [unconfirmed]" : "";
+      context.stdout(`${row.id}  ${row.title}  (${row.state})${unconfirmed}`);
+    }
+    return 0;
+  }
+
+  console.error(
+    "usage: tempad quest add|reword|replace|end|edit|confirm|merge|pause|resume|done|abandon|branch|return|list ...",
+  );
+  return 2;
+}
+
 function runRebuildCommand(args: string[], context: IntentContext): number {
   const { values } = parseArgs({ args, options: { until: { type: "string" } }, strict: true });
   rebuildAll(context.database, { until: values.until });
@@ -383,6 +712,8 @@ export async function runIntentCommand(args: string[], context: IntentContext): 
         return runClientCommand(rest, context);
       case "goal":
         return runGoalCommand(rest, context);
+      case "quest":
+        return runQuestCommand(rest, context);
       case "rebuild":
         return runRebuildCommand(rest, context);
       default:
