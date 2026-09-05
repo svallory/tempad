@@ -121,6 +121,7 @@ export interface AskQuestionInput {
   sessionId?: string;
   kind: string;
   text: string;
+  isSwitch?: boolean;
   actor: Actor;
 }
 
@@ -137,7 +138,12 @@ export function askQuestion(
       kind: "question.asked",
       subject: id,
       sessionId: input.sessionId,
-      payload: { trace: input.trace, kind: input.kind, text: input.text },
+      payload: {
+        trace: input.trace,
+        kind: input.kind,
+        text: input.text,
+        is_switch: input.isSwitch ?? false,
+      },
     }),
   );
   return id;
