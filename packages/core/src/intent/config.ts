@@ -12,6 +12,7 @@ export interface W5Config {
   backfillDays: number;
   backend: W5Backend;
   claudeCommand: string;
+  timeoutSeconds: number;
 }
 
 export interface IntentConfig {
@@ -35,6 +36,7 @@ export function defaultIntentConfig(): IntentConfig {
       backfillDays: 15,
       backend: "claude-cli",
       claudeCommand: "claude",
+      timeoutSeconds: 180,
     },
   };
 }
@@ -93,6 +95,7 @@ export function loadIntentConfig(tomlPath: string): IntentConfig {
       backend: parseBackend(w5.backend, config.w5.backend),
       claudeCommand:
         typeof w5.claude_command === "string" ? w5.claude_command : config.w5.claudeCommand,
+      timeoutSeconds: number("timeout_seconds", config.w5.timeoutSeconds),
     };
   }
   return config;

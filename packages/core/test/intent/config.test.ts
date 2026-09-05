@@ -33,6 +33,15 @@ throttle_minutes = 5
     expect(config.w5.backfillDays).toBe(15);
     expect(config.w5.backend).toBe("claude-cli");
     expect(config.w5.claudeCommand).toBe("claude");
+    expect(config.w5.timeoutSeconds).toBe(180);
+  });
+
+  test("parses w5 timeout_seconds", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tempad-intent-"));
+    const path = join(directory, "tempad.toml");
+    writeFileSync(path, `[w5]\ntimeout_seconds = 60\n`);
+    const config = loadIntentConfig(path);
+    expect(config.w5.timeoutSeconds).toBe(60);
   });
 
   test("parses w5 backend and claude_command", () => {

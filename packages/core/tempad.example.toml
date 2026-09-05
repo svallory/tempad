@@ -22,6 +22,7 @@ ask_min_activity_minutes = 20
 ask_budget_minutes = 30
 ask_expire_turns = 2
 backfill_days = 15
+timeout_seconds = 180
 
 [[projects]]
 pattern = "~/work/:org/:project/:rest*"

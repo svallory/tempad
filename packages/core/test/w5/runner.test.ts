@@ -41,6 +41,7 @@ const config: W5Config = {
   backfillDays: 15,
   backend: "claude-cli",
   claudeCommand: "claude",
+  timeoutSeconds: 180,
 };
 
 const good: ClassifierResult = {
