@@ -71,9 +71,12 @@ bun run tempad sync claude     # one source
 bun run tempad report daily --from 2026-08-18 --to 2026-08-28
 
 bun run tempad w5 hook install # wire up the w5 self-awareness hook
+bun run tempad w5 backfill     # classify recent sessions the hook missed
 ```
 
 Reports land in `~/.tempad/reports/`.
+
+The w5 hook classifies through the local `claude` CLI (`[w5].backend = "claude-cli"`, the default) using whatever subscription you're logged into — no `ANTHROPIC_API_KEY` needed. Set `[w5].backend = "api"` in `tempad.toml` to call the Anthropic API directly instead (requires `ANTHROPIC_API_KEY`).
 
 ## Repository layout
 

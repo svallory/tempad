@@ -6,6 +6,7 @@ import type { Config } from "../config/env";
 import type { IntentConfig } from "../intent/config";
 import { backfill } from "./backfill";
 import { AnthropicClassifier, type Classifier } from "./classifier";
+import { ClaudeCliClassifier } from "./classifier-cli";
 import { buildAdditionalContext, installHooks, uninstallHooks } from "./hooks";
 import { enqueueJob } from "./jobs";
 import type { QuestionRow } from "./questions";
@@ -49,7 +50,17 @@ function log(config: Config, line: string): void {
   appendFileSync(path, `${new Date().toISOString()} ${line}\n`);
 }
 
-function buildClassifier(intentConfig: IntentConfig, model?: string): Classifier {
+function buildClassifier(config: Config, intentConfig: IntentConfig, model?: string): Classifier {
+  const resolvedModel = model ?? intentConfig.w5.model;
+
+  if (intentConfig.w5.backend === "claude-cli") {
+    return new ClaudeCliClassifier({
+      model: resolvedModel,
+      command: intentConfig.w5.claudeCommand,
+      cwd: config.home,
+    });
+  }
+
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return {
@@ -58,7 +69,7 @@ function buildClassifier(intentConfig: IntentConfig, model?: string): Classifier
       },
     };
   }
-  return new AnthropicClassifier({ apiKey, model: model ?? intentConfig.w5.model });
+  return new AnthropicClassifier({ apiKey, model: resolvedModel });
 }
 
 function lockPathFor(config: Config): string {
@@ -171,7 +182,7 @@ async function runRun(args: string[], context: W5Context): Promise<number> {
 
   try {
     await Bun.write(lockPath, String(process.pid));
-    const classifier = buildClassifier(context.intentConfig);
+    const classifier = buildClassifier(context.config, context.intentConfig);
     const count = await drain(
       context.database,
       context.config,
@@ -287,11 +298,11 @@ async function runBackfill(args: string[], context: W5Context): Promise<number> 
     ? Number.parseInt(values.days, 10)
     : context.intentConfig.w5.backfillDays;
 
-  if (!process.env.ANTHROPIC_API_KEY) {
+  if (context.intentConfig.w5.backend === "api" && !process.env.ANTHROPIC_API_KEY) {
     context.stdout("ANTHROPIC_API_KEY not set");
     return 1;
   }
-  const classifier = buildClassifier(context.intentConfig, values.model);
+  const classifier = buildClassifier(context.config, context.intentConfig, values.model);
 
   const result = await backfill(
     context.database,

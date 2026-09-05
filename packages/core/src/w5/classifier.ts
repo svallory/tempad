@@ -1,3 +1,4 @@
+import { classifyWithRetry } from "./classifier-shared";
 import { buildSystemPrompt, buildUserPrompt } from "./prompt";
 
 export interface ClassifierWindow {
@@ -161,11 +162,6 @@ export interface Classifier {
   classify(window: ClassifierWindow): Promise<ClassifierResult>;
 }
 
-function extractJsonText(text: string): string {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  return (fenced?.[1] ?? text).trim();
-}
-
 export interface AnthropicClassifierOptions {
   apiKey: string;
   model: string;
@@ -186,16 +182,7 @@ export class AnthropicClassifier implements Classifier {
   async classify(window: ClassifierWindow): Promise<ClassifierResult> {
     const systemPrompt = buildSystemPrompt();
     const userPrompt = buildUserPrompt(window);
-
-    const first = await this.request(systemPrompt, userPrompt);
-    try {
-      return validateResult(JSON.parse(extractJsonText(first)), window);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const retryPrompt = `${userPrompt}\n\nYour previous response was invalid: ${message}\nRespond with valid JSON only.`;
-      const second = await this.request(systemPrompt, retryPrompt);
-      return validateResult(JSON.parse(extractJsonText(second)), window);
-    }
+    return classifyWithRetry(window, userPrompt, (prompt) => this.request(systemPrompt, prompt));
   }
 
   private async request(systemPrompt: string, userPrompt: string): Promise<string> {

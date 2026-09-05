@@ -17,6 +17,8 @@ const config: W5Config = {
   askBudgetMinutes: 30,
   askExpireTurns: 2,
   backfillDays: 15,
+  backend: "claude-cli",
+  claudeCommand: "claude",
 };
 
 function seedActivityAndTrace(
