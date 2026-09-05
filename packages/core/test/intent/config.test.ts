@@ -31,6 +31,38 @@ throttle_minutes = 5
     expect(config.w5.throttleMinutes).toBe(5);
     expect(config.w5.watchTurns).toBe(3);
     expect(config.w5.backfillDays).toBe(15);
+    expect(config.w5.backend).toBe("claude-cli");
+    expect(config.w5.claudeCommand).toBe("claude");
+  });
+
+  test("parses w5 backend and claude_command", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tempad-intent-"));
+    const path = join(directory, "tempad.toml");
+    writeFileSync(
+      path,
+      `
+[w5]
+backend = "api"
+claude_command = "/opt/bin/claude"
+`,
+    );
+    const config = loadIntentConfig(path);
+    expect(config.w5.backend).toBe("api");
+    expect(config.w5.claudeCommand).toBe("/opt/bin/claude");
+  });
+
+  test("falls back to default backend on unknown value", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tempad-intent-"));
+    const path = join(directory, "tempad.toml");
+    writeFileSync(path, `[w5]\nbackend = "bogus"\n`);
+    const config = loadIntentConfig(path);
+    expect(config.w5.backend).toBe("claude-cli");
+  });
+
+  test("defaultIntentConfig reflects claude-cli defaults", () => {
+    const config = defaultIntentConfig();
+    expect(config.w5.backend).toBe("claude-cli");
+    expect(config.w5.claudeCommand).toBe("claude");
   });
 
   test("rejects a party without slug", () => {

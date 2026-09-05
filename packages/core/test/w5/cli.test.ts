@@ -169,6 +169,71 @@ describe("w5 run stale lock", () => {
   });
 });
 
+describe("w5 backend selection", () => {
+  test("claude-cli backend never requires ANTHROPIC_API_KEY and spawns the claude command", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-cli-test-"));
+    const previousKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    try {
+      const database = openDatabase(":memory:");
+      ensureTables(database);
+      const sessionFilePath = join(dir, "s1.jsonl");
+      writeFileSync(
+        sessionFilePath,
+        `${JSON.stringify({
+          type: "user",
+          uuid: "m1",
+          sessionId: "s1",
+          timestamp: "2026-09-05T10:00:00.000Z",
+          message: { role: "user", content: "work" },
+        })}\n`,
+      );
+      database
+        .query(
+          `INSERT INTO claude_sessions
+            (id, claude_dir, project_dir, file_path, cwd, org, project, title, git_branch,
+             started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+           VALUES ('s1', ?, 'p', ?, '/w/p', 'personal', 'p', 't', 'main',
+                   '2026-09-05T10:00:00.000Z', '2026-09-05T10:00:00.000Z', 1, 0, '[]', 'host', '2026-09-05T10:00:00.000Z')`,
+        )
+        .run(dir, sessionFilePath);
+      database
+        .query(
+          "INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview) VALUES ('m1', 's1', '2026-09-05T10:00:00.000Z', 'user', 0, 'work')",
+        )
+        .run();
+      database
+        .query(
+          "INSERT INTO w5_jobs (session_id, kind, forced, requested_at, state) VALUES ('s1', 'classify', 1, '2026-09-05T10:00:00.000Z', 'queued')",
+        )
+        .run();
+
+      const spawn: SpawnFn = () => {};
+      const intentConfig = defaultIntentConfig();
+      intentConfig.w5.backend = "claude-cli";
+      intentConfig.w5.claudeCommand = "definitely-not-a-real-binary-xyz";
+      const code = await runW5Command(["run"], {
+        database,
+        config: makeConfig(dir),
+        intentConfig,
+        stdout: () => {},
+        spawn,
+      });
+
+      expect(code).toBe(0);
+      const job = database.query("SELECT state, error FROM w5_jobs").get() as {
+        state: string;
+        error: string;
+      };
+      expect(job.state).toBe("failed");
+      expect(job.error).not.toContain("ANTHROPIC_API_KEY not set");
+    } finally {
+      if (previousKey !== undefined) process.env.ANTHROPIC_API_KEY = previousKey;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("w5 run without ANTHROPIC_API_KEY", () => {
   test("marks the job failed and exits 0 without throwing", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tempad-cli-test-"));
@@ -209,10 +274,12 @@ describe("w5 run without ANTHROPIC_API_KEY", () => {
         .run();
 
       const spawn: SpawnFn = () => {};
+      const intentConfig = defaultIntentConfig();
+      intentConfig.w5.backend = "api";
       const code = await runW5Command(["run"], {
         database,
         config: makeConfig(dir),
-        intentConfig: defaultIntentConfig(),
+        intentConfig,
         stdout: () => {},
         spawn,
       });

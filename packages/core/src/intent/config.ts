@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 
+export type W5Backend = "claude-cli" | "api";
+
 export interface W5Config {
   model: string;
   throttleMinutes: number;
@@ -8,6 +10,8 @@ export interface W5Config {
   askBudgetMinutes: number;
   askExpireTurns: number;
   backfillDays: number;
+  backend: W5Backend;
+  claudeCommand: string;
 }
 
 export interface IntentConfig {
@@ -29,8 +33,15 @@ export function defaultIntentConfig(): IntentConfig {
       askBudgetMinutes: 30,
       askExpireTurns: 2,
       backfillDays: 15,
+      backend: "claude-cli",
+      claudeCommand: "claude",
     },
   };
+}
+
+function parseBackend(value: unknown, fallback: W5Backend): W5Backend {
+  if (value === "claude-cli" || value === "api") return value;
+  return fallback;
 }
 
 function requireString(record: Record<string, unknown>, key: string, where: string): string {
@@ -79,6 +90,9 @@ export function loadIntentConfig(tomlPath: string): IntentConfig {
       askBudgetMinutes: number("ask_budget_minutes", config.w5.askBudgetMinutes),
       askExpireTurns: number("ask_expire_turns", config.w5.askExpireTurns),
       backfillDays: number("backfill_days", config.w5.backfillDays),
+      backend: parseBackend(w5.backend, config.w5.backend),
+      claudeCommand:
+        typeof w5.claude_command === "string" ? w5.claude_command : config.w5.claudeCommand,
     };
   }
   return config;
