@@ -20,6 +20,7 @@ export interface BackfillResult {
   sessionsSkipped: number;
   windowsClassified: number;
   windowsFailed: number;
+  windowsSkipped: number;
 }
 
 interface SessionRow {
@@ -27,10 +28,15 @@ interface SessionRow {
   ended_at: string;
 }
 
-function isWindowCovered(database: Database, sessionId: string, windowEndedAt: string): boolean {
+function isWindowCovered(
+  database: Database,
+  sessionId: string,
+  windowStartedAt: string,
+  windowEndedAt: string,
+): boolean {
   const row = database
-    .query("SELECT id FROM traces WHERE session_id = ? AND ended_at >= ? LIMIT 1")
-    .get(sessionId, windowEndedAt) as { id: string } | null;
+    .query("SELECT id FROM traces WHERE session_id = ? AND started_at = ? AND ended_at = ? LIMIT 1")
+    .get(sessionId, windowStartedAt, windowEndedAt) as { id: string } | null;
   return row !== null;
 }
 
@@ -74,6 +80,7 @@ export async function backfill(
   let sessionsSkipped = 0;
   let windowsClassified = 0;
   let windowsFailed = 0;
+  let windowsSkipped = 0;
   const windowMinutes = intentConfig.throttleMinutes * 3;
 
   for (const session of sessions) {
@@ -86,9 +93,13 @@ export async function backfill(
 
     const pendingChunks = chunks
       .map((chunk, index) => ({ chunk, index }))
-      .filter(
-        ({ chunk }) => !isWindowCovered(database, session.id, chunk.at(-1)?.ts ?? session.ended_at),
-      );
+      .filter(({ chunk }) => {
+        const startedAt = chunk[0]?.ts ?? session.ended_at;
+        const endedAt = chunk.at(-1)?.ts ?? session.ended_at;
+        const covered = isWindowCovered(database, session.id, startedAt, endedAt);
+        if (covered) windowsSkipped += 1;
+        return !covered;
+      });
 
     if (chunks.length > 0 && pendingChunks.length === 0) {
       sessionsSkipped += 1;
@@ -128,5 +139,5 @@ export async function backfill(
     }
   }
 
-  return { sessionsClassified, sessionsSkipped, windowsClassified, windowsFailed };
+  return { sessionsClassified, sessionsSkipped, windowsClassified, windowsFailed, windowsSkipped };
 }

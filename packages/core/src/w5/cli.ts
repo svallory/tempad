@@ -7,6 +7,7 @@ import type { IntentConfig } from "../intent/config";
 import { backfill } from "./backfill";
 import { AnthropicClassifier, type Classifier } from "./classifier";
 import { ClaudeCliClassifier } from "./classifier-cli";
+import { dedupe } from "./dedupe";
 import { buildAdditionalContext, installHooks, uninstallHooks } from "./hooks";
 import { enqueueJob } from "./jobs";
 import type { QuestionRow } from "./questions";
@@ -233,7 +234,9 @@ function runReview(_args: string[], context: W5Context): number {
   }
 
   const unconfirmedQuests = context.database
-    .query("SELECT id, title FROM quests WHERE confirmed = 0 ORDER BY created_at ASC")
+    .query(
+      "SELECT id, title FROM quests WHERE confirmed = 0 AND retracted_at IS NULL ORDER BY created_at ASC",
+    )
     .all() as { id: string; title: string }[];
   for (const quest of unconfirmedQuests) {
     context.stdout(
@@ -242,7 +245,9 @@ function runReview(_args: string[], context: W5Context): number {
   }
 
   const lowConfidenceTraces = context.database
-    .query("SELECT id, what FROM traces WHERE confidence < 0.5 ORDER BY started_at ASC")
+    .query(
+      "SELECT id, what FROM traces WHERE confidence < 0.5 AND retracted_at IS NULL ORDER BY started_at ASC",
+    )
     .all() as { id: string; what: string }[];
   for (const trace of lowConfidenceTraces) {
     context.stdout(
@@ -323,11 +328,23 @@ async function runBackfill(args: string[], context: W5Context): Promise<number> 
   );
 
   context.stdout(
-    `classified=${result.sessionsClassified} windows=${result.windowsClassified} failed=${result.windowsFailed} skipped=${result.sessionsSkipped}`,
+    `classified=${result.sessionsClassified} windows=${result.windowsClassified} failed=${result.windowsFailed} skipped=${result.sessionsSkipped} windows_skipped=${result.windowsSkipped}`,
   );
 
   const attemptedWindows = result.windowsClassified + result.windowsFailed;
   if (attemptedWindows > 0 && result.windowsClassified === 0) return 1;
+  return 0;
+}
+
+function runDedupe(args: string[], context: W5Context): number {
+  const { values } = parseArgs({
+    args,
+    options: { "dry-run": { type: "boolean", default: false } },
+    strict: true,
+  });
+
+  const result = dedupe(context.database, { dryRun: values["dry-run"] === true });
+  context.stdout(`traces=${result.traces} activities=${result.activities} quests=${result.quests}`);
   return 0;
 }
 
@@ -339,6 +356,7 @@ export async function runW5Command(args: string[], context: W5Context): Promise<
   if (subcommand === "run") return runRun(rest, context);
   if (subcommand === "hook") return runHook(rest);
   if (subcommand === "backfill") return runBackfill(rest, context);
+  if (subcommand === "dedupe") return runDedupe(rest, context);
 
   return 2;
 }

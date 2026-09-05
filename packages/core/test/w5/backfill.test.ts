@@ -134,6 +134,74 @@ describe("backfill", () => {
     });
 
     expect(secondResult.sessionsClassified).toBe(0);
+    expect(secondResult.windowsClassified).toBe(0);
+  });
+
+  test("window-level idempotence: a window whose exact (started_at, ended_at) trace already exists is skipped even if a crashed run left an earlier window uncovered", async () => {
+    const database = openDatabase(":memory:");
+    seedHero(database);
+    // Two windows spaced 40 minutes apart (> windowMinutes = 30): a crashed
+    // run that only classified the second (later) window would, under the
+    // old ended_at >= check, make the first window look "covered" too since
+    // its ended_at is earlier than the recorded trace's ended_at is wrong --
+    // the bug this brief fixes. Here we simulate the crashed run recording
+    // only the second window's trace, and confirm the first window is still
+    // classified on the next run while the second is correctly skipped.
+    seedSession(database, {
+      id: "s1",
+      endedAt: "2026-09-04T15:40:00.000Z",
+      messageTimestamps: ["2026-09-04T15:00:00.000Z", "2026-09-04T15:40:00.000Z"],
+    });
+
+    const store = new EventStore(database);
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hook",
+        kind: "activity.opened",
+        subject: "A1",
+        payload: { objective: "work" },
+        at: "2026-09-04T15:40:00.000Z",
+      }),
+    );
+    applyIncremental(
+      database,
+      store.append({
+        actor: "backfill",
+        kind: "trace.recorded",
+        subject: "T1",
+        sessionId: "s1",
+        payload: {
+          activity: "A1",
+          tool: "claude-code",
+          place: "p",
+          source: "session",
+          started_at: "2026-09-04T15:40:00.000Z",
+          ended_at: "2026-09-04T15:40:00.000Z",
+          who: "hero",
+          what: "work",
+          why: "ship",
+          where: "personal/p",
+          how: "claude-code",
+          confidence: 0.9,
+          classified_by: "assistant",
+        },
+      }),
+    );
+
+    const classifier = new FakeClassifier();
+    const logs: string[] = [];
+
+    const result = await backfill(database, makeConfig(), config, classifier, {
+      days: 15,
+      now: "2026-09-04T18:00:00.000Z",
+      log: (line) => logs.push(line),
+    });
+
+    // Only the first window (15:00) is missing a trace with matching exact
+    // bounds; the second window (15:40) already has one and is skipped.
+    expect(result.windowsClassified).toBe(1);
+    expect(result.windowsSkipped).toBe(1);
   });
 
   test("a failed final window does not stop earlier windows and is retried next run", async () => {

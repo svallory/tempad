@@ -156,3 +156,14 @@ CREATE TABLE w5_quiet (
 -- value at the moment a question was asked, for expiry) and
 -- `is_switch INTEGER NOT NULL DEFAULT 0` (carried on the question.asked
 -- event payload, since traces have no isSwitch column of their own).
+--
+-- Likewise `traces`, `activities` and `quests` (owned by the `activities`
+-- and `quests` projections) each carry a `retracted_at TEXT` column, added
+-- straight to their projection CREATE TABLE so a fresh database gets it for
+-- free. Migration 0006_retractions.sql ALTERs the same column onto an
+-- existing database's already-created projection tables (see
+-- runMigration's ALTER-ADD-COLUMN tolerance in src/db/database.ts for why
+-- that ALTER is safe to skip on a database where those tables don't exist
+-- yet). A `retracted` event's `subject` is the id of the row it retracts;
+-- projections apply it by UPDATEing whichever of traces/activities/quests
+-- has a matching id.

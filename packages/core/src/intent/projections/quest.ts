@@ -29,7 +29,8 @@ export const questProjection: Projection = {
       created_at TEXT NOT NULL,
       ended_at TEXT,
       end_reason TEXT,
-      replaced_by TEXT
+      replaced_by TEXT,
+      retracted_at TEXT
     );`,
   apply(database, event) {
     const payload = event.payload;
@@ -112,6 +113,11 @@ export const questProjection: Projection = {
       case "quest.returned":
         database
           .query("UPDATE quests SET returned_at = ? WHERE id = ?")
+          .run(event.at, event.subject);
+        return;
+      case "retracted":
+        database
+          .query("UPDATE quests SET retracted_at = ? WHERE id = ? AND retracted_at IS NULL")
           .run(event.at, event.subject);
         return;
       default:
