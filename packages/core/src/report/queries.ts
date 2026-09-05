@@ -16,15 +16,19 @@ export interface DateRange {
   client?: string;
 }
 
-/** `AND json_extract(<column>, '$.client') = ?` condition, or empty when no client filter is set. */
-function clientCondition(
+/**
+ * `AND LOWER(json_extract(<column>, '$.client')) = ?` condition, or empty
+ * when no client filter is set. Case-insensitive, matching the `org`/
+ * `project` filters below.
+ */
+export function clientCondition(
   column: string,
   client: string | undefined,
 ): { sql: string; param?: string } {
   if (!client) return { sql: "" };
   return {
-    sql: ` AND json_extract(${column}, '$.client') = ?`,
-    param: client,
+    sql: ` AND LOWER(json_extract(${column}, '$.client')) = ?`,
+    param: client.toLowerCase(),
   };
 }
 

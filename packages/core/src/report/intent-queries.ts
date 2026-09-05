@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { stateAsOf } from "../intent/time-travel.ts";
 import { localDayBoundsUtc } from "./markdown.ts";
-import type { DateRange } from "./queries.ts";
+import { clientCondition, type DateRange } from "./queries.ts";
 
 /**
  * Intent tables (quests, activities, traces, questions) render as of a past
@@ -109,6 +109,9 @@ function queryTraceIntervals(database: Database, range: DateRange): TraceInterva
     params.push(range.project.toLowerCase());
   }
 
+  const client = clientCondition("s.path_meta", range.client);
+  if (client.param) params.push(client.param);
+
   return database
     .query(
       `SELECT tl.activity_id as activityId, t.started_at as startedAt, t.ended_at as endedAt,
@@ -116,7 +119,7 @@ function queryTraceIntervals(database: Database, range: DateRange): TraceInterva
        FROM trace_links tl
        JOIN traces t ON t.id = tl.trace_id
        LEFT JOIN claude_sessions s ON s.id = t.session_id
-       WHERE tl.superseded_at IS NULL AND ${conditions.join(" AND ")}
+       WHERE tl.superseded_at IS NULL AND ${conditions.join(" AND ")}${client.sql}
        ORDER BY t.started_at ASC`,
     )
     .all(...params) as TraceIntervalRow[];
@@ -413,30 +416,44 @@ export function queryQuests(database: Database, range: DateRange): QuestSummaryR
     );
   }
 
-  return questRows.map((quest) => {
-    const questActivities = activityRows.filter((row) => row.questId === quest.id);
-    const evidenceTimes = questActivities.flatMap((row) => evidenceByActivity.get(row.id) ?? []);
-    const firstEvidence = evidenceTimes.reduce((min, time) => (time < min ? time : min));
-    const lastEvidence = evidenceTimes.reduce((max, time) => (time > max ? time : max));
+  return questRows
+    .map((quest) => {
+      const questActivities = activityRows.filter((row) => row.questId === quest.id);
+      const evidenceTimes = questActivities.flatMap((row) => evidenceByActivity.get(row.id) ?? []);
+      // A quest's activity can match `queryTraceIntervals`' SQL range (which
+      // compares raw trace start/end) yet clip to nothing once bounded to
+      // [start, end) -- e.g. a trace that only brushes the range's edge.
+      // Such a quest has no evidence to report and is dropped rather than
+      // crashing `reduce` with no initial value.
+      if (evidenceTimes.length === 0) return null;
+      const firstEvidence = evidenceTimes.reduce(
+        (min, time) => (time < min ? time : min),
+        evidenceTimes[0] as string,
+      );
+      const lastEvidence = evidenceTimes.reduce(
+        (max, time) => (time > max ? time : max),
+        evidenceTimes[0] as string,
+      );
 
-    let project: { org: string; project: string } | null = null;
-    for (const activity of questActivities) {
-      project ??= projects.get(activity.id) ?? null;
-    }
+      let project: { org: string; project: string } | null = null;
+      for (const activity of questActivities) {
+        project ??= projects.get(activity.id) ?? null;
+      }
 
-    return {
-      id: quest.id,
-      title: quest.title,
-      confirmed: quest.confirmed === 1,
-      state: quest.state,
-      org: project?.org ?? null,
-      project: project?.project ?? null,
-      firstEvidence,
-      lastEvidence,
-      activities: questActivities.length,
-      sideQuestMinutes: sideQuestMinutesByQuestId.get(quest.id) ?? 0,
-    };
-  });
+      return {
+        id: quest.id,
+        title: quest.title,
+        confirmed: quest.confirmed === 1,
+        state: quest.state,
+        org: project?.org ?? null,
+        project: project?.project ?? null,
+        firstEvidence,
+        lastEvidence,
+        activities: questActivities.length,
+        sideQuestMinutes: sideQuestMinutesByQuestId.get(quest.id) ?? 0,
+      };
+    })
+    .filter((quest): quest is QuestSummaryRow => quest !== null);
 }
 
 /**
@@ -459,13 +476,16 @@ export function queryOpenQuestions(database: Database, range: DateRange): number
     params.push(range.project.toLowerCase());
   }
 
+  const client = clientCondition("s.path_meta", range.client);
+  if (client.param) params.push(client.param);
+
   const row = database
     .query(
       `SELECT COUNT(DISTINCT t.id) as count
        FROM traces t
        LEFT JOIN claude_sessions s ON s.id = t.session_id
        LEFT JOIN questions qu ON qu.trace_id = t.id
-       WHERE ${conditions.join(" AND ")}
+       WHERE ${conditions.join(" AND ")}${client.sql}
          AND (t.confidence = 0 OR qu.state = 'expired')`,
     )
     .get(...params) as { count: number };

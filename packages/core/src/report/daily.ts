@@ -66,6 +66,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
       timeZone,
       org: options.org,
       project: options.project,
+      client: options.client,
     };
     const dayActivities = queryActivities(intentDatabase, dayRangeOptions);
     const daySideQuests = querySideQuests(intentDatabase, dayRangeOptions);
