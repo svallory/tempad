@@ -139,7 +139,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
 
       const keyActivities = dayActivities.filter((row) => matchesKey(row, key));
       if (keyActivities.length > 0) {
-        lines.push("Quests");
+        lines.push(heading(4, "Quests"));
         for (const [questTitle, questActivities] of groupByQuest(keyActivities)) {
           const unconfirmed = questActivities[0]?.questConfirmed === false ? " [unconfirmed]" : "";
           const objectives = questActivities.map((activity) => activity.objective).join("; ");
@@ -150,7 +150,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
 
       const keySideQuests = daySideQuests.filter((row) => matchesKey(row, key));
       if (keySideQuests.length > 0) {
-        lines.push("Side quests");
+        lines.push(heading(4, "Side quests"));
         for (const sideQuest of keySideQuests) {
           const branchTime = localTime(sideQuest.branchedAt, timeZone);
           const returned = sideQuest.returnedAt

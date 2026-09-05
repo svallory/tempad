@@ -2,7 +2,14 @@ import type { Database } from "bun:sqlite";
 import type { Actor } from "./events";
 import { newUlid } from "./ids";
 import { applyIncremental } from "./projections";
+import { registerAllProjections } from "./projections/register";
 import type { EventStore } from "./store";
+
+// Projections must be registered before applyIncremental can materialize any
+// row -- intent/cli.ts does this on startup, but a caller reaching this
+// module directly (never importing cli.ts) would otherwise get silent
+// no-op projections. registerAllProjections() is idempotent.
+registerAllProjections();
 
 export interface OpenActivityInput {
   quest?: string;

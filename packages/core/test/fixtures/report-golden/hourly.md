@@ -42,8 +42,8 @@
 | 06:00 |  |
 | 07:00 |  |
 | 08:00 |  |
-| 09:00 | Polish report output (2 messages); ↳ Investigate flaky commit grouping |
-| 10:00 | Polish report output (1 messages) |
+| 09:00 | Polish report output (2 messages); Polish the report output (25m); Investigate flaky commit grouping (20m); ↳ Investigate flaky commit grouping |
+| 10:00 | Polish report output (1 messages); Polish the report output (45m) |
 | 11:00 | bbbbbbb |
 | 12:00 |  |
 | 13:00 |  |

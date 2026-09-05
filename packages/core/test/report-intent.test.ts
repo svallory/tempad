@@ -6,6 +6,7 @@ import { openDatabase } from "../src/db/database.ts";
 import {
   queryActivities,
   queryOpenQuestions,
+  queryQuests,
   querySideQuests,
 } from "../src/report/intent-queries.ts";
 import { REPORT_CONFIG, seedReportFixtures } from "./fixtures/report-golden/seed.ts";
@@ -108,6 +109,55 @@ describe("queryOpenQuestions", () => {
     expect(queryOpenQuestions(database, { ...RANGE, from: "2026-09-02", to: "2026-09-02" })).toBe(
       0,
     );
+
+    database.close();
+  });
+});
+
+describe("queryQuests", () => {
+  test("first/last evidence come from trace intervals, not activity opened_at/closed_at", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    // activity-3 opens well before and closes well after its only trace --
+    // evidence must reflect the trace, not the activity's own timestamps.
+    database.exec(
+      `INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at)
+       VALUES ('quest-3', 'hero', 'hero-1', 'Third quest', 'wide activity window', 1, 1, 'started', '2026-09-01T08:00:00.000Z')`,
+    );
+    database.exec(
+      `INSERT INTO activities (id, quest_id, objective, opened_at, closed_at, outcome, revision)
+       VALUES ('activity-3', 'quest-3', 'wide window activity', '2026-09-01T08:00:00.000Z', '2026-09-01T20:00:00.000Z', NULL, 1)`,
+    );
+    database.exec(
+      `INSERT INTO traces (id, activity_id, tool, place, source, source_ref, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+       VALUES ('trace-4', 'activity-3', 'edit', '/Users/octocat/work/acme/widgets', 'session', 'session-1', '2026-09-01T15:00:00.000Z', '2026-09-01T15:10:00.000Z', 'hero-1', 'brief edit', 'quick fix', '/Users/octocat/work/acme/widgets', 'assistant edit', 0.9, 'model', 'session-1', '2026-09-01T15:10:00.000Z')`,
+    );
+    database.exec(
+      `INSERT INTO trace_links (trace_id, activity_id, linked_at, superseded_at, reason)
+       VALUES ('trace-4', 'activity-3', '2026-09-01T15:10:00.000Z', NULL, NULL)`,
+    );
+
+    const quests = queryQuests(database, RANGE);
+    const quest3 = quests.find((quest) => quest.id === "quest-3");
+
+    expect(quest3).toBeDefined();
+    expect(quest3?.firstEvidence).toBe("2026-09-01T15:00:00.000Z");
+    expect(quest3?.lastEvidence).toBe("2026-09-01T15:10:00.000Z");
+
+    database.close();
+  });
+
+  test("evidence is clipped to the query range, not the trace's own full bounds", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    // trace-1 runs 12:15-12:40Z; querying only 2026-08-31 to 2026-08-31
+    // (before the trace starts) must yield no quest-1 row at all -- the
+    // range must genuinely gate first/lastEvidence, not just relabel the
+    // trace's own timestamps.
+    const outOfRange = queryQuests(database, { ...RANGE, from: "2026-08-31", to: "2026-08-31" });
+    expect(outOfRange.find((quest) => quest.id === "quest-1")).toBeUndefined();
 
     database.close();
   });

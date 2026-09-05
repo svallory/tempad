@@ -8,19 +8,22 @@ export interface DateRange {
   org?: string;
   project?: string;
   /**
-   * Keeps only rows whose place metadata has `client = <slug>`. Currently
-   * resolvable only for Claude sessions (`claude_sessions.path_meta`) --
-   * `gh_repos` has no `meta` column to carry a per-repository client, so
-   * commits and pull requests are not filtered by `--client`. See plan
-   * docs/plans/2026-09-05-intent-reports.md Task 3.
+   * Keeps only rows whose place metadata has `client = <slug>`. Resolved from
+   * `claude_sessions.path_meta` for sessions/messages and `gh_repos.meta` for
+   * commits/pull requests (both JSON columns holding extra named groups from
+   * the matched path/repository rule).
    */
   client?: string;
 }
 
-function sessionClientCondition(client: string | undefined): { sql: string; param?: string } {
+/** `AND json_extract(<column>, '$.client') = ?` condition, or empty when no client filter is set. */
+function clientCondition(
+  column: string,
+  client: string | undefined,
+): { sql: string; param?: string } {
   if (!client) return { sql: "" };
   return {
-    sql: " AND json_extract(s.path_meta, '$.client') = ?",
+    sql: ` AND json_extract(${column}, '$.client') = ?`,
     param: client,
   };
 }
@@ -141,13 +144,16 @@ export function queryCommits(database: Database, range: DateRange): CommitRow[] 
     params.push(range.project.toLowerCase());
   }
 
+  const client = clientCondition("r.meta", range.client);
+  if (client.param) params.push(client.param);
+
   const rows = database
     .query(
       `SELECT c.sha as sha, c.repo as repo, r.org as org, r.project as project,
               c.authored_at as authoredAt, c.subject as subject, c.branches as branches
        FROM gh_commits c
        JOIN gh_repos r ON r.full_name = c.repo
-       WHERE ${conditions.join(" AND ")}
+       WHERE ${conditions.join(" AND ")}${client.sql}
        ORDER BY c.authored_at ASC`,
     )
     .all(...params) as CommitRow[];
@@ -169,8 +175,8 @@ export function querySessions(database: Database, range: DateRange): SessionRow[
     params.push(range.project.toLowerCase());
   }
 
-  const clientCondition = sessionClientCondition(range.client);
-  if (clientCondition.param) params.push(clientCondition.param);
+  const client = clientCondition("s.path_meta", range.client);
+  if (client.param) params.push(client.param);
 
   return database
     .query(
@@ -178,7 +184,7 @@ export function querySessions(database: Database, range: DateRange): SessionRow[
               s.title_source as titleSource, s.git_branch as gitBranch,
               s.started_at as startedAt, s.ended_at as endedAt, s.message_count as messageCount
        FROM claude_sessions s
-       WHERE ${conditions.join(" AND ")}${clientCondition.sql}
+       WHERE ${conditions.join(" AND ")}${client.sql}
        ORDER BY s.started_at ASC`,
     )
     .all(...params) as SessionRow[];
@@ -201,8 +207,8 @@ export function querySessionMessagesByHour(
     params.push(range.project.toLowerCase());
   }
 
-  const clientCondition = sessionClientCondition(range.client);
-  if (clientCondition.param) params.push(clientCondition.param);
+  const client = clientCondition("s.path_meta", range.client);
+  if (client.param) params.push(client.param);
 
   return database
     .query(
@@ -210,7 +216,7 @@ export function querySessionMessagesByHour(
               s.title_source as titleSource, m.ts as ts, 1 as count
        FROM claude_messages m
        JOIN claude_sessions s ON s.id = m.session_id
-       WHERE ${conditions.join(" AND ")}${clientCondition.sql}
+       WHERE ${conditions.join(" AND ")}${client.sql}
        ORDER BY m.ts ASC`,
     )
     .all(...params) as SessionMessageHourRow[];
@@ -302,6 +308,9 @@ export function queryPullRequests(database: Database, range: DateRange): PullReq
     params.push(range.project.toLowerCase());
   }
 
+  const client = clientCondition("r.meta", range.client);
+  if (client.param) params.push(client.param);
+
   const rows = database
     .query(
       `SELECT p.repo as repo, r.org as org, r.project as project, p.number as number,
@@ -309,7 +318,7 @@ export function queryPullRequests(database: Database, range: DateRange): PullReq
               p.created_at as createdAt, p.merged_at as mergedAt, p.closed_at as closedAt
        FROM gh_pull_requests p
        JOIN gh_repos r ON r.full_name = p.repo
-       WHERE ${conditions.join(" AND ")}
+       WHERE ${conditions.join(" AND ")}${client.sql}
        ORDER BY p.created_at ASC`,
     )
     .all(...params) as PullRequestRow[];
