@@ -5,7 +5,9 @@ import { parseArgs } from "node:util";
 import type { Config } from "../config/env";
 import type { IntentConfig } from "../intent/config";
 import { AnthropicClassifier, type Classifier } from "./classifier";
+import { buildAdditionalContext, installHooks, uninstallHooks } from "./hooks";
 import { enqueueJob } from "./jobs";
+import type { QuestionRow } from "./questions";
 import { drain } from "./runner";
 
 export interface W5Context {
@@ -68,15 +70,16 @@ function runContext(args: string[], context: W5Context): number {
 
   const rows = context.database
     .query(
-      "SELECT id, text, kind FROM questions WHERE session_id = ? AND state = 'asked' ORDER BY asked_at DESC LIMIT 1",
+      `SELECT id, trace_id as traceId, session_id as sessionId, kind, state, turns_watched as turnsWatched,
+              turns_at_ask as turnsAtAsk, is_switch as isSwitch
+         FROM questions WHERE session_id = ? AND state = 'asked' ORDER BY asked_at DESC`,
     )
-    .all(values.session) as { id: string; text: string; kind: string }[];
+    .all(values.session) as (Omit<QuestionRow, "isSwitch"> & { isSwitch: number })[];
   if (rows.length === 0) return 0;
 
-  const question = rows[0] as { id: string; text: string; kind: string };
-  context.stdout(
-    `w5 noticed a possible shift. To resolve: tempad answer ${question.id} --quest <id|new:"title"> --why "…". If unsure, keep working — it will follow up later.`,
-  );
+  const questions: QuestionRow[] = rows.map((row) => ({ ...row, isSwitch: row.isSwitch === 1 }));
+  const text = buildAdditionalContext(questions);
+  if (text.length > 0) context.stdout(text);
   return 0;
 }
 
@@ -173,12 +176,41 @@ function runReview(_args: string[], context: W5Context): number {
   return 0;
 }
 
+function settingsPathFor(scope: string): string {
+  const home = process.env.HOME ?? "";
+  if (scope === "project") return join(process.cwd(), ".claude", "settings.json");
+  return join(home, ".claude", "settings.json");
+}
+
+function runHook(args: string[]): number {
+  const [action, ...rest] = args;
+  const { values } = parseArgs({
+    args: rest,
+    options: { scope: { type: "string", default: "user" } },
+    strict: true,
+  });
+  const scope = values.scope === "project" ? "project" : "user";
+  const settingsPath = settingsPathFor(scope);
+  const binPath = process.execPath;
+
+  if (action === "install") {
+    installHooks(settingsPath, binPath);
+    return 0;
+  }
+  if (action === "uninstall") {
+    uninstallHooks(settingsPath);
+    return 0;
+  }
+  return 2;
+}
+
 export async function runW5Command(args: string[], context: W5Context): Promise<number> {
   const [subcommand, ...rest] = args;
 
   if (subcommand === "enqueue") return runEnqueue(rest, context);
   if (subcommand === "context") return runContext(rest, context);
   if (subcommand === "run") return runRun(rest, context);
+  if (subcommand === "hook") return runHook(rest);
 
   return 2;
 }

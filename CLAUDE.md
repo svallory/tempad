@@ -36,6 +36,7 @@ moon run :test        # same through moon
 - `tempad sync [monday|github|claude] [--full]` — `--full` clears that source's `sync_state` row before syncing, so the collector ignores the last-sync cursor and rescans everything back to `SINCE` (or, for Claude, re-reads every session file regardless of mtime). Use it to backfill columns added by a migration (e.g. `title_source`) on rows a normal incremental sync wouldn't touch.
 - `tempad report <daily|project|hourly> --from <date> --to <date> [--org X] [--project Y] [--out path]`
 - Intent layer: `tempad hero init`, `tempad party add|leave|list`, `tempad client add`, `tempad goal add|reword|replace|end|edit|list`, `tempad quest add|reword|replace|end|edit|confirm|merge|pause|resume|done|abandon|branch|return|list`, `tempad activity list`, `tempad trace list`, `tempad answer`, `tempad rebuild [--until <iso>]`. See "Intent layer" below.
+- w5 hook: `tempad w5 enqueue --session <id> [--forced]`, `tempad w5 context --session <id>`, `tempad w5 run [--detached]`, `tempad w5 hook install|uninstall [--scope user|project]`, `tempad quiet <2h|30m>`, `tempad review`. See "w5 hook" below.
 
 ## Intent layer
 
@@ -45,6 +46,14 @@ Hero, parties, clients, goals, quests, activities, traces and questions are even
 - **Projections are rebuildable.** Current-state tables (`heroes`, `parties`, `memberships`, `clients`, `goals`, `quests`, `activities`, `traces`, `trace_links`, `questions`) are plain SQLite tables derived from events by pure reducers in `src/intent/projections/*.ts`. `tempad rebuild [--until <iso>]` truncates and replays them; this is always safe to run. Rebuilding `--until <date>` leaves the live projections showing state as of that date — the command prints `projections now reflect state as of <date>; run tempad rebuild to restore` as a reminder to re-run `tempad rebuild` with no `--until` afterward.
 - **Edit intent rule.** The CLI refuses a bare edit (`goal edit` / `quest edit`) on a goal or quest that has attachments (a quest on a goal, an activity on a quest) — the caller must instead use `reword` (same id, new revision) or `replace` (new id, old one ended with `reason: "replaced"`), both of which are allowed even with attachments since they express an explicit wording- or meaning-change intent. The refusal message names the real subcommands, e.g. `goal <id> has attachments; use tempad goal reword <id> "<title>" or tempad goal replace <id> "<title>" --reason ...`. See `src/intent/edit-intent.ts`.
 - **Time travel.** `stateAsOf(database, until)` (`src/intent/time-travel.ts`) rebuilds projections into a fresh in-memory database from events up to a date; `goal list --as-of <iso>` and `quest list --as-of <iso>` use it to answer "what were my goals in August".
+
+## w5 hook
+
+Claude Code hooks (`Stop`, `PreCompact`, `SessionEnd`, `UserPromptSubmit`) enqueue classification jobs without ever blocking a session: `packages/core/hooks/w5-stop.sh` and `w5-prompt.sh` shell out to `tempad w5 enqueue`/`tempad w5 context` and always exit 0, logging failures to `TEMPAD_HOME/logs/w5.log` instead of surfacing them. `tempad w5 hook install|uninstall` (`src/w5/hooks.ts`) merges these into `~/.claude/settings.json` (or `.claude/settings.json` with `--scope project`) alongside any other hooks, marking its own entries so uninstall only removes those.
+
+A detached `tempad w5 run` drains queued jobs: for each it re-syncs the one session file, builds a window of messages since the last run (`src/w5/window.ts`), classifies it (`src/w5/classifier.ts`, `AnthropicClassifier` posting to the Messages API), and applies the result as intent events (`src/w5/apply.ts`) — reusing or opening activities, proposing unconfirmed quests, branching on a detected switch. `src/w5/questions.ts` runs the hand-back rules: a question watches for `watchTurns` turns before it's asked, `why` questions on an activity that already has a quest expire straight to `tempad review` instead of asking, and an ask budget plus `tempad quiet <2h|30m>` keep it from asking too often.
+
+`ANTHROPIC_API_KEY` is required only when `tempad w5 run` actually calls the classifier; `loadConfig` never requires it, so hooks run fine without it (they just log and no-op).
 
 ## Gotchas
 
