@@ -51,7 +51,9 @@ export class EventStore {
     return toRecord(result);
   }
 
-  read(options: { subject?: string; kind?: EventKind; until?: string; afterId?: number } = {}): EventRecord[] {
+  read(
+    options: { subject?: string; kind?: EventKind; until?: string; afterId?: number } = {},
+  ): EventRecord[] {
     const clauses: string[] = [];
     const parameters: (string | number)[] = [];
     if (options.subject) {
@@ -71,7 +73,9 @@ export class EventStore {
       parameters.push(options.afterId);
     }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    const rows = this.database.query(`SELECT * FROM events ${where} ORDER BY id`).all(...parameters) as Row[];
+    const rows = this.database
+      .query(`SELECT * FROM events ${where} ORDER BY id`)
+      .all(...parameters) as Row[];
     return rows.map(toRecord);
   }
 }
