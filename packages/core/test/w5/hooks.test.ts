@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -140,7 +140,6 @@ describe("w5-stop.sh", () => {
       const fakeTempad = join(dir, "tempad");
       const argvLog = join(dir, "argv.log");
       writeFileSync(fakeTempad, `#!/bin/sh\necho "$@" >> "${argvLog}"\n`);
-      const { chmodSync } = await import("node:fs");
       chmodSync(fakeTempad, 0o755);
 
       const scriptPath = join(import.meta.dir, "../../hooks/w5-stop.sh");
@@ -186,6 +185,86 @@ describe("w5-stop.sh", () => {
       expect(exitCode).toBe(0);
       const logContent = readFileSync(join(dir, "logs", "w5.log"), "utf8");
       expect(logContent).toContain("TEMPAD_BIN not set");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("w5-stop.sh / w5-prompt.sh injection safety", () => {
+  test("a malicious session_id is rejected before reaching TEMPAD_BIN, no command execution", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-hookscript-test-"));
+    try {
+      const fakeTempad = join(dir, "tempad");
+      const argvLog = join(dir, "argv.log");
+      const canaryFile = join(dir, "pwned");
+      writeFileSync(fakeTempad, `#!/bin/sh\necho "$@" >> "${argvLog}"\n`);
+      chmodSync(fakeTempad, 0o755);
+
+      const scriptPath = join(import.meta.dir, "../../hooks/w5-stop.sh");
+      const maliciousSessionId = `s1"; touch ${canaryFile}; echo "`;
+
+      const proc = Bun.spawn({
+        cmd: ["bash", scriptPath],
+        env: { ...process.env, TEMPAD_BIN: fakeTempad, TEMPAD_HOME: dir },
+        stdin: new Response(
+          JSON.stringify({ session_id: maliciousSessionId, hook_event_name: "Stop" }),
+        ),
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      const exitCode = await proc.exited;
+
+      expect(exitCode).toBe(0);
+      expect(existsSync(canaryFile)).toBe(false);
+      expect(existsSync(argvLog)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("TEMPAD_BIN containing a semicolon does not execute a second command (no eval)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-hookscript-test-"));
+    try {
+      const canaryFile = join(dir, "pwned");
+      const scriptPath = join(import.meta.dir, "../../hooks/w5-stop.sh");
+      const maliciousBin = `true; touch ${canaryFile} #`;
+
+      const proc = Bun.spawn({
+        cmd: ["bash", scriptPath],
+        env: { ...process.env, TEMPAD_BIN: maliciousBin, TEMPAD_HOME: dir },
+        stdin: new Response(JSON.stringify({ session_id: "s1", hook_event_name: "Stop" })),
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      await proc.exited;
+
+      expect(existsSync(canaryFile)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("multi-word TEMPAD_BIN (bun /path/cli.ts style) still works without eval", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-hookscript-test-"));
+    try {
+      const fakeTempad = join(dir, "fake-bun");
+      const argvLog = join(dir, "argv.log");
+      writeFileSync(fakeTempad, `#!/bin/sh\nshift\necho "$@" >> "${argvLog}"\n`);
+      chmodSync(fakeTempad, 0o755);
+
+      const scriptPath = join(import.meta.dir, "../../hooks/w5-stop.sh");
+      const proc = Bun.spawn({
+        cmd: ["bash", scriptPath],
+        env: { ...process.env, TEMPAD_BIN: `${fakeTempad} /some/cli.ts`, TEMPAD_HOME: dir },
+        stdin: new Response(JSON.stringify({ session_id: "s1", hook_event_name: "Stop" })),
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      await proc.exited;
+
+      const argv = readFileSync(argvLog, "utf8").trim();
+      expect(argv).toBe("w5 enqueue --session s1");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
