@@ -1,7 +1,19 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
-import { querySideQuests, resolveIntentDatabase } from "./intent-queries.ts";
-import { dayRange, heading, localDay, localHour, table } from "./markdown.ts";
+import {
+  type ActivityTraceIntervalRow,
+  queryActivityTraceIntervals,
+  querySideQuests,
+  resolveIntentDatabase,
+} from "./intent-queries.ts";
+import {
+  dayRange,
+  heading,
+  localDay,
+  localHour,
+  table,
+  utcInstantForLocalMidnight,
+} from "./markdown.ts";
 import {
   groupDuplicateCommits,
   isNamedTitleSource,
@@ -43,13 +55,15 @@ function render(database: Database, config: Config, options: ReportOptions): str
   for (const day of days) {
     const dayCommits = commits.filter((row) => localDay(row.authoredAt, timeZone) === day);
     const dayMessages = messages.filter((row) => localDay(row.ts, timeZone) === day);
-    const daySideQuests = querySideQuests(intentDatabase, {
+    const dayRangeOptions = {
       from: day,
       to: day,
       timeZone,
       org: options.org,
       project: options.project,
-    });
+    };
+    const daySideQuests = querySideQuests(intentDatabase, dayRangeOptions);
+    const dayActivityIntervals = queryActivityTraceIntervals(intentDatabase, dayRangeOptions);
 
     const keys = new Map<string, ProjectKey>();
     for (const row of [...dayCommits, ...dayMessages]) {
@@ -63,6 +77,13 @@ function render(database: Database, config: Config, options: ReportOptions): str
       keys.set(projectKeyString({ org: sideQuest.org, project: sideQuest.project }), {
         org: sideQuest.org,
         project: sideQuest.project,
+      });
+    }
+    for (const interval of dayActivityIntervals) {
+      if (!interval.org || !interval.project) continue;
+      keys.set(projectKeyString({ org: interval.org, project: interval.project }), {
+        org: interval.org,
+        project: interval.project,
       });
     }
     const projectKeys = [...keys.values()].sort((a, b) =>
@@ -135,6 +156,13 @@ function render(database: Database, config: Config, options: ReportOptions): str
           parts.push(`${group.sha.slice(0, 7)}${suffix}`);
         }
 
+        const hourIntervals = dayActivityIntervals.filter(
+          (interval) => interval.org === key.org && interval.project === key.project,
+        );
+        for (const [label, minutes] of hourActivityMinutes(hourIntervals, timeZone, day, hour)) {
+          parts.push(`${label} (${minutesLabel(minutes)})`);
+        }
+
         for (const sideQuest of daySideQuests) {
           if (
             sideQuest.org === key.org &&
@@ -156,6 +184,41 @@ function render(database: Database, config: Config, options: ReportOptions): str
   }
 
   return sections.join("\n\n");
+}
+
+function minutesLabel(totalMinutes: number): string {
+  const rounded = Math.round(totalMinutes);
+  const hours = Math.floor(rounded / 60);
+  const minutes = rounded % 60;
+  return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
+
+/**
+ * Minutes of trace-backed activity time within [hour:00, hour+1:00) local
+ * time on `day`, grouped by quest title (or the activity's own objective
+ * when it has no quest), for the hourly report's per-hour activity list.
+ */
+function hourActivityMinutes(
+  intervals: ActivityTraceIntervalRow[],
+  timeZone: string,
+  day: string,
+  hour: number,
+): [string, number][] {
+  const dayStartMs = new Date(utcInstantForLocalMidnight(day, timeZone)).getTime();
+  const hourStartMs = dayStartMs + hour * 3600_000;
+  const hourEndMs = hourStartMs + 3600_000;
+
+  const minutesByLabel = new Map<string, number>();
+  for (const interval of intervals) {
+    const intervalStart = Math.max(new Date(interval.startedAt).getTime(), hourStartMs);
+    const intervalEnd = Math.min(new Date(interval.endedAt).getTime(), hourEndMs);
+    if (intervalEnd <= intervalStart) continue;
+    const label = interval.questTitle ?? interval.objective;
+    const minutes = (intervalEnd - intervalStart) / 60000;
+    minutesByLabel.set(label, (minutesByLabel.get(label) ?? 0) + minutes);
+  }
+
+  return [...minutesByLabel.entries()];
 }
 
 export const hourlyReport: Report = {

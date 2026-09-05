@@ -143,6 +143,33 @@ function minutesByActivity(
   return minutes;
 }
 
+/**
+ * Trace start/end instants clipped to [start, end), per activity id -- the
+ * evidence timestamps a quest's first/last-evidence columns are built from,
+ * so they never report a time outside the report's range or an activity's
+ * opened/closed_at when the trace evidence itself falls inside the range.
+ */
+function clippedEvidenceByActivity(
+  intervals: TraceIntervalRow[],
+  start: string,
+  end: string,
+): Map<string, string[]> {
+  const startMs = new Date(start).getTime();
+  const endMs = new Date(end).getTime();
+  const evidence = new Map<string, string[]>();
+
+  for (const interval of intervals) {
+    const intervalStart = Math.max(new Date(interval.startedAt).getTime(), startMs);
+    const intervalEnd = Math.min(new Date(interval.endedAt).getTime(), endMs);
+    if (intervalEnd <= intervalStart) continue;
+    const times = evidence.get(interval.activityId) ?? [];
+    times.push(new Date(intervalStart).toISOString(), new Date(intervalEnd).toISOString());
+    evidence.set(interval.activityId, times);
+  }
+
+  return evidence;
+}
+
 /** Org/project for an activity, taken from its earliest linked trace's session. */
 function projectByActivity(
   intervals: TraceIntervalRow[],
@@ -155,6 +182,65 @@ function projectByActivity(
     }
   }
   return projects;
+}
+
+export interface ActivityTraceIntervalRow {
+  activityId: string;
+  questTitle: string | null;
+  objective: string;
+  org: string | null;
+  project: string | null;
+  startedAt: string;
+  endedAt: string;
+}
+
+/**
+ * One row per trace interval (already clipped to [start, end)), with its
+ * activity's quest title and objective attached, for callers that need to
+ * bucket activity time by a finer grain than a day -- the hourly report's
+ * per-hour "activities active this hour" cells.
+ */
+export function queryActivityTraceIntervals(
+  database: Database,
+  range: DateRange,
+): ActivityTraceIntervalRow[] {
+  if (!hasIntentTables(database)) return [];
+  const { start, end } = toDayBounds(range);
+  const intervals = queryTraceIntervals(database, range);
+  const startMs = new Date(start).getTime();
+  const endMs = new Date(end).getTime();
+
+  const activityIds = new Set(intervals.map((interval) => interval.activityId));
+  if (activityIds.size === 0) return [];
+
+  const activityRows = database
+    .query(
+      `SELECT a.id as id, a.objective as objective, q.title as questTitle
+       FROM activities a
+       LEFT JOIN quests q ON q.id = a.quest_id
+       WHERE a.id IN (${[...activityIds].map(() => "?").join(", ")})`,
+    )
+    .all(...activityIds) as { id: string; objective: string; questTitle: string | null }[];
+  const activitiesById = new Map(activityRows.map((row) => [row.id, row]));
+
+  const rows: ActivityTraceIntervalRow[] = [];
+  for (const interval of intervals) {
+    const intervalStart = Math.max(new Date(interval.startedAt).getTime(), startMs);
+    const intervalEnd = Math.min(new Date(interval.endedAt).getTime(), endMs);
+    if (intervalEnd <= intervalStart) continue;
+    const activity = activitiesById.get(interval.activityId);
+    if (!activity) continue;
+    rows.push({
+      activityId: interval.activityId,
+      questTitle: activity.questTitle,
+      objective: activity.objective,
+      org: interval.org,
+      project: interval.project,
+      startedAt: new Date(intervalStart).toISOString(),
+      endedAt: new Date(intervalEnd).toISOString(),
+    });
+  }
+  return rows;
 }
 
 export function queryActivities(database: Database, range: DateRange): ActivityRow[] {
@@ -285,23 +371,21 @@ export interface QuestSummaryRow {
  */
 export function queryQuests(database: Database, range: DateRange): QuestSummaryRow[] {
   if (!hasIntentTables(database)) return [];
+  const { start, end } = toDayBounds(range);
   const intervals = queryTraceIntervals(database, range);
   const projects = projectByActivity(intervals);
+  const evidenceByActivity = clippedEvidenceByActivity(intervals, start, end);
 
   const activityIds = new Set(intervals.map((interval) => interval.activityId));
   if (activityIds.size === 0) return [];
 
   const activityRows = database
     .query(
-      `SELECT id, quest_id as questId, opened_at as openedAt, closed_at as closedAt
-       FROM activities WHERE id IN (${[...activityIds].map(() => "?").join(", ")})`,
+      `SELECT id, quest_id as questId FROM activities WHERE id IN (${[...activityIds]
+        .map(() => "?")
+        .join(", ")})`,
     )
-    .all(...activityIds) as {
-    id: string;
-    questId: string | null;
-    openedAt: string;
-    closedAt: string | null;
-  }[];
+    .all(...activityIds) as { id: string; questId: string | null }[];
 
   const questIds = new Set(
     activityRows.map((row) => row.questId).filter((id): id is string => id !== null),
@@ -331,9 +415,7 @@ export function queryQuests(database: Database, range: DateRange): QuestSummaryR
 
   return questRows.map((quest) => {
     const questActivities = activityRows.filter((row) => row.questId === quest.id);
-    const evidenceTimes = questActivities.flatMap((row) =>
-      row.closedAt ? [row.openedAt, row.closedAt] : [row.openedAt],
-    );
+    const evidenceTimes = questActivities.flatMap((row) => evidenceByActivity.get(row.id) ?? []);
     const firstEvidence = evidenceTimes.reduce((min, time) => (time < min ? time : min));
     const lastEvidence = evidenceTimes.reduce((max, time) => (time > max ? time : max));
 

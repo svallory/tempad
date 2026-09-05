@@ -175,6 +175,23 @@ describe("dailyReport", () => {
     database.close();
   });
 
+  test("Quests and Side quests render as level-4 Markdown headings", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    const output = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+    });
+
+    expect(output).toContain("#### Quests");
+    expect(output).toContain("#### Side quests");
+    expect(output).not.toMatch(/^Quests$/m);
+    expect(output).not.toMatch(/^Side quests$/m);
+
+    database.close();
+  });
+
   test("a weekday with nothing prints no evidence, a weekend with nothing is omitted", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     // no seed: empty database

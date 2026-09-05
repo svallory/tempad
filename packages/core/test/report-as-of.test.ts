@@ -92,4 +92,35 @@ describe("--client", () => {
 
     database.close();
   });
+
+  test("filters commits and pull requests to gh_repos.meta.client", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(
+      `INSERT INTO gh_repos (full_name, org, is_personal, default_branch, mirrored_at, project, meta)
+       VALUES ('acme/liuna-app', 'acme', 0, 'main', '2026-09-01T00:00:00.000Z', 'liuna-app', '{"client":"liuna"}')`,
+    );
+    database.exec(
+      `INSERT INTO gh_commits (sha, repo, branches, author_name, author_email, authored_at, committed_at, subject, body, files_changed, insertions, deletions)
+       VALUES ('ccccccc3333333333333333333333333333333', 'acme/liuna-app', '["main"]', 'Octo Cat', 'octocat@example.com', '2026-09-01T14:00:00.000Z', '2026-09-01T14:00:00.000Z', 'feat(liuna): ship client feature', NULL, 1, 1, 0)`,
+    );
+    database.exec(
+      `INSERT INTO gh_pull_requests (repo, number, title, state, author, role, created_at, merged_at, closed_at)
+       VALUES ('acme/liuna-app', 7, 'Client feature', 'open', 'octocat', 'author', '2026-09-01T15:00:00.000Z', NULL, NULL)`,
+    );
+
+    const filtered = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+      client: "liuna",
+    });
+    expect(filtered).toContain("ship client feature");
+    expect(filtered).toContain("#7 Client feature");
+    // acme/widgets has no client in its meta, so its commit/PR are excluded
+    expect(filtered).not.toContain("polish report output");
+    expect(filtered).not.toContain("#42 Polish report output");
+
+    database.close();
+  });
 });
