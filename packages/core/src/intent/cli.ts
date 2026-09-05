@@ -8,6 +8,7 @@ import { newUlid } from "./ids";
 import { applyIncremental, ensureTables, rebuildAll } from "./projections";
 import { registerAllProjections } from "./projections/register";
 import { EventStore } from "./store";
+import { stateAsOf } from "./time-travel";
 
 registerAllProjections();
 
@@ -342,11 +343,14 @@ function runGoalCommand(args: string[], context: IntentContext): number {
   if (subcommand === "list") {
     const { values } = parseArgs({
       args: rest,
-      options: { all: { type: "boolean", default: false } },
+      options: { all: { type: "boolean", default: false }, "as-of": { type: "string" } },
       strict: true,
     });
+    const source = values["as-of"]
+      ? stateAsOf(context.database, values["as-of"])
+      : context.database;
     const where = values.all ? "" : "WHERE ended_at IS NULL";
-    const rows = context.database
+    const rows = source
       .query(`SELECT id, title, owner_kind, end_reason FROM goals ${where} ORDER BY created_at`)
       .all() as {
       id: string;
@@ -670,15 +674,19 @@ function runQuestCommand(args: string[], context: IntentContext): number {
         all: { type: "boolean", default: false },
         unconfirmed: { type: "boolean", default: false },
         side: { type: "boolean", default: false },
+        "as-of": { type: "string" },
       },
       strict: true,
     });
+    const source = values["as-of"]
+      ? stateAsOf(context.database, values["as-of"])
+      : context.database;
     const clauses: string[] = [];
     if (!values.all) clauses.push("ended_at IS NULL");
     if (values.unconfirmed) clauses.push("confirmed = 0");
     if (values.side) clauses.push("origin_activity_id IS NOT NULL");
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    const rows = context.database
+    const rows = source
       .query(`SELECT id, title, state, confirmed FROM quests ${where} ORDER BY created_at`)
       .all() as { id: string; title: string; state: string; confirmed: number }[];
     for (const row of rows) {

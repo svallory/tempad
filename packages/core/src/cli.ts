@@ -30,6 +30,21 @@ function printUsage(): void {
   console.error(
     "  tempad report <daily|project|hourly> --from <date> --to <date> [--org X] [--project Y] [--out path]",
   );
+  console.error('  tempad hero init "<name>"');
+  console.error(
+    '  tempad party add <slug> "<name>" [--joined YYYY-MM-DD] | leave <slug> --reason "..." | list',
+  );
+  console.error('  tempad client add <slug> "<name>"');
+  console.error(
+    '  tempad goal add --owner hero|party:<slug> "<title>" [--statement] | reword <id> "<title>" | replace <id> "<title>" --reason "..." | end <id> --reason ... | list [--all] [--as-of <iso>]',
+  );
+  console.error(
+    '  tempad quest add --owner ... [--goal <id>] "<title>" [--objective] [--done] [--due] [--budget Nh|Nm] [--commitment] | confirm|merge|pause|resume|done|abandon|branch|return <id> | list [--all] [--unconfirmed] [--side] [--as-of <iso>]',
+  );
+  console.error("  tempad activity list [--open] [--quest <id>]");
+  console.error("  tempad trace list [--since <iso>] [--activity <id>]");
+  console.error('  tempad answer <question-id> --quest <id|new:"title"> [--why "..."]');
+  console.error("  tempad rebuild [--until <iso>]");
 }
 
 export async function runSync(
