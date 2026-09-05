@@ -11,6 +11,7 @@ import { runIntentCommand } from "./intent/cli.ts";
 import { loadIntentConfig } from "./intent/config.ts";
 import { reports } from "./report/index.ts";
 import type { Report, ReportOptions } from "./report/types.ts";
+import { runQuietCommand, runReviewCommand, runW5Command } from "./w5/cli.ts";
 
 const INTENT_COMMANDS = new Set([
   "hero",
@@ -176,6 +177,18 @@ async function runIntentDispatch(command: string, rest: string[]): Promise<numbe
   });
 }
 
+async function runW5Dispatch(command: string, rest: string[]): Promise<number> {
+  const config = loadConfig();
+  const database = openDatabase(join(config.home, "tempad.db"));
+  const intentConfig = loadIntentConfig(join(config.home, "tempad.toml"));
+  const context = { database, config, intentConfig, stdout: (line: string) => console.log(line) };
+
+  if (command === "w5") return runW5Command(rest, context);
+  if (command === "quiet") return runQuietCommand(rest, context);
+  if (command === "review") return runReviewCommand(rest, context);
+  return 2;
+}
+
 async function main(): Promise<number> {
   const [command, ...rest] = process.argv.slice(2);
 
@@ -187,6 +200,9 @@ async function main(): Promise<number> {
   }
   if (command !== undefined && INTENT_COMMANDS.has(command)) {
     return runIntentDispatch(command, rest);
+  }
+  if (command === "w5" || command === "quiet" || command === "review") {
+    return runW5Dispatch(command, rest);
   }
 
   printUsage();
