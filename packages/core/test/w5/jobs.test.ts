@@ -35,7 +35,7 @@ describe("w5 jobs", () => {
     const job = claimNextJob(database, "2026-09-05T10:02:00.000Z");
     expect(job?.sessionId).toBe("s1");
     expect(claimNextJob(database)).toBeNull();
-    completeJob(database, job?.id ?? 0, "2026-09-05T10:01:30.000Z");
+    completeJob(database, job?.id ?? 0, "2026-09-05T10:01:30.000Z", "2026-09-05T10:02:00.000Z");
     expect(
       enqueueJob(database, {
         sessionId: "s1",
@@ -72,9 +72,56 @@ describe("w5 jobs", () => {
       throttleMinutes: 10,
     });
     const job = claimNextJob(database, "2026-09-05T10:00:00.000Z");
-    completeJob(database, job?.id ?? 0, null);
+    completeJob(database, job?.id ?? 0, null, "2026-09-05T10:00:00.000Z");
     expect(isThrottled(database, "s3", "2026-09-05T10:05:00.000Z", 10)).toBe(true);
     expect(isThrottled(database, "s3", "2026-09-05T10:15:00.000Z", 10)).toBe(false);
+  });
+
+  test("completeJob records last_run_at as the actual completion time, not claimed_at", () => {
+    const database = openDatabase(":memory:");
+    enqueueJob(database, {
+      sessionId: "s4",
+      forced: true,
+      now: "2026-09-05T10:00:00.000Z",
+      throttleMinutes: 10,
+    });
+    // Claimed early, but the run takes a while to actually finish.
+    const job = claimNextJob(database, "2026-09-05T10:00:00.000Z");
+    completeJob(database, job?.id ?? 0, null, "2026-09-05T10:20:00.000Z");
+
+    const run = database.query("SELECT last_run_at FROM w5_runs WHERE session_id = 's4'").get() as {
+      last_run_at: string;
+    };
+    expect(run.last_run_at).toBe("2026-09-05T10:20:00.000Z");
+    expect(run.last_run_at).not.toBe("2026-09-05T10:00:00.000Z");
+
+    // Throttle window is measured from the real completion time (10:20), not claimed_at (10:00):
+    // 5 minutes after completion is still within a 10-minute throttle.
+    expect(isThrottled(database, "s4", "2026-09-05T10:25:00.000Z", 10)).toBe(true);
+    // Whereas 5 minutes after claimed_at would have already cleared a 10-min throttle
+    // under the old (buggy) behavior — confirming we're using completion time, not claim time.
+    expect(isThrottled(database, "s4", "2026-09-05T10:05:00.000Z", 10)).toBe(true);
+  });
+
+  test("completeJob defaults now to the current time when omitted", () => {
+    const database = openDatabase(":memory:");
+    enqueueJob(database, {
+      sessionId: "s5",
+      forced: true,
+      now: "2026-09-05T10:00:00.000Z",
+      throttleMinutes: 10,
+    });
+    const job = claimNextJob(database, "2026-09-05T10:00:00.000Z");
+    const before = Date.now();
+    completeJob(database, job?.id ?? 0, null);
+    const after = Date.now();
+
+    const run = database.query("SELECT last_run_at FROM w5_runs WHERE session_id = 's5'").get() as {
+      last_run_at: string;
+    };
+    const recordedMs = Date.parse(run.last_run_at);
+    expect(recordedMs).toBeGreaterThanOrEqual(before);
+    expect(recordedMs).toBeLessThanOrEqual(after);
   });
 
   test("failJob records the error and frees the queue", () => {

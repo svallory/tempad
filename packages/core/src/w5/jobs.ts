@@ -97,14 +97,18 @@ export function claimNextJob(database: Database, now?: string): Job | null {
   return toJob(job);
 }
 
-export function completeJob(database: Database, id: number, lastMessageTs: string | null): void {
-  const job = database.query("SELECT session_id, claimed_at FROM w5_jobs WHERE id = ?").get(id) as {
+export function completeJob(
+  database: Database,
+  id: number,
+  lastMessageTs: string | null,
+  now?: string,
+): void {
+  const job = database.query("SELECT session_id FROM w5_jobs WHERE id = ?").get(id) as {
     session_id: string;
-    claimed_at: string | null;
   } | null;
   if (!job) return;
 
-  const finishedAt = job.claimed_at ?? new Date().toISOString();
+  const finishedAt = now ?? new Date().toISOString();
 
   database
     .query("UPDATE w5_jobs SET state = 'done', finished_at = ? WHERE id = ?")

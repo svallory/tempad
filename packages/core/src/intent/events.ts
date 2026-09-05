@@ -29,6 +29,8 @@ export const EVENT_KINDS = [
   "trace.recorded",
   "trace.relinked",
   "question.asked",
+  "question.watched",
+  "question.promoted",
   "question.answered",
   "question.expired",
   "retracted",

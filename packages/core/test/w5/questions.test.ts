@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { openDatabase } from "../../src/db/database";
 import type { W5Config } from "../../src/intent/config";
 import { newUlid } from "../../src/intent/ids";
-import { applyIncremental, ensureTables } from "../../src/intent/projections";
+import { applyIncremental, ensureTables, rebuildAll } from "../../src/intent/projections";
 import { registerAllProjections } from "../../src/intent/projections/register";
 import { EventStore } from "../../src/intent/store";
 import { advanceQuestions } from "../../src/w5/questions";
@@ -362,4 +362,122 @@ describe("advanceQuestions", () => {
     expect(row.state).toBe("resolved_by_context");
     expect(row.answered_by).toBe("context");
   });
+});
+
+test("advanceQuestions transitions are event-sourced: tempad rebuild reproduces the questions table exactly", () => {
+  const database = openDatabase(":memory:");
+  ensureTables(database);
+  const store = new EventStore(database);
+
+  // Question 1: watched, then promoted to asked (which_quest + isSwitch).
+  const traceA = seedActivityAndTrace(database, {
+    activityId: "A1",
+    questId: null,
+    sessionId: "s1",
+    isSwitch: true,
+  });
+  const promotedQuestion = seedQuestion(database, store, {
+    traceId: traceA,
+    sessionId: "s1",
+    kind: "which_quest",
+    isSwitch: true,
+  });
+  advanceQuestions(store, database, config, {
+    sessionId: "s1",
+    now: "2026-09-04T15:21:00.000Z",
+    turnsSinceLastRun: 3,
+    sessionActivityMinutes: 5,
+    resolvedByContext: [],
+  });
+
+  // Question 2 (different session): watched once, not yet promoted.
+  const traceB = seedActivityAndTrace(database, {
+    activityId: "A2",
+    questId: null,
+    sessionId: "s2",
+    isSwitch: false,
+  });
+  const watchedQuestion = seedQuestion(database, store, {
+    traceId: traceB,
+    sessionId: "s2",
+    kind: "which_quest",
+    isSwitch: false,
+  });
+  advanceQuestions(store, database, config, {
+    sessionId: "s2",
+    now: "2026-09-04T15:21:00.000Z",
+    turnsSinceLastRun: 1,
+    sessionActivityMinutes: 5,
+    resolvedByContext: [],
+  });
+
+  // Question 3: why-kind on an activity that already has a quest -> auto-expires.
+  const traceC = seedActivityAndTrace(database, {
+    activityId: "A3",
+    questId: "Q1",
+    sessionId: "s3",
+    isSwitch: false,
+  });
+  seedQuestion(database, store, { traceId: traceC, sessionId: "s3", kind: "why" });
+  advanceQuestions(store, database, config, {
+    sessionId: "s3",
+    now: "2026-09-04T15:21:00.000Z",
+    turnsSinceLastRun: 1,
+    sessionActivityMinutes: 5,
+    resolvedByContext: [],
+  });
+
+  // Question 4: resolved by context.
+  const traceD = seedActivityAndTrace(database, {
+    activityId: "A4",
+    questId: null,
+    sessionId: "s4",
+    isSwitch: true,
+  });
+  const resolvedQuestion = seedQuestion(database, store, {
+    traceId: traceD,
+    sessionId: "s4",
+    kind: "which_quest",
+    isSwitch: true,
+  });
+  advanceQuestions(store, database, config, {
+    sessionId: "s4",
+    now: "2026-09-04T15:21:00.000Z",
+    turnsSinceLastRun: 1,
+    sessionActivityMinutes: 5,
+    resolvedByContext: [resolvedQuestion],
+  });
+
+  // Advance the promoted question further so it expires too (askExpireTurns: 2).
+  advanceQuestions(store, database, config, {
+    sessionId: "s1",
+    now: "2026-09-04T15:25:00.000Z",
+    turnsSinceLastRun: 2,
+    sessionActivityMinutes: 5,
+    resolvedByContext: [],
+  });
+
+  const before = database
+    .query(
+      "SELECT id, trace_id, session_id, text, kind, state, asked_at, answered_at, answer, answered_by, turns_watched, turns_at_ask, is_switch FROM questions ORDER BY id",
+    )
+    .all();
+  expect(before).toHaveLength(4);
+
+  const stateNames = new Map(
+    (before as { id: string; state: string }[]).map((row) => [row.id, row.state]),
+  );
+  expect(stateNames.get(promotedQuestion)).toBe("expired");
+  expect(stateNames.get(watchedQuestion)).toBe("watching");
+  expect(stateNames.get(resolvedQuestion)).toBe("resolved_by_context");
+
+  rebuildAll(database);
+
+  const after = database
+    .query(
+      "SELECT id, trace_id, session_id, text, kind, state, asked_at, answered_at, answer, answered_by, turns_watched, turns_at_ask, is_switch FROM questions ORDER BY id",
+    )
+    .all();
+
+  expect(after).toEqual(before);
 });

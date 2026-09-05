@@ -145,6 +145,10 @@ export function applyResult(
     questionsWatching: 0,
   };
 
+  let previous: { activityId: string; questId: string | null } | null = window.previousTrace
+    ? { activityId: window.previousTrace.activityId, questId: window.previousTrace.questId }
+    : null;
+
   for (const segment of result.segments) {
     const { activityId, questId, activityOpened, questCreated } = resolveActivityForSegment(
       store,
@@ -157,20 +161,17 @@ export function applyResult(
     if (activityOpened) summary.activitiesOpened += 1;
     if (questCreated) summary.questsProposed += 1;
 
-    if (
-      segment.isSwitch &&
-      questId !== null &&
-      window.previousTrace !== null &&
-      questId !== window.previousTrace.questId
-    ) {
+    if (segment.isSwitch && questId !== null && previous !== null && questId !== previous.questId) {
       branchQuest(store, database, {
         questId,
-        fromActivityId: window.previousTrace.activityId,
+        fromActivityId: previous.activityId,
         trigger: segment.trigger ?? "unknown",
         at: segment.startedAt,
       });
       summary.branches += 1;
     }
+
+    previous = { activityId, questId };
 
     const traceId = recordTrace(store, database, {
       activity: activityId,
