@@ -6,6 +6,8 @@ export interface ReportOptions {
   to: string;
   org?: string;
   project?: string;
+  asOf?: string;
+  client?: string;
 }
 
 export interface Report {

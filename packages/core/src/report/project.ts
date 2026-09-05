@@ -1,6 +1,11 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
-import { queryActivities, queryQuests, querySideQuests } from "./intent-queries.ts";
+import {
+  queryActivities,
+  queryQuests,
+  querySideQuests,
+  resolveIntentDatabase,
+} from "./intent-queries.ts";
 import { elapsedLabel, heading, localDateTime, table } from "./markdown.ts";
 import {
   type CommitRow,
@@ -57,14 +62,16 @@ function render(database: Database, config: Config, options: ReportOptions): str
     timeZone: config.tz,
     org: options.org,
     project: options.project,
+    client: options.client,
   };
+  const intentDatabase = resolveIntentDatabase(database, options.asOf);
 
   const commits = queryCommits(database, range);
   const sessions = querySessions(database, range);
   const mondayItems = queryMondayItems(database, range);
-  const quests = queryQuests(database, range);
-  const sideQuests = querySideQuests(database, range);
-  const activities = queryActivities(database, range);
+  const quests = queryQuests(intentDatabase, range);
+  const sideQuests = querySideQuests(intentDatabase, range);
+  const activities = queryActivities(intentDatabase, range);
 
   const keys = new Map<string, ProjectKey>();
   for (const row of [...commits, ...sessions, ...mondayItems]) {
@@ -85,7 +92,10 @@ function render(database: Database, config: Config, options: ReportOptions): str
     projectKeyString(a).localeCompare(projectKeyString(b)),
   );
 
-  const sections: string[] = [heading(1, `project report ${options.from} to ${options.to}`)];
+  const titleSuffix = options.asOf ? ` (as of ${options.asOf})` : "";
+  const sections: string[] = [
+    heading(1, `project report ${options.from} to ${options.to}${titleSuffix}`),
+  ];
 
   for (const key of sortedKeys) {
     const projectCommits = commits.filter(

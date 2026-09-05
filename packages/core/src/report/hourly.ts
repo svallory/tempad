@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
-import { querySideQuests } from "./intent-queries.ts";
+import { querySideQuests, resolveIntentDatabase } from "./intent-queries.ts";
 import { dayRange, heading, localDay, localHour, table } from "./markdown.ts";
 import {
   groupDuplicateCommits,
@@ -27,18 +27,23 @@ function render(database: Database, config: Config, options: ReportOptions): str
     timeZone,
     org: options.org,
     project: options.project,
+    client: options.client,
   };
+  const intentDatabase = resolveIntentDatabase(database, options.asOf);
 
   const commits = queryCommits(database, range);
   const messages = querySessionMessagesByHour(database, range);
 
   const days = dayRange(options.from, options.to);
-  const sections: string[] = [heading(1, `hourly report ${options.from} to ${options.to}`)];
+  const titleSuffix = options.asOf ? ` (as of ${options.asOf})` : "";
+  const sections: string[] = [
+    heading(1, `hourly report ${options.from} to ${options.to}${titleSuffix}`),
+  ];
 
   for (const day of days) {
     const dayCommits = commits.filter((row) => localDay(row.authoredAt, timeZone) === day);
     const dayMessages = messages.filter((row) => localDay(row.ts, timeZone) === day);
-    const daySideQuests = querySideQuests(database, {
+    const daySideQuests = querySideQuests(intentDatabase, {
       from: day,
       to: day,
       timeZone,

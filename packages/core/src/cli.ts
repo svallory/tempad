@@ -29,7 +29,7 @@ function printUsage(): void {
   console.error("Usage:");
   console.error("  tempad sync [monday|github|claude] [--full]");
   console.error(
-    "  tempad report <daily|project|hourly|weekly> --from <date> --to <date> [--org X] [--project Y] [--out path]",
+    "  tempad report <daily|project|hourly|weekly> --from <date> --to <date> [--org X] [--project Y] [--out path] [--as-of <iso>] [--party <slug>] [--client <slug>]",
   );
   console.error('  tempad hero init "<name>"');
   console.error(
@@ -135,6 +135,9 @@ async function runReportCommand(args: string[]): Promise<number> {
       org: { type: "string" },
       project: { type: "string" },
       out: { type: "string" },
+      "as-of": { type: "string" },
+      party: { type: "string" },
+      client: { type: "string" },
     },
     strict: true,
   });
@@ -151,8 +154,10 @@ async function runReportCommand(args: string[]): Promise<number> {
   const options: ReportOptions = {
     from: values.from,
     to: values.to,
-    org: values.org,
+    org: values.party ?? values.org,
     project: values.project,
+    asOf: values["as-of"],
+    client: values.client,
   };
 
   const output = report.render(database, config, options);

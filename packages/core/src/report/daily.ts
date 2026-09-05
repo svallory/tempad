@@ -5,6 +5,7 @@ import {
   queryActivities,
   queryOpenQuestions,
   querySideQuests,
+  resolveIntentDatabase,
   type SideQuestRow,
 } from "./intent-queries.ts";
 import { dayRange, heading, isWeekend, localDay, localTime, localWeekday } from "./markdown.ts";
@@ -39,7 +40,9 @@ function render(database: Database, config: Config, options: ReportOptions): str
     timeZone,
     org: options.org,
     project: options.project,
+    client: options.client,
   };
+  const intentDatabase = resolveIntentDatabase(database, options.asOf);
 
   const commits = queryCommits(database, range);
   const sessions = querySessions(database, range);
@@ -47,7 +50,10 @@ function render(database: Database, config: Config, options: ReportOptions): str
   const pullRequests = queryPullRequests(database, range);
 
   const days = dayRange(options.from, options.to);
-  const sections: string[] = [heading(1, `daily report ${options.from} to ${options.to}`)];
+  const titleSuffix = options.asOf ? ` (as of ${options.asOf})` : "";
+  const sections: string[] = [
+    heading(1, `daily report ${options.from} to ${options.to}${titleSuffix}`),
+  ];
 
   for (const day of days) {
     const dayCommits = commits.filter((row) => localDay(row.authoredAt, timeZone) === day);
@@ -61,8 +67,8 @@ function render(database: Database, config: Config, options: ReportOptions): str
       org: options.org,
       project: options.project,
     };
-    const dayActivities = queryActivities(database, dayRangeOptions);
-    const daySideQuests = querySideQuests(database, dayRangeOptions);
+    const dayActivities = queryActivities(intentDatabase, dayRangeOptions);
+    const daySideQuests = querySideQuests(intentDatabase, dayRangeOptions);
 
     const hasEvidence =
       dayCommits.length > 0 ||
@@ -156,7 +162,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
         }
       }
 
-      const tracesAwaitingReview = queryOpenQuestions(database, {
+      const tracesAwaitingReview = queryOpenQuestions(intentDatabase, {
         ...dayRangeOptions,
         org: key.org,
         project: key.project,

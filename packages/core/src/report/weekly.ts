@@ -1,6 +1,11 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
-import { queryActivities, queryQuests, querySideQuests } from "./intent-queries.ts";
+import {
+  queryActivities,
+  queryQuests,
+  querySideQuests,
+  resolveIntentDatabase,
+} from "./intent-queries.ts";
 import { dayRange, heading, isWeekend, localWeekday, table } from "./markdown.ts";
 import type { Report, ReportOptions } from "./types.ts";
 
@@ -81,7 +86,11 @@ const HEADERS = [
 function render(database: Database, config: Config, options: ReportOptions): string {
   const timeZone = config.tz;
   const days = dayRange(options.from, options.to);
-  const sections: string[] = [heading(1, `weekly report ${options.from} to ${options.to}`)];
+  const intentDatabase = resolveIntentDatabase(database, options.asOf);
+  const titleSuffix = options.asOf ? ` (as of ${options.asOf})` : "";
+  const sections: string[] = [
+    heading(1, `weekly report ${options.from} to ${options.to}${titleSuffix}`),
+  ];
 
   const weekTotals = new Map<string, { key: ProjectKey; stats: DayProjectStats }>();
 
@@ -93,9 +102,9 @@ function render(database: Database, config: Config, options: ReportOptions): str
       org: options.org,
       project: options.project,
     };
-    const activities = queryActivities(database, dayRangeOptions);
-    const quests = queryQuests(database, dayRangeOptions);
-    const sideQuests = querySideQuests(database, dayRangeOptions);
+    const activities = queryActivities(intentDatabase, dayRangeOptions);
+    const quests = queryQuests(intentDatabase, dayRangeOptions);
+    const sideQuests = querySideQuests(intentDatabase, dayRangeOptions);
 
     const hasEvidence = activities.length > 0 || quests.length > 0 || sideQuests.length > 0;
     if (!hasEvidence && isWeekend(day, timeZone)) continue;
