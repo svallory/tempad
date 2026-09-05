@@ -69,6 +69,8 @@ cp packages/core/tempad.example.toml ~/.tempad/tempad.toml
 bun run tempad sync            # all sources
 bun run tempad sync claude     # one source
 bun run tempad report daily --from 2026-08-18 --to 2026-08-28
+
+bun run tempad w5 hook install # wire up the w5 self-awareness hook
 ```
 
 Reports land in `~/.tempad/reports/`.
