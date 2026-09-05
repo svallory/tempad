@@ -22,6 +22,25 @@ Named after the TVA's handheld from _Loki_: the device that opens time doors and
 
 Commits get batched and pushed days after the work. Planning leaves no git trace. Agents run in the background across several checkouts. By Friday nobody remembers what Tuesday was. TemPad collects the evidence so the report writes itself.
 
+## Domain language
+
+TemPad is a self-awareness tool, not a surveillance tool. It exists to show what you did, why, and where your attention went, so you can change it. These are the words it uses.
+
+- **Goal**: a direction, not a finish line. Quests serve goals.
+- **Quest**: something you set out to finish. It has a done condition, a deadline and a budget. Activities are how it actually went.
+- **Side Quest**: a quest you did not plan. It started from an activity and has a trigger.
+- **Nexus Event**: the moment attention branched: when, from what, and what pulled you.
+- **Activity**: a stretch of attention with one objective. What you were actually doing, as seen in traces.
+- **Trace**: one piece of evidence: something a tool saw you do at a place, at a time.
+- **Project**: an undertaking with a name, people, and places.
+- **Place**: one spot where work leaves a trace: a repo, a board, a folder, a channel. A place belongs to one project and is reached through one tool.
+- **Tool**: what you work through: Claude Code, git, Monday, a browser.
+- **Person**: you, or someone a project involves.
+
+Rule of thumb: **Goals** give direction, **Quests** are planned, **Activities** are what happened, **Traces** are the proof, **Places** are where, **Tools** are how, **Projects** are whose and what for.
+
+The first release stores traces, places and projects. Goals, quests and activities arrive with the `w5` hook (see the roadmap).
+
 ## Features
 
 - **Collectors** for Monday.com items assigned to you, GitHub commits and pull requests across one or more orgs (plus optional personal repos), and Claude Code session transcripts from any number of `~/.claude*` directories.
@@ -66,8 +85,9 @@ Tooling: [moon](https://moonrepo.dev) orchestrates tasks, [Biome](https://biomej
 ## Roadmap
 
 - **Profiles.** All configuration is global today (`TEMPAD_HOME/.env` and `tempad.toml`), so one machine can only serve one TemPad. Introduce profiles (for example `~/.tempad/profiles/<name>/` selected by `--profile` or `TEMPAD_PROFILE`) so a person can keep separate databases, tokens and path rules per client or per persona.
-- **w5 table.** A Claude Code hook that periodically asks a small model _who, when, what, why, where_ (plus outcome) about the live session and stores the answer, with a batch backfill over existing sessions. This is what turns raw sessions into "things I worked on", including side quests that never produced a commit.
-- **Weekly objective table.** Per weekday, per project: distinct objectives, shipped vs abandoned, side-quest share. Depends on w5.
+- **w5 hook.** A Claude Code hook that periodically asks a small model _who, when, what, why, where, how_ about the live session and writes a trace, opening or matching activities, quests and side quests (with their nexus events), with a batch backfill over existing sessions. This is what turns raw sessions into "things I worked on", including side quests that never produced a commit.
+- **Weekly table.** Per weekday, per project: activities and quests touched, shipped vs abandoned, side-quest share. Depends on the w5 hook.
+- **Places in config.** Replace the separate `[[projects]]`, `[[repositories]]` and `[[boards]]` rules with one `[[places]]` list with a `kind`.
 - **Goals and drift.** Set goals and get a nudge when time drifts away from them for too long.
 - **TUI** in Go (charmbracelet) under `apps/`.
 - **Timesheet export.** A recurring agent that fills external timesheets (Deel) from the reports.
