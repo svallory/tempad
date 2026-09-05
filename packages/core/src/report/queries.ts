@@ -7,6 +7,22 @@ export interface DateRange {
   timeZone: string;
   org?: string;
   project?: string;
+  /**
+   * Keeps only rows whose place metadata has `client = <slug>`. Currently
+   * resolvable only for Claude sessions (`claude_sessions.path_meta`) --
+   * `gh_repos` has no `meta` column to carry a per-repository client, so
+   * commits and pull requests are not filtered by `--client`. See plan
+   * docs/plans/2026-09-05-intent-reports.md Task 3.
+   */
+  client?: string;
+}
+
+function sessionClientCondition(client: string | undefined): { sql: string; param?: string } {
+  if (!client) return { sql: "" };
+  return {
+    sql: " AND json_extract(s.path_meta, '$.client') = ?",
+    param: client,
+  };
 }
 
 export interface CommitRow {
@@ -153,13 +169,16 @@ export function querySessions(database: Database, range: DateRange): SessionRow[
     params.push(range.project.toLowerCase());
   }
 
+  const clientCondition = sessionClientCondition(range.client);
+  if (clientCondition.param) params.push(clientCondition.param);
+
   return database
     .query(
       `SELECT s.id as id, s.org as org, s.project as project, s.title as title,
               s.title_source as titleSource, s.git_branch as gitBranch,
               s.started_at as startedAt, s.ended_at as endedAt, s.message_count as messageCount
        FROM claude_sessions s
-       WHERE ${conditions.join(" AND ")}
+       WHERE ${conditions.join(" AND ")}${clientCondition.sql}
        ORDER BY s.started_at ASC`,
     )
     .all(...params) as SessionRow[];
@@ -182,13 +201,16 @@ export function querySessionMessagesByHour(
     params.push(range.project.toLowerCase());
   }
 
+  const clientCondition = sessionClientCondition(range.client);
+  if (clientCondition.param) params.push(clientCondition.param);
+
   return database
     .query(
       `SELECT s.id as sessionId, s.org as org, s.project as project, s.title as title,
               s.title_source as titleSource, m.ts as ts, 1 as count
        FROM claude_messages m
        JOIN claude_sessions s ON s.id = m.session_id
-       WHERE ${conditions.join(" AND ")}
+       WHERE ${conditions.join(" AND ")}${clientCondition.sql}
        ORDER BY m.ts ASC`,
     )
     .all(...params) as SessionMessageHourRow[];

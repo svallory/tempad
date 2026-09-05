@@ -1,6 +1,41 @@
 import type { Database } from "bun:sqlite";
+import { stateAsOf } from "../intent/time-travel.ts";
 import { localDayBoundsUtc } from "./markdown.ts";
 import type { DateRange } from "./queries.ts";
+
+/**
+ * Intent tables (quests, activities, traces, questions) render as of a past
+ * date via `--as-of`; mirrors (commits, sessions, Monday items) always read
+ * current state -- see plan Task 3. `stateAsOf` rebuilds a fresh in-memory
+ * database from events up to `asOf`, so callers must query it instead of
+ * `database` for anything intent-related when `asOf` is set.
+ *
+ * Traces resolve their org/project through a join to `claude_sessions` (see
+ * `queryTraceIntervals`), so `claude_sessions` is copied into the as-of
+ * database -- it holds no events of its own and would otherwise be empty.
+ */
+export function resolveIntentDatabase(database: Database, asOf: string | undefined): Database {
+  if (!asOf) return database;
+  const asOfDatabase = stateAsOf(database, asOf);
+
+  const sessions = database.query("SELECT * FROM claude_sessions").all() as Record<
+    string,
+    unknown
+  >[];
+  if (sessions.length > 0) {
+    const columns = Object.keys(sessions[0] as Record<string, unknown>);
+    const insert = asOfDatabase.query(
+      `INSERT INTO claude_sessions (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
+    );
+    const insertAll = asOfDatabase.transaction(() => {
+      for (const session of sessions)
+        insert.run(...columns.map((column) => session[column] as never));
+    });
+    insertAll();
+  }
+
+  return asOfDatabase;
+}
 
 export interface ActivityRow {
   id: string;
