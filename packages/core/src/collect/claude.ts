@@ -351,6 +351,189 @@ async function processFile(
   return { session: sessionAccumulator, messages, malformedCount };
 }
 
+interface ClaudeQueries {
+  insertMessage: ReturnType<Database["query"]>;
+  upsertSession: ReturnType<Database["query"]>;
+  selectExisting: ReturnType<Database["query"]>;
+}
+
+function prepareQueries(database: Database): ClaudeQueries {
+  const insertMessage = database.query(
+    `INSERT OR IGNORE INTO claude_messages
+      (uuid, session_id, ts, role, is_sidechain, origin_kind, model, text_preview, tool_name, tokens_in, tokens_out)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+
+  const upsertSession = database.query(
+    `INSERT INTO claude_sessions
+      (id, claude_dir, project_dir, file_path, cwd, org, project, path_meta, title, title_source,
+       entrypoint, user_type, git_branch, started_at, ended_at, message_count, tool_call_count,
+       models, host_slug, file_mtime)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       claude_dir = excluded.claude_dir,
+       project_dir = excluded.project_dir,
+       file_path = excluded.file_path,
+       cwd = excluded.cwd,
+       org = excluded.org,
+       project = excluded.project,
+       path_meta = excluded.path_meta,
+       title = excluded.title,
+       title_source = excluded.title_source,
+       entrypoint = excluded.entrypoint,
+       user_type = excluded.user_type,
+       git_branch = excluded.git_branch,
+       started_at = excluded.started_at,
+       ended_at = excluded.ended_at,
+       message_count = excluded.message_count,
+       tool_call_count = excluded.tool_call_count,
+       models = excluded.models,
+       host_slug = excluded.host_slug,
+       file_mtime = excluded.file_mtime`,
+  );
+
+  const selectExisting = database.query(
+    "SELECT file_mtime as fileMtime, message_count as messageCount, title as title, title_source as titleSource FROM claude_sessions WHERE id = ?",
+  );
+
+  return { insertMessage, upsertSession, selectExisting };
+}
+
+interface SyncFileResult {
+  sessionsInserted: number;
+  sessionsUpdated: number;
+  messagesInserted: number;
+  warnings: string[];
+}
+
+async function syncFile(
+  filePath: string,
+  claudeDir: string,
+  config: Config,
+  rules: ReturnType<typeof loadRules>,
+  queries: ClaudeQueries,
+  since: string | undefined,
+): Promise<SyncFileResult> {
+  const warnings: string[] = [];
+  let sessionsInserted = 0;
+  let sessionsUpdated = 0;
+  let messagesInserted = 0;
+
+  const stats = statSync(filePath);
+  const mtime = stats.mtime;
+  const projectDir = basename(filePath.slice(0, filePath.lastIndexOf("/")));
+  const fileMtime = mtime.toISOString();
+
+  const { session, messages, malformedCount } = await processFile(
+    filePath,
+    claudeDir,
+    projectDir,
+    fileMtime,
+    since,
+  );
+
+  if (malformedCount > 0) {
+    warnings.push(`${filePath}: ${malformedCount} malformed lines`);
+  }
+
+  if (messages.length === 0) {
+    return { sessionsInserted, sessionsUpdated, messagesInserted, warnings };
+  }
+
+  const sessionId = session.id ?? basename(filePath, ".jsonl");
+  const cwd = session.cwd;
+  const resolveTarget = cwd ?? decodeProjectDir(projectDir);
+  const resolved = resolvePath(rules, resolveTarget);
+
+  const existing = queries.selectExisting.get(sessionId) as {
+    fileMtime: string;
+    messageCount: number;
+    title: string | null;
+    titleSource: string | null;
+  } | null;
+
+  const { title, source: titleSource } = resolveTitle(session);
+
+  const unchanged =
+    existing !== null &&
+    existing.fileMtime === fileMtime &&
+    existing.messageCount === session.messageCount &&
+    existing.title === title &&
+    existing.titleSource === titleSource;
+
+  if (!unchanged) {
+    queries.upsertSession.run(
+      sessionId,
+      claudeDir,
+      projectDir,
+      filePath,
+      cwd ?? null,
+      resolved.org,
+      resolved.project,
+      Object.keys(resolved.meta).length > 0 ? JSON.stringify(resolved.meta) : null,
+      title,
+      titleSource,
+      session.entrypoint ?? null,
+      session.userType ?? null,
+      session.gitBranch ?? null,
+      session.startedAt as string,
+      session.endedAt as string,
+      session.messageCount,
+      session.toolCallCount,
+      JSON.stringify([...session.models]),
+      config.hostSlug,
+      fileMtime,
+    );
+
+    if (existing === null) {
+      sessionsInserted += 1;
+    } else {
+      sessionsUpdated += 1;
+    }
+  }
+
+  for (const message of messages) {
+    const result = queries.insertMessage.run(
+      message.uuid,
+      sessionId,
+      message.ts,
+      message.role,
+      message.isSidechain ? 1 : 0,
+      message.originKind,
+      message.model,
+      message.textPreview,
+      message.toolName,
+      message.tokensIn,
+      message.tokensOut,
+    );
+    if (result.changes > 0) messagesInserted += 1;
+  }
+
+  return { sessionsInserted, sessionsUpdated, messagesInserted, warnings };
+}
+
+export async function syncOneSessionFile(
+  database: Database,
+  config: Config,
+  filePath: string,
+): Promise<SyncSummary> {
+  const rulesPath = join(config.home, "tempad.toml");
+  const rules = loadRules(rulesPath);
+  const queries = prepareQueries(database);
+  const claudeDir =
+    config.claudeDirs.find((dir) => filePath.startsWith(`${dir}/`)) ?? config.claudeDirs[0] ?? "";
+
+  const result = await syncFile(filePath, claudeDir, config, rules, queries, undefined);
+
+  return {
+    source: "claude",
+    inserted: result.sessionsInserted,
+    updated: result.sessionsUpdated,
+    deleted: 0,
+    warnings: result.warnings,
+  };
+}
+
 export const claudeCollector: Collector = {
   name: "claude",
 
@@ -368,44 +551,7 @@ export const claudeCollector: Collector = {
 
     const rulesPath = join(config.home, "tempad.toml");
     const rules = loadRules(rulesPath);
-
-    const insertMessage = database.query(
-      `INSERT OR IGNORE INTO claude_messages
-        (uuid, session_id, ts, role, is_sidechain, origin_kind, model, text_preview, tool_name, tokens_in, tokens_out)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-
-    const upsertSession = database.query(
-      `INSERT INTO claude_sessions
-        (id, claude_dir, project_dir, file_path, cwd, org, project, path_meta, title, title_source,
-         entrypoint, user_type, git_branch, started_at, ended_at, message_count, tool_call_count,
-         models, host_slug, file_mtime)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         claude_dir = excluded.claude_dir,
-         project_dir = excluded.project_dir,
-         file_path = excluded.file_path,
-         cwd = excluded.cwd,
-         org = excluded.org,
-         project = excluded.project,
-         path_meta = excluded.path_meta,
-         title = excluded.title,
-         title_source = excluded.title_source,
-         entrypoint = excluded.entrypoint,
-         user_type = excluded.user_type,
-         git_branch = excluded.git_branch,
-         started_at = excluded.started_at,
-         ended_at = excluded.ended_at,
-         message_count = excluded.message_count,
-         tool_call_count = excluded.tool_call_count,
-         models = excluded.models,
-         host_slug = excluded.host_slug,
-         file_mtime = excluded.file_mtime`,
-    );
-
-    const selectExisting = database.query(
-      "SELECT file_mtime as fileMtime, message_count as messageCount, title as title, title_source as titleSource FROM claude_sessions WHERE id = ?",
-    );
+    const queries = prepareQueries(database);
 
     for (const claudeDir of config.claudeDirs) {
       const projectsGlob = new Bun.Glob("projects/*/*.jsonl");
@@ -416,95 +562,13 @@ export const claudeCollector: Collector = {
 
       for (const filePath of files) {
         const stats = statSync(filePath);
-        const mtime = stats.mtime;
+        if (skipBefore !== undefined && stats.mtime.getTime() < skipBefore) continue;
 
-        if (skipBefore !== undefined && mtime.getTime() < skipBefore) continue;
-
-        const projectDir = basename(filePath.slice(0, filePath.lastIndexOf("/")));
-        const fileMtime = mtime.toISOString();
-
-        const { session, messages, malformedCount } = await processFile(
-          filePath,
-          claudeDir,
-          projectDir,
-          fileMtime,
-          since,
-        );
-
-        if (malformedCount > 0) {
-          warnings.push(`${filePath}: ${malformedCount} malformed lines`);
-        }
-
-        if (messages.length === 0) continue;
-
-        const sessionId = session.id ?? basename(filePath, ".jsonl");
-        const cwd = session.cwd;
-        const resolveTarget = cwd ?? decodeProjectDir(projectDir);
-        const resolved = resolvePath(rules, resolveTarget);
-
-        const existing = selectExisting.get(sessionId) as {
-          fileMtime: string;
-          messageCount: number;
-          title: string | null;
-          titleSource: string | null;
-        } | null;
-
-        const { title, source: titleSource } = resolveTitle(session);
-
-        const unchanged =
-          existing !== null &&
-          existing.fileMtime === fileMtime &&
-          existing.messageCount === session.messageCount &&
-          existing.title === title &&
-          existing.titleSource === titleSource;
-
-        if (!unchanged) {
-          upsertSession.run(
-            sessionId,
-            claudeDir,
-            projectDir,
-            filePath,
-            cwd ?? null,
-            resolved.org,
-            resolved.project,
-            Object.keys(resolved.meta).length > 0 ? JSON.stringify(resolved.meta) : null,
-            title,
-            titleSource,
-            session.entrypoint ?? null,
-            session.userType ?? null,
-            session.gitBranch ?? null,
-            session.startedAt as string,
-            session.endedAt as string,
-            session.messageCount,
-            session.toolCallCount,
-            JSON.stringify([...session.models]),
-            config.hostSlug,
-            fileMtime,
-          );
-
-          if (existing === null) {
-            sessionsInserted += 1;
-          } else {
-            sessionsUpdated += 1;
-          }
-        }
-
-        for (const message of messages) {
-          const result = insertMessage.run(
-            message.uuid,
-            sessionId,
-            message.ts,
-            message.role,
-            message.isSidechain ? 1 : 0,
-            message.originKind,
-            message.model,
-            message.textPreview,
-            message.toolName,
-            message.tokensIn,
-            message.tokensOut,
-          );
-          if (result.changes > 0) messagesInserted += 1;
-        }
+        const result = await syncFile(filePath, claudeDir, config, rules, queries, since);
+        sessionsInserted += result.sessionsInserted;
+        sessionsUpdated += result.sessionsUpdated;
+        messagesInserted += result.messagesInserted;
+        warnings.push(...result.warnings);
       }
     }
 
