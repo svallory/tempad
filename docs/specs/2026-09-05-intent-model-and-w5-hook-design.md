@@ -1,6 +1,6 @@
 # Intent model and the w5 hook
 
-Status: plan 1 implemented (intent core: event store, projections, rebuild, config, CLI for hero/parties/clients/goals/quests/activities/traces/questions/answer/time-travel). Plans 2 (w5 hook) and 3 (backfill and reports) not started. Date: 2026-09-05. Builds on `2026-09-04-core-collectors-design.md` (collectors, mirrors, reports), which stays valid.
+Status: plan 1 implemented (intent core: event store, projections, rebuild, config, CLI for hero/parties/clients/goals/quests/activities/traces/questions/answer/time-travel). Plan 2 (w5 hook: job queue, classifier, window builder, apply, question state machine, runner/CLI, hook scripts, backfill) implemented. Plan 3 (intent reports) not started. Date: 2026-09-05. Builds on `2026-09-04-core-collectors-design.md` (collectors, mirrors, reports), which stays valid.
 
 ## Goal
 
