@@ -18,6 +18,8 @@ export interface BackfillOptions {
 export interface BackfillResult {
   sessionsClassified: number;
   sessionsSkipped: number;
+  windowsClassified: number;
+  windowsFailed: number;
 }
 
 interface SessionRow {
@@ -25,10 +27,10 @@ interface SessionRow {
   ended_at: string;
 }
 
-function isAlreadyCovered(database: Database, sessionId: string, endedAt: string): boolean {
+function isWindowCovered(database: Database, sessionId: string, windowEndedAt: string): boolean {
   const row = database
     .query("SELECT id FROM traces WHERE session_id = ? AND ended_at >= ? LIMIT 1")
-    .get(sessionId, endedAt) as { id: string } | null;
+    .get(sessionId, windowEndedAt) as { id: string } | null;
   return row !== null;
 }
 
@@ -70,15 +72,11 @@ export async function backfill(
 
   let sessionsClassified = 0;
   let sessionsSkipped = 0;
+  let windowsClassified = 0;
+  let windowsFailed = 0;
   const windowMinutes = intentConfig.throttleMinutes * 3;
 
   for (const session of sessions) {
-    if (isAlreadyCovered(database, session.id, session.ended_at)) {
-      sessionsSkipped += 1;
-      options.log(`backfill: skipping ${session.id} (already covered)`);
-      continue;
-    }
-
     const fullWindow = buildWindow(database, {
       sessionId: session.id,
       sinceTs: null,
@@ -86,21 +84,49 @@ export async function backfill(
     });
     const chunks = chunkByWindow(fullWindow.messages, windowMinutes);
 
-    for (const chunk of chunks) {
-      const chunkWindow = { ...fullWindow, messages: chunk };
-      const result = await classifier.classify(chunkWindow);
-      applyResult(store, database, chunkWindow, result, {
-        actor: "backfill",
-        askingEnabled: false,
-        now: options.now,
-      });
+    const pendingChunks = chunks
+      .map((chunk, index) => ({ chunk, index }))
+      .filter(
+        ({ chunk }) => !isWindowCovered(database, session.id, chunk.at(-1)?.ts ?? session.ended_at),
+      );
+
+    if (chunks.length > 0 && pendingChunks.length === 0) {
+      sessionsSkipped += 1;
+      options.log(`backfill: skipping ${session.id} (already covered)`);
+      continue;
     }
 
-    if (chunks.length > 0) {
+    let sessionHadSuccess = false;
+
+    for (const { chunk, index } of pendingChunks) {
+      const chunkWindow = { ...fullWindow, messages: chunk };
+
+      try {
+        let result: Awaited<ReturnType<typeof classifier.classify>>;
+        try {
+          result = await classifier.classify(chunkWindow);
+        } catch {
+          result = await classifier.classify(chunkWindow);
+        }
+        applyResult(store, database, chunkWindow, result, {
+          actor: "backfill",
+          askingEnabled: false,
+          now: options.now,
+        });
+        windowsClassified += 1;
+        sessionHadSuccess = true;
+      } catch (error) {
+        windowsFailed += 1;
+        const message = error instanceof Error ? error.message : String(error);
+        options.log(`backfill: failed ${session.id} window ${index}: ${message}`);
+      }
+    }
+
+    if (sessionHadSuccess) {
       sessionsClassified += 1;
       options.log(`backfill: classified ${session.id} (${chunks.length} window(s))`);
     }
   }
 
-  return { sessionsClassified, sessionsSkipped };
+  return { sessionsClassified, sessionsSkipped, windowsClassified, windowsFailed };
 }

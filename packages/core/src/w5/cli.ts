@@ -53,11 +53,14 @@ function log(config: Config, line: string): void {
 function buildClassifier(config: Config, intentConfig: IntentConfig, model?: string): Classifier {
   const resolvedModel = model ?? intentConfig.w5.model;
 
+  const timeoutMs = intentConfig.w5.timeoutSeconds * 1000;
+
   if (intentConfig.w5.backend === "claude-cli") {
     return new ClaudeCliClassifier({
       model: resolvedModel,
       command: intentConfig.w5.claudeCommand,
       cwd: config.home,
+      timeoutMs,
     });
   }
 
@@ -69,7 +72,7 @@ function buildClassifier(config: Config, intentConfig: IntentConfig, model?: str
       },
     };
   }
-  return new AnthropicClassifier({ apiKey, model: resolvedModel });
+  return new AnthropicClassifier({ apiKey, model: resolvedModel, timeoutMs });
 }
 
 function lockPathFor(config: Config): string {
@@ -320,8 +323,11 @@ async function runBackfill(args: string[], context: W5Context): Promise<number> 
   );
 
   context.stdout(
-    `backfill: classified ${result.sessionsClassified} session(s), skipped ${result.sessionsSkipped}`,
+    `classified=${result.sessionsClassified} windows=${result.windowsClassified} failed=${result.windowsFailed} skipped=${result.sessionsSkipped}`,
   );
+
+  const attemptedWindows = result.windowsClassified + result.windowsFailed;
+  if (attemptedWindows > 0 && result.windowsClassified === 0) return 1;
   return 0;
 }
 

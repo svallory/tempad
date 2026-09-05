@@ -166,17 +166,22 @@ export interface AnthropicClassifierOptions {
   apiKey: string;
   model: string;
   fetch?: typeof fetch;
+  timeoutMs?: number;
 }
+
+const DEFAULT_TIMEOUT_MS = 180_000;
 
 export class AnthropicClassifier implements Classifier {
   private readonly apiKey: string;
   private readonly model: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs: number;
 
   constructor(options: AnthropicClassifierOptions) {
     this.apiKey = options.apiKey;
     this.model = options.model;
     this.fetchImpl = options.fetch ?? fetch;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   async classify(window: ClassifierWindow): Promise<ClassifierResult> {
@@ -199,6 +204,7 @@ export class AnthropicClassifier implements Classifier {
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
       }),
+      signal: AbortSignal.timeout(this.timeoutMs),
     });
 
     if (!response.ok) {

@@ -20,6 +20,7 @@ const config: W5Config = {
   backfillDays: 15,
   backend: "claude-cli",
   claudeCommand: "claude",
+  timeoutSeconds: 180,
 };
 
 function makeConfig(): Config {
@@ -81,7 +82,7 @@ function seedHero(database: ReturnType<typeof openDatabase>) {
 
 function seedSession(
   database: ReturnType<typeof openDatabase>,
-  input: { id: string; endedAt: string },
+  input: { id: string; endedAt: string; messageTimestamps?: string[] },
 ) {
   database
     .query(
@@ -91,11 +92,14 @@ function seedSession(
        VALUES (?, '/c', 'p', ?, '/w/p', 'personal', 'p', 't', 'main', ?, ?, 1, 0, '[]', 'host', ?)`,
     )
     .run(input.id, `/c/p/${input.id}.jsonl`, input.endedAt, input.endedAt, input.endedAt);
-  database
-    .query(
-      "INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview) VALUES (?, ?, ?, 'user', 0, 'work')",
-    )
-    .run(`${input.id}-m1`, input.id, input.endedAt);
+  const timestamps = input.messageTimestamps ?? [input.endedAt];
+  for (const [index, ts] of timestamps.entries()) {
+    database
+      .query(
+        "INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview) VALUES (?, ?, ?, 'user', 0, 'work')",
+      )
+      .run(`${input.id}-m${index}`, input.id, ts);
+  }
 }
 
 describe("backfill", () => {
@@ -115,6 +119,7 @@ describe("backfill", () => {
     });
 
     expect(firstResult.sessionsClassified).toBe(2);
+    expect(firstResult.windowsFailed).toBe(0);
     expect(classifier.calls).toBe(2);
 
     const questionCount = database.query("SELECT COUNT(*) as count FROM questions").get() as {
@@ -129,5 +134,109 @@ describe("backfill", () => {
     });
 
     expect(secondResult.sessionsClassified).toBe(0);
+  });
+
+  test("a failed final window does not stop earlier windows and is retried next run", async () => {
+    const database = openDatabase(":memory:");
+    seedHero(database);
+    // Two windows spaced 40 minutes apart (> windowMinutes = 30). The second (last)
+    // window fails, mirroring the real incident where the tail window timed out.
+    seedSession(database, {
+      id: "s1",
+      endedAt: "2026-09-04T15:40:00.000Z",
+      messageTimestamps: ["2026-09-04T15:00:00.000Z", "2026-09-04T15:40:00.000Z"],
+    });
+
+    class FlakyClassifier implements Classifier {
+      public calls = 0;
+      async classify(window: ClassifierWindow): Promise<ClassifierResult> {
+        this.calls += 1;
+        // Fail every attempt on the second window (calls 2 and 3: initial + retry)
+        // during the first backfill run; succeed on the retried run (call 4).
+        if (this.calls === 2 || this.calls === 3) {
+          throw new Error("boom");
+        }
+        const first = window.messages[0]?.ts ?? "2026-09-04T15:00:00.000Z";
+        const last = window.messages.at(-1)?.ts ?? first;
+        return {
+          segments: [
+            {
+              startedAt: first,
+              endedAt: last,
+              what: "work",
+              why: "ship",
+              matchedQuest: null,
+              proposedQuest: null,
+              matchedActivity: null,
+              isSwitch: false,
+              trigger: null,
+              confidence: 0.9,
+              questions: [],
+            },
+          ],
+        };
+      }
+    }
+
+    const classifier = new FlakyClassifier();
+    const logs: string[] = [];
+
+    const firstResult = await backfill(database, makeConfig(), config, classifier, {
+      days: 15,
+      now: "2026-09-04T18:00:00.000Z",
+      log: (line) => logs.push(line),
+    });
+
+    // First window succeeds (call 1). Second (last) window fails twice
+    // (calls 2, 3: initial + retry), counted as one failed window.
+    expect(firstResult.windowsClassified).toBe(1);
+    expect(firstResult.windowsFailed).toBe(1);
+    expect(firstResult.sessionsClassified).toBe(1);
+    expect(logs.some((line) => line.includes("backfill: failed s1 window 1: boom"))).toBe(true);
+
+    const traceCountAfterFirstRun = database
+      .query("SELECT COUNT(*) as count FROM traces")
+      .get() as {
+      count: number;
+    };
+    expect(traceCountAfterFirstRun.count).toBe(1);
+
+    // Only the failed second window is retried; the first window's trace already
+    // covers it, so it is not reprocessed.
+    const secondResult = await backfill(database, makeConfig(), config, classifier, {
+      days: 15,
+      now: "2026-09-04T18:00:00.000Z",
+      log: (line) => logs.push(line),
+    });
+
+    expect(secondResult.sessionsSkipped).toBe(0);
+    expect(secondResult.windowsClassified).toBe(1);
+    expect(secondResult.windowsFailed).toBe(0);
+    expect(classifier.calls).toBe(4);
+  });
+
+  test("all windows failing yields sessionsClassified=0 and windowsFailed>0", async () => {
+    const database = openDatabase(":memory:");
+    seedHero(database);
+    seedSession(database, { id: "s1", endedAt: "2026-09-04T15:20:00.000Z" });
+
+    class AlwaysFailsClassifier implements Classifier {
+      async classify(): Promise<ClassifierResult> {
+        throw new Error("always fails");
+      }
+    }
+
+    const classifier = new AlwaysFailsClassifier();
+    const logs: string[] = [];
+
+    const result = await backfill(database, makeConfig(), config, classifier, {
+      days: 15,
+      now: "2026-09-04T17:00:00.000Z",
+      log: (line) => logs.push(line),
+    });
+
+    expect(result.sessionsClassified).toBe(0);
+    expect(result.windowsFailed).toBe(1);
+    expect(result.windowsClassified).toBe(0);
   });
 });

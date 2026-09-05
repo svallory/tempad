@@ -155,6 +155,24 @@ describe("ClaudeCliClassifier", () => {
     await expect(classifier.classify(window)).rejects.toThrow(/boom: something went wrong/);
   });
 
+  test("passes configured timeoutMs through to spawn", async () => {
+    let seenTimeoutMs: number | undefined;
+    const spawn: CliSpawn = async (_argv, options) => {
+      seenTimeoutMs = options.timeoutMs;
+      return { code: 0, stdout: envelope(JSON.stringify(good)), stderr: "" };
+    };
+
+    const classifier = new ClaudeCliClassifier({
+      model: "m",
+      cwd: "/tempad-home",
+      spawn,
+      timeoutMs: 60_000,
+    });
+
+    await classifier.classify(window);
+    expect(seenTimeoutMs).toBe(60_000);
+  });
+
   test("timeout throws", async () => {
     const spawn: CliSpawn = async () => {
       throw new Error("claude cli timed out after 1ms");
