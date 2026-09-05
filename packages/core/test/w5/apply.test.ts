@@ -36,7 +36,7 @@ function seed(database: ReturnType<typeof openDatabase>) {
   database
     .query(
       `INSERT INTO traces (id, activity_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
-       VALUES ('T0', 'A1', 'claude-code', 'marko-ui', 'w5', '2026-09-04T14:00:00.000Z', '2026-09-04T14:30:00.000Z', 'hero', 'fixing walk order', 'ship', 'personal/marko-ui', 'claude-code', 0.9, 'assistant', 's1', '2026-09-04T14:30:00.000Z')`,
+       VALUES ('T0', 'A1', 'claude-code', 'marko-ui', 'session', '2026-09-04T14:00:00.000Z', '2026-09-04T14:30:00.000Z', 'hero', 'fixing walk order', 'ship', 'personal/marko-ui', 'claude-code', 0.9, 'assistant', 's1', '2026-09-04T14:30:00.000Z')`,
     )
     .run();
   return { store, heroId, questId };
@@ -115,6 +115,11 @@ describe("applyResult", () => {
     }[];
     expect(traceRows[0]?.activity_id).toBe("A1");
     expect(traceRows).toHaveLength(3);
+
+    const appliedSources = database
+      .query("SELECT DISTINCT source FROM traces WHERE id != 'T0'")
+      .all() as { source: string }[];
+    expect(appliedSources.map((row) => row.source)).toEqual(["session"]);
 
     const newQuest = database
       .query("SELECT title, confirmed, trigger FROM quests WHERE title = 'Compare Astryx'")

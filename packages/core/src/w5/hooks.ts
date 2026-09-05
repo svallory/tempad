@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { QuestionRow } from "./questions";
 
@@ -24,17 +24,29 @@ interface SettingsFile {
   [key: string]: unknown;
 }
 
-function stopHookPath(binPath: string): string {
-  return join(dirname(binPath), "..", "hooks", "w5-stop.sh");
+const PACKAGE_ROOT = join(import.meta.dir, "..", "..");
+const HOOKS_DIR = join(PACKAGE_ROOT, "hooks");
+const CLI_PATH = join(PACKAGE_ROOT, "src", "cli.ts");
+
+export function stopHookScriptPath(): string {
+  return join(HOOKS_DIR, "w5-stop.sh");
 }
 
-function promptHookPath(binPath: string): string {
-  return join(dirname(binPath), "..", "hooks", "w5-prompt.sh");
+export function promptHookScriptPath(): string {
+  return join(HOOKS_DIR, "w5-prompt.sh");
 }
 
-export function renderHookSettings(binPath: string): HooksFragment {
-  const stopCommand = stopHookPath(binPath);
-  const promptCommand = promptHookPath(binPath);
+function tempadBinInvocation(binPath: string): string {
+  return `bun ${binPath}`;
+}
+
+function hookCommand(scriptPath: string, binPath: string): string {
+  return `TEMPAD_BIN="${tempadBinInvocation(binPath)}" bash ${scriptPath}`;
+}
+
+export function renderHookSettings(binPath: string = CLI_PATH): HooksFragment {
+  const stopCommand = hookCommand(stopHookScriptPath(), binPath);
+  const promptCommand = hookCommand(promptHookScriptPath(), binPath);
 
   const stopMatcher: HookMatcher = {
     hooks: [{ type: "command", command: stopCommand, tempad: true }],
@@ -57,6 +69,7 @@ function readSettings(settingsPath: string): SettingsFile {
 }
 
 function writeSettings(settingsPath: string, settings: SettingsFile): void {
+  mkdirSync(dirname(settingsPath), { recursive: true });
   writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
 }
 
@@ -70,7 +83,7 @@ function removeTempadEntries(matchers: HookMatcher[] | undefined): HookMatcher[]
     .filter((matcher) => matcher.hooks.length > 0);
 }
 
-export function installHooks(settingsPath: string, binPath: string): void {
+export function installHooks(settingsPath: string, binPath: string = CLI_PATH): void {
   const settings = readSettings(settingsPath);
   const fragment = renderHookSettings(binPath);
   const hooks = { ...(settings.hooks ?? {}) };

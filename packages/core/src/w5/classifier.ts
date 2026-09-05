@@ -49,7 +49,12 @@ function requireString(value: unknown, path: string, problems: string[]): value 
   return true;
 }
 
-function validateSegment(raw: unknown, index: number, problems: string[]): void {
+function validateSegment(
+  raw: unknown,
+  index: number,
+  problems: string[],
+  bounds: { firstTs: string; lastTs: string } | null,
+): void {
   const where = `segments[${index}]`;
   if (typeof raw !== "object" || raw === null) {
     problems.push(`${where}: expected an object`);
@@ -57,10 +62,29 @@ function validateSegment(raw: unknown, index: number, problems: string[]): void 
   }
   const segment = raw as Record<string, unknown>;
 
-  requireString(segment.startedAt, `${where}.startedAt`, problems);
-  requireString(segment.endedAt, `${where}.endedAt`, problems);
+  const startedAtIsString = requireString(segment.startedAt, `${where}.startedAt`, problems);
+  const endedAtIsString = requireString(segment.endedAt, `${where}.endedAt`, problems);
   requireString(segment.what, `${where}.what`, problems);
   requireString(segment.why, `${where}.why`, problems);
+
+  if (bounds !== null) {
+    if (startedAtIsString) {
+      const startedAt = segment.startedAt as string;
+      if (startedAt < bounds.firstTs || startedAt > bounds.lastTs) {
+        problems.push(
+          `${where}.startedAt: ${startedAt} is outside the window [${bounds.firstTs}, ${bounds.lastTs}]`,
+        );
+      }
+    }
+    if (endedAtIsString) {
+      const endedAt = segment.endedAt as string;
+      if (endedAt < bounds.firstTs || endedAt > bounds.lastTs) {
+        problems.push(
+          `${where}.endedAt: ${endedAt} is outside the window [${bounds.firstTs}, ${bounds.lastTs}]`,
+        );
+      }
+    }
+  }
 
   if (segment.matchedQuest !== null && typeof segment.matchedQuest !== "string") {
     problems.push(`${where}.matchedQuest: expected string or null`);
@@ -105,7 +129,7 @@ function validateSegment(raw: unknown, index: number, problems: string[]): void 
   }
 }
 
-export function validateResult(raw: unknown): ClassifierResult {
+export function validateResult(raw: unknown, window?: ClassifierWindow): ClassifierResult {
   const problems: string[] = [];
   if (
     typeof raw !== "object" ||
@@ -114,8 +138,19 @@ export function validateResult(raw: unknown): ClassifierResult {
   ) {
     throw new Error("classifier result: expected { segments: [...] }");
   }
+
+  const bounds =
+    window !== undefined && window.messages.length > 0
+      ? {
+          firstTs: window.messages[0]?.ts as string,
+          lastTs: window.messages.at(-1)?.ts as string,
+        }
+      : null;
+
   const segments = (raw as { segments: unknown[] }).segments;
-  for (const [index, segment] of segments.entries()) validateSegment(segment, index, problems);
+  for (const [index, segment] of segments.entries()) {
+    validateSegment(segment, index, problems, bounds);
+  }
   if (problems.length > 0) {
     throw new Error(`classifier result invalid:\n${problems.join("\n")}`);
   }
@@ -154,12 +189,12 @@ export class AnthropicClassifier implements Classifier {
 
     const first = await this.request(systemPrompt, userPrompt);
     try {
-      return validateResult(JSON.parse(extractJsonText(first)));
+      return validateResult(JSON.parse(extractJsonText(first)), window);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const retryPrompt = `${userPrompt}\n\nYour previous response was invalid: ${message}\nRespond with valid JSON only.`;
       const second = await this.request(systemPrompt, retryPrompt);
-      return validateResult(JSON.parse(extractJsonText(second)));
+      return validateResult(JSON.parse(extractJsonText(second)), window);
     }
   }
 
@@ -178,6 +213,14 @@ export class AnthropicClassifier implements Classifier {
         messages: [{ role: "user", content: userPrompt }],
       }),
     });
+
+    if (!response.ok) {
+      const bodyText = await response.text();
+      throw new Error(
+        `anthropic request failed: status ${response.status} ${bodyText.slice(0, 200)}`,
+      );
+    }
+
     const body = (await response.json()) as { content: { type: string; text?: string }[] };
     const textBlock = body.content.find(
       (block) => block.type === "text" && typeof block.text === "string",

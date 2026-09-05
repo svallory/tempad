@@ -126,3 +126,33 @@ CREATE TABLE projection_state (
   name          TEXT PRIMARY KEY,
   last_event_id INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE w5_jobs (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id   TEXT NOT NULL,
+  kind         TEXT NOT NULL DEFAULT 'classify',
+  forced       INTEGER NOT NULL DEFAULT 0,
+  requested_at TEXT NOT NULL,
+  claimed_at   TEXT,
+  finished_at  TEXT,
+  state        TEXT NOT NULL DEFAULT 'queued',
+  error        TEXT
+);
+
+CREATE TABLE w5_runs (
+  session_id      TEXT PRIMARY KEY,
+  last_run_at     TEXT NOT NULL,
+  last_message_ts TEXT
+);
+
+CREATE TABLE w5_quiet (
+  until TEXT NOT NULL
+);
+
+-- The `questions` table itself is owned by the `activities` projection
+-- (src/intent/projections/activity.ts), not a migration, so it isn't
+-- mirrored above like the tables from 0001-0004. Plan 2 added two columns
+-- to that projection's CREATE TABLE: `turns_at_ask INTEGER` (turns_watched
+-- value at the moment a question was asked, for expiry) and
+-- `is_switch INTEGER NOT NULL DEFAULT 0` (carried on the question.asked
+-- event payload, since traces have no isSwitch column of their own).

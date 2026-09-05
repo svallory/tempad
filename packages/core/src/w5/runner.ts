@@ -39,6 +39,28 @@ function countUserMessages(database: Database, sessionId: string, sinceTs: strin
   return row.count;
 }
 
+function sessionActivityMinutes(
+  database: Database,
+  sessionId: string,
+  sinceTs: string | null,
+): number {
+  const row =
+    sinceTs !== null
+      ? (database
+          .query(
+            "SELECT MIN(ts) as firstTs, MAX(ts) as lastTs FROM claude_messages WHERE session_id = ? AND ts > ?",
+          )
+          .get(sessionId, sinceTs) as { firstTs: string | null; lastTs: string | null })
+      : (database
+          .query(
+            "SELECT MIN(ts) as firstTs, MAX(ts) as lastTs FROM claude_messages WHERE session_id = ?",
+          )
+          .get(sessionId) as { firstTs: string | null; lastTs: string | null });
+
+  if (!row.firstTs || !row.lastTs) return 0;
+  return (Date.parse(row.lastTs) - Date.parse(row.firstTs)) / 60_000;
+}
+
 export async function runOnce(
   database: Database,
   config: Config,
@@ -77,11 +99,12 @@ export async function runOnce(
     });
 
     const turnsSinceLastRun = countUserMessages(database, job.sessionId, sinceTs);
+    const activityMinutes = sessionActivityMinutes(database, job.sessionId, sinceTs);
     advanceQuestions(store, database, intentConfig, {
       sessionId: job.sessionId,
       now,
       turnsSinceLastRun,
-      sessionActivityMinutes: 0,
+      sessionActivityMinutes: activityMinutes,
       resolvedByContext: [],
     });
 

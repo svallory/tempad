@@ -41,6 +41,20 @@ function toJob(row: JobRow): Job {
   };
 }
 
+export function isThrottled(
+  database: Database,
+  sessionId: string,
+  now: string,
+  throttleMinutes: number,
+): boolean {
+  const run = database
+    .query("SELECT last_run_at FROM w5_runs WHERE session_id = ?")
+    .get(sessionId) as { last_run_at: string } | null;
+  if (!run) return false;
+  const elapsedMinutes = (Date.parse(now) - Date.parse(run.last_run_at)) / 60_000;
+  return elapsedMinutes < throttleMinutes;
+}
+
 export function enqueueJob(database: Database, input: EnqueueJobInput): EnqueueJobResult {
   const now = input.now ?? new Date().toISOString();
 
@@ -55,16 +69,8 @@ export function enqueueJob(database: Database, input: EnqueueJobInput): EnqueueJ
     return { enqueued: false, reason: "duplicate" };
   }
 
-  if (!input.forced) {
-    const run = database
-      .query("SELECT last_run_at FROM w5_runs WHERE session_id = ?")
-      .get(input.sessionId) as { last_run_at: string } | null;
-    if (run) {
-      const elapsedMinutes = (Date.parse(now) - Date.parse(run.last_run_at)) / 60_000;
-      if (elapsedMinutes < input.throttleMinutes) {
-        return { enqueued: false, reason: "throttled" };
-      }
-    }
+  if (!input.forced && isThrottled(database, input.sessionId, now, input.throttleMinutes)) {
+    return { enqueued: false, reason: "throttled" };
   }
 
   database

@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, openSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Config } from "../config/env";
@@ -11,12 +11,33 @@ import { enqueueJob } from "./jobs";
 import type { QuestionRow } from "./questions";
 import { drain } from "./runner";
 
+export interface SpawnOptions {
+  cmd: string[];
+  detached: boolean;
+  stdio: ["ignore", number, number];
+  env: Record<string, string | undefined>;
+}
+
+export type SpawnFn = (options: SpawnOptions) => void;
+
 export interface W5Context {
   database: Database;
   config: Config;
   intentConfig: IntentConfig;
   stdout: (line: string) => void;
+  spawn?: SpawnFn;
 }
+
+const defaultSpawn: SpawnFn = (options) => {
+  Bun.spawn({
+    cmd: options.cmd,
+    detached: options.detached,
+    stdio: options.stdio,
+    env: options.env,
+  });
+};
+
+const CLI_PATH = join(import.meta.dir, "..", "cli.ts");
 
 function logPath(config: Config): string {
   return join(config.home, "logs", "w5.log");
@@ -31,9 +52,31 @@ function log(config: Config, line: string): void {
 function buildClassifier(intentConfig: IntentConfig, model?: string): Classifier {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
-    throw new Error("ANTHROPIC_API_KEY is required to run the w5 classifier");
+    return {
+      classify() {
+        return Promise.reject(new Error("ANTHROPIC_API_KEY not set"));
+      },
+    };
   }
   return new AnthropicClassifier({ apiKey, model: model ?? intentConfig.w5.model });
+}
+
+function lockPathFor(config: Config): string {
+  return join(config.home, "w5.lock");
+}
+
+function spawnDetachedRun(context: W5Context): void {
+  const spawn = context.spawn ?? defaultSpawn;
+  const path = logPath(context.config);
+  mkdirSync(dirname(path), { recursive: true });
+  const logFd = openSync(path, "a");
+
+  spawn({
+    cmd: [process.execPath, CLI_PATH, "w5", "run"],
+    detached: true,
+    stdio: ["ignore", logFd, logFd],
+    env: { ...process.env, TEMPAD_HOME: context.config.home },
+  });
 }
 
 function runEnqueue(args: string[], context: W5Context): number {
@@ -54,6 +97,10 @@ function runEnqueue(args: string[], context: W5Context): number {
       forced: values.forced === true,
       throttleMinutes: context.intentConfig.w5.throttleMinutes,
     });
+
+    if (!existsSync(lockPathFor(context.config))) {
+      spawnDetachedRun(context);
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     log(context.config, `enqueue failed: ${message}`);
@@ -84,6 +131,21 @@ function runContext(args: string[], context: W5Context): number {
   return 0;
 }
 
+const STALE_LOCK_MINUTES = 30;
+
+function clearStaleLock(lockPath: string, log: (line: string) => void): void {
+  if (!existsSync(lockPath)) return;
+  const ageMinutes = (Date.now() - statSync(lockPath).mtimeMs) / 60_000;
+  if (ageMinutes >= STALE_LOCK_MINUTES) {
+    log(`w5.lock is stale (${Math.round(ageMinutes)}m old), removing`);
+    try {
+      unlinkSync(lockPath);
+    } catch {
+      // already gone
+    }
+  }
+}
+
 async function runRun(args: string[], context: W5Context): Promise<number> {
   const { values } = parseArgs({
     args,
@@ -91,18 +153,16 @@ async function runRun(args: string[], context: W5Context): Promise<number> {
     strict: true,
   });
 
-  const lockPath = join(context.config.home, "w5.lock");
+  const lockPath = lockPathFor(context.config);
+  clearStaleLock(lockPath, (line) => log(context.config, line));
+
   if (existsSync(lockPath)) {
     return 0;
   }
   mkdirSync(dirname(lockPath), { recursive: true });
 
   if (values.detached) {
-    Bun.spawn({
-      cmd: [process.execPath, process.argv[1] ?? "", "w5", "run"],
-      detached: true,
-      stdio: ["ignore", "ignore", "ignore"],
-    });
+    spawnDetachedRun(context);
     return 0;
   }
 
@@ -121,7 +181,6 @@ async function runRun(args: string[], context: W5Context): Promise<number> {
     context.stdout(`w5: ran ${count} job(s)`);
   } finally {
     try {
-      const { unlinkSync } = await import("node:fs");
       unlinkSync(lockPath);
     } catch {
       // lock already gone
@@ -187,15 +246,21 @@ function runHook(args: string[]): number {
   const [action, ...rest] = args;
   const { values } = parseArgs({
     args: rest,
-    options: { scope: { type: "string", default: "user" } },
+    options: {
+      scope: { type: "string", default: "user" },
+      bin: { type: "string" },
+    },
     strict: true,
   });
   const scope = values.scope === "project" ? "project" : "user";
   const settingsPath = settingsPathFor(scope);
-  const binPath = process.execPath;
 
   if (action === "install") {
-    installHooks(settingsPath, binPath);
+    if (values.bin) {
+      installHooks(settingsPath, values.bin);
+    } else {
+      installHooks(settingsPath);
+    }
     return 0;
   }
   if (action === "uninstall") {
@@ -218,6 +283,11 @@ async function runBackfill(args: string[], context: W5Context): Promise<number> 
   const days = values.days
     ? Number.parseInt(values.days, 10)
     : context.intentConfig.w5.backfillDays;
+
+  if (!process.env.ANTHROPIC_API_KEY) {
+    context.stdout("ANTHROPIC_API_KEY not set");
+    return 1;
+  }
   const classifier = buildClassifier(context.intentConfig, values.model);
 
   const result = await backfill(
