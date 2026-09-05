@@ -84,6 +84,80 @@ function hasUnansweredAsked(database: Database, sessionId: string): boolean {
   return row !== null;
 }
 
+function watchQuestion(
+  store: EventStore,
+  database: Database,
+  questionId: string,
+  turns: number,
+  now: string,
+): void {
+  applyIncremental(
+    database,
+    store.append({
+      actor: "system",
+      kind: "question.watched",
+      subject: questionId,
+      at: now,
+      payload: { turns },
+    }),
+  );
+}
+
+function promoteQuestion(
+  store: EventStore,
+  database: Database,
+  questionId: string,
+  turnsAtAsk: number,
+  now: string,
+): void {
+  applyIncremental(
+    database,
+    store.append({
+      actor: "system",
+      kind: "question.promoted",
+      subject: questionId,
+      at: now,
+      payload: { turnsAtAsk },
+    }),
+  );
+}
+
+function expireQuestion(
+  store: EventStore,
+  database: Database,
+  questionId: string,
+  now: string,
+): void {
+  applyIncremental(
+    database,
+    store.append({
+      actor: "system",
+      kind: "question.expired",
+      subject: questionId,
+      at: now,
+      payload: {},
+    }),
+  );
+}
+
+function resolveByContext(
+  store: EventStore,
+  database: Database,
+  questionId: string,
+  now: string,
+): void {
+  applyIncremental(
+    database,
+    store.append({
+      actor: "system",
+      kind: "question.answered",
+      subject: questionId,
+      at: now,
+      payload: { answeredBy: "context" },
+    }),
+  );
+}
+
 export function advanceQuestions(
   store: EventStore,
   database: Database,
@@ -109,25 +183,13 @@ export function advanceQuestions(
     const row = toQuestionRow(raw);
 
     if (resolvedSet.has(row.id)) {
-      applyIncremental(
-        database,
-        store.append({
-          actor: "system",
-          kind: "question.answered",
-          subject: row.id,
-          at: input.now,
-          payload: { answeredBy: "context" },
-        }),
-      );
-      database.query("UPDATE questions SET state = 'resolved_by_context' WHERE id = ?").run(row.id);
+      resolveByContext(store, database, row.id, input.now);
       resolved.push({ ...row, state: "resolved_by_context" });
       continue;
     }
 
     const newTurnsWatched = row.turnsWatched + input.turnsSinceLastRun;
-    database
-      .query("UPDATE questions SET turns_watched = ? WHERE id = ?")
-      .run(newTurnsWatched, row.id);
+    watchQuestion(store, database, row.id, newTurnsWatched, input.now);
 
     const trace = database
       .query(
@@ -138,7 +200,7 @@ export function advanceQuestions(
       .get(row.traceId) as { traceId: string; questId: string | null } | null;
 
     if (row.kind === "why" && trace?.questId !== null && trace?.questId !== undefined) {
-      database.query("UPDATE questions SET state = 'expired' WHERE id = ?").run(row.id);
+      expireQuestion(store, database, row.id, input.now);
       expired.push({ ...row, state: "expired", turnsWatched: newTurnsWatched });
       continue;
     }
@@ -155,9 +217,7 @@ export function advanceQuestions(
     if (hasUnansweredAsked(database, input.sessionId)) continue;
     if (isQuiet(database, input.now)) continue;
 
-    database
-      .query("UPDATE questions SET state = 'asked', asked_at = ?, turns_at_ask = ? WHERE id = ?")
-      .run(input.now, newTurnsWatched, row.id);
+    promoteQuestion(store, database, row.id, newTurnsWatched, input.now);
     asked.push({
       ...row,
       state: "asked",
@@ -179,22 +239,10 @@ export function advanceQuestions(
     if (asked.some((a) => a.id === row.id)) continue;
 
     const newTurnsWatched = row.turnsWatched + input.turnsSinceLastRun;
-    database
-      .query("UPDATE questions SET turns_watched = ? WHERE id = ?")
-      .run(newTurnsWatched, row.id);
+    watchQuestion(store, database, row.id, newTurnsWatched, input.now);
 
     if (newTurnsWatched - (row.turnsAtAsk ?? 0) >= config.askExpireTurns) {
-      applyIncremental(
-        database,
-        store.append({
-          actor: "system",
-          kind: "question.expired",
-          subject: row.id,
-          at: input.now,
-          payload: {},
-        }),
-      );
-      database.query("UPDATE questions SET state = 'expired' WHERE id = ?").run(row.id);
+      expireQuestion(store, database, row.id, input.now);
       expired.push({ ...row, state: "expired", turnsWatched: newTurnsWatched });
     }
   }

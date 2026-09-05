@@ -131,6 +131,85 @@ describe("applyResult", () => {
     expect(question.state).toBe("watching");
   });
 
+  test("a switch between segment 2 and 3 branches from segment 2's activity, not window.previousTrace", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seed(database);
+
+    const chained: ClassifierResult = {
+      segments: [
+        {
+          startedAt: "2026-09-04T15:00:00.000Z",
+          endedAt: "2026-09-04T15:10:00.000Z",
+          what: "compare Astryx",
+          why: "unknown",
+          matchedQuest: null,
+          proposedQuest: {
+            title: "Compare Astryx",
+            objective: "see what they claim",
+            commitment: "exploratory",
+          },
+          matchedActivity: null,
+          isSwitch: true,
+          trigger: "what does Astryx do for agents?",
+          confidence: 0.6,
+          questions: [],
+        },
+        {
+          startedAt: "2026-09-04T15:10:00.000Z",
+          endedAt: "2026-09-04T15:20:00.000Z",
+          what: "read Astryx docs",
+          why: "unknown",
+          matchedQuest: null,
+          proposedQuest: null,
+          matchedActivity: null,
+          isSwitch: false,
+          trigger: null,
+          confidence: 0.7,
+          questions: [],
+        },
+        {
+          startedAt: "2026-09-04T15:20:00.000Z",
+          endedAt: "2026-09-04T15:30:00.000Z",
+          what: "check email",
+          why: "unknown",
+          matchedQuest: null,
+          proposedQuest: {
+            title: "Check email",
+            objective: "clear inbox",
+            commitment: "personal",
+          },
+          matchedActivity: null,
+          isSwitch: true,
+          trigger: "let me check email real quick",
+          confidence: 0.5,
+          questions: [],
+        },
+      ],
+    };
+
+    const summary = applyResult(store, database, window, chained, {
+      actor: "hook",
+      askingEnabled: false,
+      now: "2026-09-04T15:31:00.000Z",
+    });
+
+    // Two switches happened (Q1 -> Compare Astryx, Compare Astryx -> Check email).
+    // With the bug (comparing against the static window.previousTrace = A1/Q1),
+    // only one branch would be recorded because segment 3's questId (Check email)
+    // differs from A1's quest (Q1) too, but the branch's from_activity would
+    // wrongly point at A1 instead of the activity opened for segment 1/2.
+    expect(summary.branches).toBe(2);
+
+    const secondActivity = database
+      .query("SELECT id FROM activities WHERE objective = 'read Astryx docs'")
+      .get() as { id: string };
+    const emailQuest = database
+      .query("SELECT id, origin_activity_id FROM quests WHERE title = 'Check email'")
+      .get() as { id: string; origin_activity_id: string };
+
+    expect(emailQuest.origin_activity_id).toBe(secondActivity.id);
+  });
+
   test("askingEnabled false records no question row", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);

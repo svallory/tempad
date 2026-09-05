@@ -109,7 +109,7 @@ export async function runOnce(
     });
 
     const lastMessage = window.messages.at(-1);
-    completeJob(database, job.id, lastMessage?.ts ?? sinceTs);
+    completeJob(database, job.id, lastMessage?.ts ?? sinceTs, now);
 
     return { ran: true, sessionId: job.sessionId, summary };
   } catch (error) {
