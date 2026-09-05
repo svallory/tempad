@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env";
 import type { W5Config } from "../intent/config";
-import { applyIncremental } from "../intent/projections";
+import { applyIncremental, ensureTables } from "../intent/projections";
 import { registerAllProjections } from "../intent/projections/register";
 import { EventStore } from "../intent/store";
 import { applyResult } from "./apply";
@@ -29,18 +29,38 @@ interface SessionRow {
   ended_at: string;
 }
 
+/**
+ * Primary path: an explicit `w5_windows` row for this exact window (see
+ * `src/intent/projections/window.ts`). Legacy fallback, for windows
+ * classified before `window.classified` existed: a live (non-retracted)
+ * trace nested inside the window's bounds. A database with traces already
+ * classified under the old scheme has no `w5_windows` rows at all, so
+ * without this fallback every one of those windows would look uncovered
+ * and get reclassified (and re-duplicated) the first time backfill runs
+ * post-upgrade.
+ */
 function isWindowCovered(
   database: Database,
   sessionId: string,
   windowStartedAt: string,
   windowEndedAt: string,
 ): boolean {
-  const row = database
+  const windowRow = database
     .query(
       "SELECT rowid FROM w5_windows WHERE session_id = ? AND started_at = ? AND ended_at = ? LIMIT 1",
     )
     .get(sessionId, windowStartedAt, windowEndedAt) as { rowid: number } | null;
-  return row !== null;
+  if (windowRow !== null) return true;
+
+  const traceRow = database
+    .query(
+      `SELECT id FROM traces
+       WHERE session_id = ? AND retracted_at IS NULL
+         AND started_at >= ? AND ended_at <= ?
+       LIMIT 1`,
+    )
+    .get(sessionId, windowStartedAt, windowEndedAt) as { id: string } | null;
+  return traceRow !== null;
 }
 
 function chunkByWindow<T extends { ts: string }>(messages: T[], windowMinutes: number): T[][] {
@@ -70,6 +90,7 @@ export async function backfill(
   classifier: Classifier,
   options: BackfillOptions,
 ): Promise<BackfillResult> {
+  ensureTables(database);
   const store = new EventStore(database);
   const cutoff = new Date(
     Date.parse(options.now) - options.days * 24 * 60 * 60 * 1000,

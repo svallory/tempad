@@ -212,6 +212,76 @@ describe("backfill", () => {
     expect(classifier.calls).toBe(1);
   });
 
+  test("legacy fallback: a live trace nested in the window's bounds counts as covered even with no w5_windows row", async () => {
+    const database = openDatabase(":memory:");
+    seedHero(database);
+    // Window spans 15:00-15:20 (two messages); the legacy trace is nested
+    // strictly inside it (15:05-15:15), as a real pre-upgrade trace's bounds
+    // (from classifier segment timestamps, not the raw chunk bounds) often
+    // are.
+    seedSession(database, {
+      id: "s1",
+      endedAt: "2026-09-04T15:20:00.000Z",
+      messageTimestamps: ["2026-09-04T15:00:00.000Z", "2026-09-04T15:20:00.000Z"],
+    });
+
+    const store = new EventStore(database);
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hook",
+        kind: "activity.opened",
+        subject: "A1",
+        payload: { objective: "work" },
+        at: "2026-09-04T15:05:00.000Z",
+      }),
+    );
+    applyIncremental(
+      database,
+      store.append({
+        actor: "backfill",
+        kind: "trace.recorded",
+        subject: "T1",
+        sessionId: "s1",
+        payload: {
+          activity: "A1",
+          tool: "claude-code",
+          place: "p",
+          source: "session",
+          started_at: "2026-09-04T15:05:00.000Z",
+          ended_at: "2026-09-04T15:15:00.000Z",
+          who: "hero",
+          what: "work",
+          why: "ship",
+          where: "personal/p",
+          how: "claude-code",
+          confidence: 0.9,
+          classified_by: "assistant",
+        },
+      }),
+    );
+    // No window.classified event / w5_windows row -- this trace predates the
+    // primary coverage mechanism, as every trace in the real database does.
+
+    const windowRowCount = database.query("SELECT COUNT(*) as count FROM w5_windows").get() as {
+      count: number;
+    };
+    expect(windowRowCount.count).toBe(0);
+
+    const classifier = new FakeClassifier();
+    const logs: string[] = [];
+
+    const result = await backfill(database, makeConfig(), config, classifier, {
+      days: 15,
+      now: "2026-09-04T17:00:00.000Z",
+      log: (line) => logs.push(line),
+    });
+
+    expect(result.windowsClassified).toBe(0);
+    expect(result.windowsSkipped).toBe(1);
+    expect(classifier.calls).toBe(0);
+  });
+
   test("a failed final window does not stop earlier windows and is retried next run", async () => {
     const database = openDatabase(":memory:");
     seedHero(database);
