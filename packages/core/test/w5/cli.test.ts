@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Config } from "../../src/config/env";
@@ -76,6 +76,37 @@ describe("w5 enqueue", () => {
       });
 
       expect(spawnCalls).toHaveLength(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a stale lock does not wedge the queue: enqueue --forced clears it and spawns the runner", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-cli-test-"));
+    try {
+      const lockPath = join(dir, "w5.lock");
+      writeFileSync(lockPath, "12345");
+      const staleTime = new Date(Date.now() - 31 * 60_000);
+      utimesSync(lockPath, staleTime, staleTime);
+
+      const database = openDatabase(":memory:");
+      const spawnCalls: Parameters<SpawnFn>[0][] = [];
+      const spawn: SpawnFn = (options) => {
+        spawnCalls.push(options);
+      };
+
+      const code = await runW5Command(["enqueue", "--session", "s1", "--forced"], {
+        database,
+        config: makeConfig(dir),
+        intentConfig: defaultIntentConfig(),
+        stdout: () => {},
+        spawn,
+      });
+
+      expect(code).toBe(0);
+      expect(existsSync(lockPath)).toBe(false);
+      expect(spawnCalls).toHaveLength(1);
+      expect(spawnCalls[0]?.detached).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -193,6 +224,12 @@ describe("w5 run without ANTHROPIC_API_KEY", () => {
       };
       expect(job.state).toBe("failed");
       expect(job.error).toContain("ANTHROPIC_API_KEY not set");
+      expect(job.error).not.toContain("at ");
+
+      const logContent = readFileSync(join(dir, "logs", "w5.log"), "utf8");
+      expect(logContent).toContain("ANTHROPIC_API_KEY not set");
+      expect(logContent).not.toMatch(/\bat .*:\d+:\d+/);
+      expect(logContent).not.toContain("    at ");
     } finally {
       if (previousKey !== undefined) process.env.ANTHROPIC_API_KEY = previousKey;
       rmSync(dir, { recursive: true, force: true });

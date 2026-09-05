@@ -98,7 +98,10 @@ function runEnqueue(args: string[], context: W5Context): number {
       throttleMinutes: context.intentConfig.w5.throttleMinutes,
     });
 
-    if (!existsSync(lockPathFor(context.config))) {
+    const lockPath = lockPathFor(context.config);
+    clearStaleLock(lockPath, (line) => log(context.config, line));
+
+    if (!existsSync(lockPath)) {
       spawnDetachedRun(context);
     }
   } catch (error) {
