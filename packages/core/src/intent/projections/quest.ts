@@ -60,10 +60,12 @@ export const questProjection: Projection = {
       }
       case "quest.reworded":
         database
-          .query("UPDATE quests SET title = ?, objective = ?, revision = revision + 1 WHERE id = ?")
+          .query(
+            "UPDATE quests SET title = COALESCE(?, title), objective = COALESCE(?, objective), revision = revision + 1 WHERE id = ?",
+          )
           .run(
-            String(payload.title),
-            payload.objective ? String(payload.objective) : null,
+            payload.title !== undefined ? String(payload.title) : null,
+            payload.objective !== undefined ? String(payload.objective) : null,
             event.subject,
           );
         return;
@@ -122,7 +124,9 @@ export function resolveQuest(database: Database, id: string): string {
   let current = id;
   const visited = new Set<string>();
   for (;;) {
-    if (visited.has(current)) return current;
+    if (visited.has(current)) {
+      throw new Error(`quest merge cycle detected starting at ${id}`);
+    }
     visited.add(current);
     const row = database.query("SELECT merged_into FROM quests WHERE id = ?").get(current) as {
       merged_into: string | null;

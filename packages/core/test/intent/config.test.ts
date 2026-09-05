@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadIntentConfig } from "../../src/intent/config";
+import { defaultIntentConfig, loadIntentConfig } from "../../src/intent/config";
 
 describe("intent config", () => {
   test("parses hero, parties, clients and w5 with defaults", () => {
@@ -38,5 +38,13 @@ throttle_minutes = 5
     const path = join(directory, "tempad.toml");
     writeFileSync(path, `[[parties]]\nname = "x"\n`);
     expect(() => loadIntentConfig(path)).toThrow(/slug/);
+  });
+
+  test("a missing tempad.toml returns defaultIntentConfig instead of crashing (first-run hero init)", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tempad-intent-"));
+    const path = join(directory, "tempad.toml");
+    // deliberately do not create the file
+    const config = loadIntentConfig(path);
+    expect(config).toEqual(defaultIntentConfig());
   });
 });

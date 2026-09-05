@@ -37,10 +37,12 @@ export const goalProjection: Projection = {
       }
       case "goal.reworded":
         database
-          .query("UPDATE goals SET title = ?, statement = ?, revision = revision + 1 WHERE id = ?")
+          .query(
+            "UPDATE goals SET title = COALESCE(?, title), statement = COALESCE(?, statement), revision = revision + 1 WHERE id = ?",
+          )
           .run(
-            String(payload.title),
-            payload.statement ? String(payload.statement) : null,
+            payload.title !== undefined ? String(payload.title) : null,
+            payload.statement !== undefined ? String(payload.statement) : null,
             event.subject,
           );
         return;
