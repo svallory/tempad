@@ -390,6 +390,9 @@ async function runEvalCommand(args: string[], context: W5Context): Promise<numbe
   });
 
   context.stdout(`copied_db=${metrics.copiedDbPath}`);
+  context.stdout(
+    `retracted_before_rerun traces=${metrics.resetTraces} activities=${metrics.resetActivities} quests=${metrics.resetQuests}`,
+  );
   context.stdout(`traces=${metrics.traces}`);
   context.stdout(`activities=${metrics.activities}`);
   context.stdout(`ratio=${metrics.ratio.toFixed(3)}`);

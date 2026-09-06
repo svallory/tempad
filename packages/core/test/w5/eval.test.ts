@@ -326,4 +326,131 @@ describe("w5 eval", () => {
 
     expect(metrics.questConflicts).toBe(1);
   });
+
+  test("resets an old cohort inside the range before rerunning, leaves rows outside the range untouched", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-reset-"));
+    const sourcePath = join(dir, "source.db");
+
+    const database = openDatabase(sourcePath);
+    ensureTables(database);
+    const store = new EventStore(database);
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "hero.created",
+        subject: "H1",
+        payload: { name: "Saulo" },
+      }),
+    );
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hook",
+        kind: "activity.opened",
+        subject: "A_IN",
+        payload: { objective: "old in-range work" },
+        at: "2026-09-01T09:00:00.000Z",
+      }),
+    );
+    applyIncremental(
+      database,
+      store.append({
+        actor: "backfill",
+        kind: "trace.recorded",
+        subject: "T_IN",
+        sessionId: "s1",
+        payload: {
+          activity: "A_IN",
+          tool: "claude-code",
+          place: "p",
+          source: "session",
+          started_at: "2026-09-01T09:00:00.000Z",
+          ended_at: "2026-09-01T09:10:00.000Z",
+          who: "hero",
+          what: "old work",
+          why: "old",
+          where: "personal/p",
+          how: "claude-code",
+          confidence: 0.9,
+          classified_by: "assistant",
+        },
+      }),
+    );
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hook",
+        kind: "activity.opened",
+        subject: "A_OUT",
+        payload: { objective: "old out-of-range work" },
+        at: "2026-08-01T09:00:00.000Z",
+      }),
+    );
+    applyIncremental(
+      database,
+      store.append({
+        actor: "backfill",
+        kind: "trace.recorded",
+        subject: "T_OUT",
+        sessionId: "s2",
+        payload: {
+          activity: "A_OUT",
+          tool: "claude-code",
+          place: "p",
+          source: "session",
+          started_at: "2026-08-01T09:00:00.000Z",
+          ended_at: "2026-08-01T09:10:00.000Z",
+          who: "hero",
+          what: "old work",
+          why: "old",
+          where: "personal/p",
+          how: "claude-code",
+          confidence: 0.9,
+          classified_by: "assistant",
+        },
+      }),
+    );
+    database
+      .query(
+        `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, title, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+         VALUES ('s1', '/c', 'p', '/c/p/s1.jsonl', '/w/p', 'personal', 'p', 'p session', 'main', '2026-09-01T10:00:00.000Z', '2026-09-01T10:30:00.000Z', 1, 0, '[]', 'host', '2026-09-01T10:30:00.000Z')`,
+      )
+      .run();
+    database
+      .query(
+        `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+         VALUES ('m1', 's1', '2026-09-01T10:00:00.000Z', 'user', 0, 'do the thing')`,
+      )
+      .run();
+    database.close();
+
+    const metrics = await runEval({
+      from: "2026-09-01",
+      to: "2026-09-02",
+      sourceDbPath: sourcePath,
+      scratchDir: dir,
+      now: "2026-09-02T00:00:00.000Z",
+      classifier: new FakeClassifier(),
+      log: () => {},
+    });
+
+    expect(metrics.resetTraces).toBe(1);
+    expect(metrics.resetActivities).toBe(1);
+
+    const copied = openDatabase(metrics.copiedDbPath);
+    const inRange = copied.query("SELECT retracted_at FROM traces WHERE id = 'T_IN'").get() as {
+      retracted_at: string | null;
+    };
+    expect(inRange.retracted_at).not.toBeNull();
+    const outOfRange = copied.query("SELECT retracted_at FROM traces WHERE id = 'T_OUT'").get() as {
+      retracted_at: string | null;
+    };
+    expect(outOfRange.retracted_at).toBeNull();
+    copied.close();
+
+    // Only the rerun's rows count toward the metrics, not the reset old cohort.
+    expect(metrics.traces).toBe(1);
+    expect(metrics.activities).toBe(1);
+  });
 });
