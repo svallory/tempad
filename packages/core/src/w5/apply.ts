@@ -5,7 +5,7 @@ import { newUlid } from "../intent/ids";
 import { applyIncremental } from "../intent/projections";
 import type { EventStore } from "../intent/store";
 import type { ClassifierResult, ClassifierSegment, ClassifierWindow } from "./classifier";
-import { closeActivityOnSwitch, openActivityContinuing } from "./lifecycle";
+import { openActivityContinuing } from "./lifecycle";
 
 export interface AppliedSummary {
   traces: number;
@@ -40,6 +40,7 @@ function classifyTrigger(trigger: string | null): string {
   const lower = trigger.toLowerCase();
   if (/\bblocked\b|\bfailing\b|\berror\b/.test(lower)) return "blocker";
   if (/\bwhy\b|\bwonder\b|\bwhat does\b/.test(lower)) return "curiosity";
+  if (/\bwaiting\b|\bwhile.*(runs?|running)\b|\bin the meantime\b/.test(lower)) return "waiting";
   return "unknown";
 }
 
@@ -305,13 +306,16 @@ export function applyResult(
     ? { activityId: mostRecentOpen.activityId, questId: mostRecentOpen.questId }
     : null;
 
-  // Attention is singular: a session has at most one activity actually in
-  // progress. More than one open here is a classifier artifact, and a switch
-  // corrects it by closing every open activity of the session except the one
-  // the segment lands on. A later return to a closed one is a new activity
-  // with `continues`, never a reopen.
-  const openSessionActivityIds = new Set(
-    window.sessionOpenActivities.map((activity) => activity.activityId),
+  // The session may legitimately hold several activities open at once (a lead
+  // coordinating two quests, a session running parallel subagents), so a
+  // switch never closes anything -- it only marks the nexus event for
+  // side-quest branching. A switch's quest counts as a branch only when it is
+  // not already open in this session: returning to a quest already in flight
+  // is not a nexus event, just attention moving back to something ongoing.
+  const openSessionQuestIds = new Set(
+    window.sessionOpenActivities
+      .map((activity) => activity.questId)
+      .filter((questId): questId is string => questId !== null),
   );
 
   for (const segment of result.segments) {
@@ -363,19 +367,13 @@ export function applyResult(
       );
     }
 
-    if (segment.isSwitch) {
-      for (const openActivityId of openSessionActivityIds) {
-        if (openActivityId === activityId) continue;
-        closeActivityOnSwitch(store, database, {
-          activityId: openActivityId,
-          closedAt: segment.startedAt,
-        });
-        openSessionActivityIds.delete(openActivityId);
-      }
-    }
-    if (activityOpened) openSessionActivityIds.add(activityId);
-
-    if (segment.isSwitch && questId !== null && previous !== null && questId !== previous.questId) {
+    if (
+      segment.isSwitch &&
+      questId !== null &&
+      previous !== null &&
+      questId !== previous.questId &&
+      !openSessionQuestIds.has(questId)
+    ) {
       branchQuest(store, database, {
         questId,
         fromActivityId: previous.activityId,
@@ -385,6 +383,7 @@ export function applyResult(
       summary.branches += 1;
     }
 
+    if (questId !== null) openSessionQuestIds.add(questId);
     previous = { activityId, questId };
 
     const traceId = recordTrace(store, database, {

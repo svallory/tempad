@@ -5,7 +5,6 @@ import { ensureTables } from "../../src/intent/projections";
 import { registerAllProjections } from "../../src/intent/projections/register";
 import { EventStore } from "../../src/intent/store";
 import {
-  closeActivityOnSwitch,
   closeIdleActivities,
   closeSessionActivities,
   openActivityContinuing,
@@ -62,27 +61,6 @@ describe("lifecycle", () => {
       close_reason: "idle",
     });
     expect(rows.find((r) => r.id === "A-recent")?.closed_at).toBeNull();
-  });
-
-  test("closeActivityOnSwitch closes with reason switch at the given time", () => {
-    const database = openDatabase(":memory:");
-    ensureTables(database);
-    const store = new EventStore(database);
-    seedActivityWithTrace(database, {
-      activityId: "A1",
-      sessionId: "s1",
-      endedAt: "2026-09-06T09:10:00.000Z",
-    });
-
-    closeActivityOnSwitch(store, database, {
-      activityId: "A1",
-      closedAt: "2026-09-06T09:12:00.000Z",
-    });
-
-    const row = database
-      .query("SELECT closed_at, close_reason FROM activities WHERE id = 'A1'")
-      .get() as { closed_at: string; close_reason: string };
-    expect(row).toEqual({ closed_at: "2026-09-06T09:12:00.000Z", close_reason: "switch" });
   });
 
   test("closeSessionActivities closes every open activity of the session and clears the note", () => {

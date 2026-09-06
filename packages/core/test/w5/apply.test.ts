@@ -472,7 +472,7 @@ describe("applyResult", () => {
     expect(opened.quest_id).toBe("Q1");
   });
 
-  test("a switch to a different activity closes the previous one with reason switch", () => {
+  test("a switch to a different activity closes nothing", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);
 
@@ -509,74 +509,19 @@ describe("applyResult", () => {
       log: () => {},
     });
 
-    const closed = database
+    const untouched = database
       .query("SELECT closed_at, close_reason FROM activities WHERE id = 'A1'")
       .get() as { closed_at: string | null; close_reason: string | null };
-    expect(closed.closed_at).toBe("2026-09-04T15:10:00.000Z");
-    expect(closed.close_reason).toBe("switch");
+    expect(untouched.closed_at).toBeNull();
+    expect(untouched.close_reason).toBeNull();
+
+    const closedCount = database
+      .query("SELECT COUNT(*) as count FROM activities WHERE closed_at IS NOT NULL")
+      .get() as { count: number };
+    expect(closedCount.count).toBe(0);
   });
 
-  test("a switch closes every other open activity of the session, not only the most recent", () => {
-    const database = openDatabase(":memory:");
-    const { store } = seed(database);
-    database
-      .query(
-        `INSERT INTO activities (id, quest_id, objective, opened_at, revision)
-         VALUES ('B1', 'Q1', 'second open activity', '2026-09-04T14:10:00.000Z', 1)`,
-      )
-      .run();
-
-    const twoOpenWindow: ClassifierWindow = {
-      ...window,
-      sessionOpenActivities: [
-        ...window.sessionOpenActivities,
-        {
-          activityId: "B1",
-          what: "second open activity",
-          why: "ship",
-          questId: "Q1",
-          questTitle: "Ship marko-ui",
-          openedAt: "2026-09-04T14:10:00.000Z",
-          lastTraceEndedAt: "2026-09-04T14:10:00.000Z",
-        },
-      ],
-    };
-
-    const switchToNew: ClassifierResult = {
-      segments: [
-        {
-          ...baseNew,
-          startedAt: "2026-09-04T15:10:00.000Z",
-          endedAt: "2026-09-04T15:20:00.000Z",
-          matchedActivity: null,
-          continuesActivity: null,
-          newActivityReason: "a third, different objective",
-          isSwitch: true,
-          questions: [],
-        },
-      ],
-      sessionNote: null,
-    };
-
-    applyResult(store, database, twoOpenWindow, switchToNew, {
-      actor: "hook",
-      askingEnabled: false,
-      now: "2026-09-04T15:21:00.000Z",
-      log: () => {},
-    });
-
-    const rows = database
-      .query(
-        "SELECT id, closed_at, close_reason FROM activities WHERE id IN ('A1', 'B1') ORDER BY id",
-      )
-      .all() as { id: string; closed_at: string | null; close_reason: string | null }[];
-    for (const row of rows) {
-      expect(row.closed_at).toBe("2026-09-04T15:10:00.000Z");
-      expect(row.close_reason).toBe("switch");
-    }
-  });
-
-  test("a switch landing on a matched still-open activity closes only the other one", () => {
+  test("a switch landing on a matched still-open activity closes neither activity", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);
     database
@@ -634,70 +579,71 @@ describe("applyResult", () => {
     const b1 = database
       .query("SELECT closed_at, close_reason FROM activities WHERE id = 'B1'")
       .get() as { closed_at: string | null; close_reason: string | null };
-    expect(b1.closed_at).toBe("2026-09-04T15:10:00.000Z");
-    expect(b1.close_reason).toBe("switch");
+    expect(b1.closed_at).toBeNull();
   });
 
-  test("two switches in one window each close their own predecessor at their own startedAt, nothing closes twice", () => {
+  test("A, B(switch), A(switch): both A and B stay open, A gets two traces, one branch, no closes", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);
 
-    const twoSwitches: ClassifierResult = {
+    const segments: ClassifierResult = {
       segments: [
         {
           ...baseNew,
           startedAt: "2026-09-04T15:00:00.000Z",
           endedAt: "2026-09-04T15:10:00.000Z",
           what: "switch to B",
+          matchedQuest: null,
+          proposedQuest: { title: "Quest B", objective: "do B", commitment: "exploratory" },
           matchedActivity: null,
           continuesActivity: null,
           newActivityReason: "switch to B",
           isSwitch: true,
+          trigger: "waiting on the build",
           questions: [],
         },
         {
-          ...baseNew,
+          ...baseMatched,
           startedAt: "2026-09-04T15:10:00.000Z",
           endedAt: "2026-09-04T15:20:00.000Z",
-          what: "switch to C",
-          matchedActivity: null,
+          what: "back to walk order",
+          matchedQuest: "Q1",
+          matchedActivity: "A1",
           continuesActivity: null,
-          newActivityReason: "switch to C",
+          newActivityReason: null,
           isSwitch: true,
+          trigger: "build finished",
           questions: [],
         },
       ],
       sessionNote: null,
     };
 
-    applyResult(store, database, window, twoSwitches, {
+    const summary = applyResult(store, database, window, segments, {
       actor: "hook",
       askingEnabled: false,
       now: "2026-09-04T15:21:00.000Z",
       log: () => {},
     });
 
-    const a1 = database
-      .query("SELECT closed_at, close_reason FROM activities WHERE id = 'A1'")
-      .get() as { closed_at: string | null; close_reason: string | null };
-    expect(a1.closed_at).toBe("2026-09-04T15:00:00.000Z");
-    expect(a1.close_reason).toBe("switch");
-
-    const b1 = database
-      .query("SELECT closed_at, close_reason FROM activities WHERE objective = 'switch to B'")
-      .get() as { closed_at: string | null; close_reason: string | null };
-    expect(b1.closed_at).toBe("2026-09-04T15:10:00.000Z");
-    expect(b1.close_reason).toBe("switch");
-
-    const c1 = database
-      .query("SELECT closed_at FROM activities WHERE objective = 'switch to C'")
-      .get() as { closed_at: string | null };
-    expect(c1.closed_at).toBeNull();
+    // One branch (A to B); the return to A is attention moving back to a quest
+    // already open in the session, not a nexus event.
+    expect(summary.branches).toBe(1);
 
     const closedCount = database
       .query("SELECT COUNT(*) as count FROM activities WHERE closed_at IS NOT NULL")
       .get() as { count: number };
-    expect(closedCount.count).toBe(2);
+    expect(closedCount.count).toBe(0);
+
+    const bOpen = database
+      .query("SELECT closed_at FROM activities WHERE objective = 'switch to B'")
+      .get() as { closed_at: string | null };
+    expect(bOpen.closed_at).toBeNull();
+
+    const a1Traces = database
+      .query("SELECT COUNT(*) as count FROM traces WHERE activity_id = 'A1'")
+      .get() as { count: number };
+    expect(a1Traces.count).toBe(2); // T0 from seed() plus the returning segment.
   });
 
   test("a segment entirely inside the overlap range records no trace", () => {
@@ -892,5 +838,41 @@ describe("applyResult", () => {
       .query("SELECT COUNT(*) as count FROM activities WHERE continues IS NOT NULL")
       .get() as { count: number };
     expect(linked.count).toBe(0);
+  });
+
+  test("a switch triggered by waiting on a process branches with kind waiting", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seed(database);
+
+    const waiting: ClassifierResult = {
+      segments: [
+        {
+          ...baseNew,
+          startedAt: "2026-09-04T15:10:00.000Z",
+          endedAt: "2026-09-04T15:20:00.000Z",
+          matchedQuest: null,
+          proposedQuest: { title: "Side task", objective: "fill the wait", commitment: "personal" },
+          matchedActivity: null,
+          continuesActivity: null,
+          newActivityReason: "started this while the build was running",
+          isSwitch: true,
+          trigger: "waiting on the build to finish",
+          questions: [],
+        },
+      ],
+      sessionNote: null,
+    };
+
+    applyResult(store, database, window, waiting, {
+      actor: "hook",
+      askingEnabled: false,
+      now: "2026-09-04T15:21:00.000Z",
+      log: () => {},
+    });
+
+    const branched = database
+      .query("SELECT branch_kind FROM quests WHERE title = 'Side task'")
+      .get() as { branch_kind: string };
+    expect(branched.branch_kind).toBe("waiting");
   });
 });
