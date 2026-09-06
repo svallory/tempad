@@ -4,7 +4,7 @@ Status: not started. Date: 2026-09-06. Extends `docs/specs/2026-09-05-intent-mod
 
 ## Goal
 
-Make an activity mean what the domain language already says it means: one contiguous stretch of attention on one objective. Today it means one classifier window, because the classifier has no memory of anything before the last trace of the current session. Fix the classifier's inputs (a recent-context slice instead of one trace) and the activity lifecycle (activities close, and returning to an objective after a gap opens a new activity that says so) so `matchedActivity` and `continues` actually get set. Reporting benefits are a side effect, not the goal.
+Make an activity mean what the domain language already says it means: one objective pursued in a session over a span, which may interleave with other activities of the same session. Today it means one classifier window, because the classifier has no memory of anything before the last trace of the current session. Fix the classifier's inputs (a recent-context slice instead of one trace) and the activity lifecycle (activities close by idle or session end, and returning to an objective after it closed opens a new activity that says so) so `matchedActivity` and `continues` actually get set. Reporting benefits are a side effect, not the goal.
 
 Out of scope: goals-and-drift advice, the TUI, a persistent memory store separate from events, changing `quest.branched`/side-quest semantics.
 
@@ -17,7 +17,7 @@ Out of scope: goals-and-drift advice, the TUI, a persistent memory store separat
 
 ## Domain rule
 
-An activity is one contiguous stretch of attention on one objective. A gap in attention ends the activity. Returning to the same objective later opens a **new** activity that records `continues: <closed activity id>` and normally keeps the same quest. There is no pause state: a pause is the gap between traces and is derivable from `closed_at` and the next activity's `opened_at`. Reports may chain `continues` links ("returned to X after 2h").
+An activity is one objective pursued in a session over a span; it may interleave with other activities of the same session. It ends only by the idle rule or by session end — not by switching to another activity. Returning to the same objective after it closed opens a **new** activity that records `continues: <closed activity id>` and normally keeps the same quest. There is no pause state: a pause is the gap between traces and is derivable from `closed_at` and the next activity's `opened_at`. Reports may chain `continues` links ("returned to X after 2h").
 
 ## Memory: a slice of recent data, no separate store
 
