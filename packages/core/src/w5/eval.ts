@@ -13,7 +13,33 @@ registerAllProjections();
 
 export class InvalidEvalRangeError extends Error {}
 
-export function validateEvalRange(from: string, to: string): void {
+const BARE_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * A bare `--from`/`--to` date (`"2026-09-02"`, no time component) compared as
+ * TEXT against full ISO timestamps (`"2026-09-02T09:00:00.000Z"`) with `<=`
+ * silently excludes the whole `to` day, since any timestamp on that day
+ * sorts lexicographically after the bare date string. Normalizing once here
+ * turns a bare `from` into that day's start and a bare `to` into the
+ * *start of the next day*, so every caller can compare the upper bound with
+ * a plain `<` and get an inclusive `to` day. A full ISO input is trusted
+ * as given and used as an exclusive upper bound, matching how `from` is
+ * always inclusive.
+ */
+export interface EvalRange {
+  from: string;
+  to: string;
+}
+
+function normalizeEvalRange(from: string, to: string): EvalRange {
+  const normalizedFrom = BARE_DATE.test(from) ? `${from}T00:00:00.000Z` : from;
+  const normalizedTo = BARE_DATE.test(to)
+    ? new Date(Date.parse(`${to}T00:00:00.000Z`) + 24 * 60 * 60 * 1000).toISOString()
+    : to;
+  return { from: normalizedFrom, to: normalizedTo };
+}
+
+export function validateEvalRange(from: string, to: string): EvalRange {
   const fromMs = Date.parse(from);
   const toMs = Date.parse(to);
   if (Number.isNaN(fromMs)) {
@@ -25,6 +51,7 @@ export function validateEvalRange(from: string, to: string): void {
   if (fromMs > toMs) {
     throw new InvalidEvalRangeError(`--from (${from}) must be on or before --to (${to})`);
   }
+  return normalizeEvalRange(from, to);
 }
 
 function minimalConfig(scratchDir: string): Config {
@@ -102,7 +129,7 @@ function resetRange(database: Database, from: string, to: string): EvalResetResu
   const traceRows = database
     .query(
       `SELECT id, activity_id, session_id FROM traces
-       WHERE retracted_at IS NULL AND started_at >= ? AND started_at <= ?`,
+       WHERE retracted_at IS NULL AND started_at >= ? AND started_at < ?`,
     )
     .all(from, to) as { id: string; activity_id: string; session_id: string | null }[];
 
@@ -235,7 +262,7 @@ function copyDatabase(sourceDbPath: string, destinationPath: string): void {
 }
 
 export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
-  validateEvalRange(options.from, options.to);
+  const range = validateEvalRange(options.from, options.to);
 
   const copiedDbPath = join(options.scratchDir, `eval-${filenameSafe(options.now)}.db`);
   copyDatabase(options.sourceDbPath, copiedDbPath);
@@ -243,7 +270,7 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
   const database = openDatabase(copiedDbPath);
   const intentConfig = defaultIntentConfig();
 
-  const resetResult = resetRange(database, options.from, options.to);
+  const resetResult = resetRange(database, range.from, range.to);
   options.log(
     `eval: reset traces=${resetResult.traces} activities=${resetResult.activities} quests=${resetResult.quests}`,
   );
@@ -258,32 +285,32 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
       now: options.to,
       log: options.log,
       force: true,
-      from: options.from,
-      to: options.to,
+      from: range.from,
+      to: range.to,
     },
   );
 
   const traceCount = database
     .query(
-      "SELECT COUNT(*) as count FROM traces WHERE retracted_at IS NULL AND started_at >= ? AND started_at <= ?",
+      "SELECT COUNT(*) as count FROM traces WHERE retracted_at IS NULL AND started_at >= ? AND started_at < ?",
     )
-    .get(options.from, options.to) as { count: number };
+    .get(range.from, range.to) as { count: number };
   const activityCount = database
     .query(
-      "SELECT COUNT(*) as count FROM activities WHERE retracted_at IS NULL AND opened_at >= ? AND opened_at <= ?",
+      "SELECT COUNT(*) as count FROM activities WHERE retracted_at IS NULL AND opened_at >= ? AND opened_at < ?",
     )
-    .get(options.from, options.to) as { count: number };
+    .get(range.from, range.to) as { count: number };
   const continuesCount = database
     .query(
-      "SELECT COUNT(*) as count FROM activities WHERE continues IS NOT NULL AND retracted_at IS NULL AND opened_at >= ? AND opened_at <= ?",
+      "SELECT COUNT(*) as count FROM activities WHERE continues IS NOT NULL AND retracted_at IS NULL AND opened_at >= ? AND opened_at < ?",
     )
-    .get(options.from, options.to) as { count: number };
+    .get(range.from, range.to) as { count: number };
 
   const durationRows = database
     .query(
-      "SELECT opened_at as openedAt, closed_at as closedAt FROM activities WHERE closed_at IS NOT NULL AND retracted_at IS NULL AND opened_at >= ? AND opened_at <= ?",
+      "SELECT opened_at as openedAt, closed_at as closedAt FROM activities WHERE closed_at IS NOT NULL AND retracted_at IS NULL AND opened_at >= ? AND opened_at < ?",
     )
-    .all(options.from, options.to) as { openedAt: string; closedAt: string }[];
+    .all(range.from, range.to) as { openedAt: string; closedAt: string }[];
   const durationsMinutes = durationRows.map(
     (row) => (Date.parse(row.closedAt) - Date.parse(row.openedAt)) / 60_000,
   );
@@ -306,10 +333,10 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
          FROM activities
          LEFT JOIN quests ON quests.id = activities.quest_id
         WHERE activities.retracted_at IS NULL
-          AND activities.opened_at >= ? AND activities.opened_at <= ?
+          AND activities.opened_at >= ? AND activities.opened_at < ?
         ORDER BY RANDOM() LIMIT 20`,
     )
-    .all(options.from, options.to) as {
+    .all(range.from, range.to) as {
     objective: string;
     questTitle: string | null;
     openedAt: string;
