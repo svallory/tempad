@@ -66,10 +66,14 @@ export function enqueueJob(database: Database, input: EnqueueJobInput): EnqueueJ
     .get(input.sessionId) as { id: number; forced: number; kind: string } | null;
 
   if (existingQueued) {
-    if ((input.forced && existingQueued.forced === 0) || kind !== existingQueued.kind) {
+    // "session_end" is monotonic: once a job is marked for session close, a
+    // later "classify" (e.g. a Stop that races behind a SessionEnd) must not
+    // downgrade it back.
+    const nextKind = existingQueued.kind === "session_end" ? "session_end" : kind;
+    if ((input.forced && existingQueued.forced === 0) || nextKind !== existingQueued.kind) {
       database
         .query("UPDATE w5_jobs SET forced = ?, kind = ? WHERE id = ?")
-        .run(input.forced ? 1 : existingQueued.forced, kind, existingQueued.id);
+        .run(input.forced ? 1 : existingQueued.forced, nextKind, existingQueued.id);
     }
     return { enqueued: false, reason: "duplicate" };
   }

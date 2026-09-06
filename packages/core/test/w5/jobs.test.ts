@@ -156,6 +156,31 @@ describe("w5 jobs", () => {
     expect(job?.kind).toBe("session_end");
   });
 
+  test("enqueueJob never downgrades a queued session_end job back to classify", () => {
+    const database = openDatabase(":memory:");
+    enqueueJob(database, {
+      sessionId: "s6",
+      forced: true,
+      kind: "session_end",
+      now: "2026-09-06T10:00:00.000Z",
+      throttleMinutes: 10,
+    });
+
+    // A Stop racing in behind the SessionEnd must not downgrade the job.
+    enqueueJob(database, {
+      sessionId: "s6",
+      forced: false,
+      kind: "classify",
+      now: "2026-09-06T10:00:30.000Z",
+      throttleMinutes: 10,
+    });
+
+    expect(
+      (database.query("SELECT kind FROM w5_jobs WHERE session_id = 's6'").get() as { kind: string })
+        .kind,
+    ).toBe("session_end");
+  });
+
   test("failJob records the error and frees the queue", () => {
     const database = openDatabase(":memory:");
     enqueueJob(database, { sessionId: "s2", forced: true, throttleMinutes: 10 });

@@ -8,7 +8,6 @@ export interface CloseIdleActivitiesInput {
   sessionId: string;
   windowStartedAt: string;
   idleMinutes: number;
-  now: string;
 }
 
 export function closeIdleActivities(

@@ -143,7 +143,6 @@ export async function backfill(
         sessionId: session.id,
         windowStartedAt: startedAt,
         idleMinutes: intentConfig.activityIdleMinutes,
-        now: options.now,
       });
 
       try {
