@@ -305,6 +305,133 @@ describe("applyResult", () => {
     expect(trace.activity_id).toBe("A1");
   });
 
+  test("matchedQuest null on a matched activity is no opinion: quest kept, no conflict", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seed(database);
+
+    const noOpinion: ClassifierResult = {
+      segments: [
+        {
+          ...baseMatched,
+          // The classifier did not judge the quest. That is silence, not a claim
+          // that the activity has none, so A1 keeps Q1 and nothing is reported.
+          matchedQuest: null,
+          proposedQuest: null,
+          matchedActivity: "A1",
+          continuesActivity: null,
+          newActivityReason: null,
+        },
+      ],
+      sessionNote: null,
+    };
+
+    const logs: string[] = [];
+    const summary = applyResult(store, database, window, noOpinion, {
+      actor: "hook",
+      askingEnabled: false,
+      now: "2026-09-04T15:21:00.000Z",
+      log: (line) => logs.push(line),
+    });
+
+    expect(summary.questConflicts).toBe(0);
+    expect(summary.questProposedOnMatched).toBe(0);
+    expect(summary.activitiesOpened).toBe(0);
+    expect(logs).toHaveLength(0);
+
+    const activity = database.query("SELECT quest_id FROM activities WHERE id = 'A1'").get() as {
+      quest_id: string;
+    };
+    expect(activity.quest_id).toBe("Q1");
+  });
+
+  test("proposedQuest on a matched activity with no quest creates and attaches it", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seed(database);
+    // A1 starts with no quest, so the proposal fills a gap rather than contesting.
+    database.query("UPDATE activities SET quest_id = NULL WHERE id = 'A1'").run();
+
+    const proposing: ClassifierResult = {
+      segments: [
+        {
+          ...baseMatched,
+          matchedQuest: null,
+          proposedQuest: {
+            title: "Ship the walk order fix",
+            objective: "land it",
+            commitment: "personal",
+          },
+          matchedActivity: "A1",
+          continuesActivity: null,
+          newActivityReason: null,
+        },
+      ],
+      sessionNote: null,
+    };
+
+    const logs: string[] = [];
+    const summary = applyResult(store, database, window, proposing, {
+      actor: "hook",
+      askingEnabled: false,
+      now: "2026-09-04T15:21:00.000Z",
+      log: (line) => logs.push(line),
+    });
+
+    expect(summary.questProposedOnMatched).toBe(1);
+    expect(summary.questsProposed).toBe(1);
+    expect(summary.questConflicts).toBe(0);
+    expect(summary.activitiesOpened).toBe(0);
+    expect(logs).toHaveLength(1);
+
+    const activity = database.query("SELECT quest_id FROM activities WHERE id = 'A1'").get() as {
+      quest_id: string | null;
+    };
+    expect(activity.quest_id).not.toBeNull();
+
+    const quest = database
+      .query("SELECT title, confirmed FROM quests WHERE id = ?")
+      .get(activity.quest_id) as { title: string; confirmed: number };
+    expect(quest.title).toBe("Ship the walk order fix");
+    expect(quest.confirmed).toBe(0);
+  });
+
+  test("proposedQuest on a matched activity that already has a quest changes nothing", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seed(database);
+
+    const proposing: ClassifierResult = {
+      segments: [
+        {
+          ...baseMatched,
+          matchedQuest: null,
+          proposedQuest: {
+            title: "Something else entirely",
+            objective: "no",
+            commitment: "personal",
+          },
+          matchedActivity: "A1",
+          continuesActivity: null,
+          newActivityReason: null,
+        },
+      ],
+      sessionNote: null,
+    };
+
+    const summary = applyResult(store, database, window, proposing, {
+      actor: "hook",
+      askingEnabled: false,
+      now: "2026-09-04T15:21:00.000Z",
+      log: () => {},
+    });
+
+    expect(summary.questProposedOnMatched).toBe(0);
+    expect(summary.questsProposed).toBe(0);
+
+    const activity = database.query("SELECT quest_id FROM activities WHERE id = 'A1'").get() as {
+      quest_id: string;
+    };
+    expect(activity.quest_id).toBe("Q1");
+  });
+
   test("continuesActivity opens a new activity linked to the closed one, keeping its quest", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);

@@ -122,6 +122,9 @@ export async function runOnce(
       memoryHours: intentConfig.memoryHours,
       memoryActivities: intentConfig.memoryActivities,
       overlapMessages: intentConfig.overlapMessages,
+      // A live run classifies up to the present, so `now` is its window end: it
+      // bounds nothing that exists today but keeps the rule identical to backfill's.
+      windowEnd: now,
     });
 
     const result = await classifier.classify(window);

@@ -6,7 +6,12 @@ import { openDatabase } from "../../src/db/database";
 import { applyIncremental, ensureTables } from "../../src/intent/projections";
 import { registerAllProjections } from "../../src/intent/projections/register";
 import { EventStore } from "../../src/intent/store";
-import type { Classifier, ClassifierResult, ClassifierWindow } from "../../src/w5/classifier";
+import {
+  type Classifier,
+  type ClassifierResult,
+  type ClassifierWindow,
+  validateResult,
+} from "../../src/w5/classifier";
 import { InvalidEvalRangeError, runEval } from "../../src/w5/eval";
 
 registerAllProjections();
@@ -254,12 +259,114 @@ describe("w5 eval", () => {
 
     /**
      * Chunk 1 proposes a new quest for a new activity. Chunk 2 reuses that
-     * activity via `matchedActivity` but names a different `matchedQuest`
-     * (`null`, the activity's real quest is non-null) -- `apply.ts` never
-     * reassigns a matched activity's quest, so this is exactly a quest
-     * conflict, counted and returned in the run summary.
+     * activity via `matchedActivity` but names a *different, non-null*
+     * `matchedQuest` -- `apply.ts` never reassigns a matched activity's quest,
+     * so this is exactly a quest conflict, counted and returned in the run
+     * summary. `matchedQuest: null` would instead mean "no opinion" and count
+     * nothing; that case is covered by its own test below.
      */
     class ConflictingClassifier implements Classifier {
+      private chunk = 0;
+
+      async classify(window: ClassifierWindow): Promise<ClassifierResult> {
+        this.chunk += 1;
+        const first = window.messages[0]?.ts ?? "2026-09-01T10:00:00.000Z";
+        const last = window.messages.at(-1)?.ts ?? first;
+
+        if (this.chunk === 1) {
+          return {
+            segments: [
+              {
+                startedAt: first,
+                endedAt: last,
+                what: "work",
+                why: "ship",
+                matchedQuest: null,
+                proposedQuest: { title: "Q1", objective: "ship it", commitment: "personal" },
+                matchedActivity: null,
+                continuesActivity: null,
+                newActivityReason: "first work of the window",
+                isSwitch: false,
+                trigger: null,
+                confidence: 0.9,
+                questions: [],
+              },
+            ],
+            sessionNote: null,
+          };
+        }
+
+        const open = window.sessionOpenActivities.at(-1);
+        return {
+          segments: [
+            {
+              startedAt: first,
+              endedAt: last,
+              what: "more work",
+              why: "ship",
+              matchedQuest: "Q-OTHER",
+              proposedQuest: null,
+              matchedActivity: open?.activityId ?? null,
+              continuesActivity: null,
+              newActivityReason: open ? null : "nothing open to reuse",
+              isSwitch: false,
+              trigger: null,
+              confidence: 0.9,
+              questions: [],
+            },
+          ],
+          sessionNote: null,
+        };
+      }
+    }
+
+    const metrics = await runEval({
+      from: "2026-09-01",
+      to: "2026-09-02",
+      sourceDbPath: sourcePath,
+      scratchDir: dir,
+      now: "2026-09-02T00:00:00.000Z",
+      classifier: new ConflictingClassifier(),
+      log: () => {},
+    });
+
+    expect(metrics.questConflicts).toBe(1);
+  });
+
+  test("matchedQuest null on a matched activity is no opinion, not a conflict", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-no-opinion-"));
+    const sourcePath = join(dir, "source.db");
+
+    const database = openDatabase(sourcePath);
+    ensureTables(database);
+    const store = new EventStore(database);
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "hero.created",
+        subject: "H1",
+        payload: { name: "Saulo" },
+      }),
+    );
+    database
+      .query(
+        `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, title, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+         VALUES ('s1', '/c', 'p', '/c/p/s1.jsonl', '/w/p', 'personal', 'p', 'p session', 'main', '2026-09-01T10:00:00.000Z', '2026-09-01T15:40:00.000Z', 1, 0, '[]', 'host', '2026-09-01T15:40:00.000Z')`,
+      )
+      .run();
+    for (const [index, ts] of ["2026-09-01T10:00:00.000Z", "2026-09-01T10:40:00.000Z"].entries()) {
+      database
+        .query(
+          `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+           VALUES (?, 's1', ?, 'user', 0, 'do the thing')`,
+        )
+        .run(`m${index}`, ts);
+    }
+    database.close();
+
+    /** Same shape as the conflict case, but chunk 2 offers no quest opinion. */
+    class SilentQuestClassifier implements Classifier {
       private chunk = 0;
 
       async classify(window: ClassifierWindow): Promise<ClassifierResult> {
@@ -320,11 +427,84 @@ describe("w5 eval", () => {
       sourceDbPath: sourcePath,
       scratchDir: dir,
       now: "2026-09-02T00:00:00.000Z",
-      classifier: new ConflictingClassifier(),
+      classifier: new SilentQuestClassifier(),
       log: () => {},
     });
 
-    expect(metrics.questConflicts).toBe(1);
+    expect(metrics.questConflicts).toBe(0);
+  });
+
+  test("selector repairs are counted and surfaced in the metrics", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-selector-"));
+    const sourcePath = join(dir, "source.db");
+
+    const database = openDatabase(sourcePath);
+    ensureTables(database);
+    const store = new EventStore(database);
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "hero.created",
+        subject: "H1",
+        payload: { name: "Saulo" },
+      }),
+    );
+    database
+      .query(
+        `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, title, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+         VALUES ('s1', '/c', 'p', '/c/p/s1.jsonl', '/w/p', 'personal', 'p', 'p session', 'main', '2026-09-01T10:00:00.000Z', '2026-09-01T15:40:00.000Z', 1, 0, '[]', 'host', '2026-09-01T15:40:00.000Z')`,
+      )
+      .run();
+    database
+      .query(
+        `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+         VALUES ('m0', 's1', '2026-09-01T10:00:00.000Z', 'user', 0, 'do the thing')`,
+      )
+      .run();
+    database.close();
+
+    /**
+     * Returns raw JSON through `validateResult`, the way a real backend does, so
+     * the repair happens where it would in production: a segment naming no
+     * selector at all.
+     */
+    class SelectorlessClassifier implements Classifier {
+      async classify(window: ClassifierWindow): Promise<ClassifierResult> {
+        const first = window.messages[0]?.ts ?? "2026-09-01T10:00:00.000Z";
+        const last = window.messages.at(-1)?.ts ?? first;
+        return validateResult(
+          {
+            segments: [
+              {
+                startedAt: first,
+                endedAt: last,
+                what: "work",
+                why: "ship",
+                confidence: 0.9,
+                isSwitch: false,
+              },
+            ],
+            sessionNote: null,
+          },
+          window,
+        );
+      }
+    }
+
+    const metrics = await runEval({
+      from: "2026-09-01",
+      to: "2026-09-02",
+      sourceDbPath: sourcePath,
+      scratchDir: dir,
+      now: "2026-09-02T00:00:00.000Z",
+      classifier: new SelectorlessClassifier(),
+      log: () => {},
+    });
+
+    expect(metrics.selectorDefaulted).toBe(1);
+    expect(metrics.selectorAmbiguous).toBe(0);
+    expect(metrics.traces).toBe(1);
   });
 
   test("resets an old cohort inside the range before rerunning, leaves rows outside the range untouched", async () => {
