@@ -113,6 +113,9 @@ export async function backfill(
       sessionId: session.id,
       sinceTs: null,
       maxMessages: 5000,
+      memoryHours: intentConfig.memoryHours,
+      memoryActivities: intentConfig.memoryActivities,
+      overlapMessages: intentConfig.overlapMessages,
     });
     const chunks = chunkByWindow(fullWindow.messages, windowMinutes);
 
@@ -156,6 +159,7 @@ export async function backfill(
           actor: "backfill",
           askingEnabled: false,
           now: options.now,
+          log: options.log,
         });
         applyIncremental(
           database,

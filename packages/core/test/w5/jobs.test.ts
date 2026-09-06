@@ -191,4 +191,24 @@ describe("w5 jobs", () => {
         .state,
     ).toBe("failed");
   });
+
+  test("completeJob stores a session note when one is passed", () => {
+    const database = openDatabase(":memory:");
+    enqueueJob(database, { sessionId: "s1", forced: false, throttleMinutes: 10 });
+    const job = claimNextJob(database, "2026-09-05T10:00:00.000Z");
+    completeJob(
+      database,
+      job?.id ?? 0,
+      "2026-09-05T10:01:30.000Z",
+      "2026-09-05T10:02:00.000Z",
+      "still on the walk order bug",
+    );
+
+    const run = database
+      .query("SELECT session_note FROM w5_runs WHERE session_id = 's1'")
+      .get() as {
+      session_note: string | null;
+    };
+    expect(run.session_note).toBe("still on the walk order bug");
+  });
 });

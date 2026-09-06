@@ -60,12 +60,15 @@ class FakeClassifier implements Classifier {
           matchedQuest: null,
           proposedQuest: null,
           matchedActivity: null,
+          continuesActivity: null,
+          newActivityReason: "first work of the window",
           isSwitch: false,
           trigger: null,
           confidence: 0.9,
           questions: [],
         },
       ],
+      sessionNote: null,
     };
   }
 }
@@ -163,6 +166,8 @@ describe("backfill", () => {
               matchedQuest: null,
               proposedQuest: null,
               matchedActivity: null,
+              continuesActivity: null,
+              newActivityReason: "first work of the window",
               isSwitch: false,
               trigger: null,
               confidence: 0.9,
@@ -176,12 +181,15 @@ describe("backfill", () => {
               matchedQuest: null,
               proposedQuest: null,
               matchedActivity: null,
+              continuesActivity: null,
+              newActivityReason: "first work of the window",
               isSwitch: false,
               trigger: null,
               confidence: 0.9,
               questions: [],
             },
           ],
+          sessionNote: null,
         };
       }
     }
@@ -318,12 +326,15 @@ describe("backfill", () => {
               matchedQuest: null,
               proposedQuest: null,
               matchedActivity: null,
+              continuesActivity: null,
+              newActivityReason: "first work of the window",
               isSwitch: false,
               trigger: null,
               confidence: 0.9,
               questions: [],
             },
           ],
+          sessionNote: null,
         };
       }
     }

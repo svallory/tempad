@@ -7,7 +7,7 @@ import { EventStore } from "../intent/store";
 import { type AppliedSummary, applyResult } from "./apply";
 import type { Classifier } from "./classifier";
 import { claimNextJob, completeJob, failJob } from "./jobs";
-import { closeIdleActivities } from "./lifecycle";
+import { closeIdleActivities, closeSessionActivities } from "./lifecycle";
 import { advanceQuestions } from "./questions";
 import { buildWindow, findSessionFile } from "./window";
 
@@ -62,6 +62,27 @@ function sessionActivityMinutes(
   return (Date.parse(row.lastTs) - Date.parse(row.firstTs)) / 60_000;
 }
 
+/** The `ts` of the first message this run's window will contain. */
+function windowStartedAt(
+  database: Database,
+  sessionId: string,
+  sinceTs: string | null,
+): string | null {
+  const row =
+    sinceTs !== null
+      ? (database
+          .query(
+            "SELECT MIN(ts) as ts FROM claude_messages WHERE session_id = ? AND ts > ? AND text_preview IS NOT NULL",
+          )
+          .get(sessionId, sinceTs) as { ts: string | null })
+      : (database
+          .query(
+            "SELECT MIN(ts) as ts FROM claude_messages WHERE session_id = ? AND text_preview IS NOT NULL",
+          )
+          .get(sessionId) as { ts: string | null });
+  return row.ts;
+}
+
 export async function runOnce(
   database: Database,
   config: Config,
@@ -86,16 +107,21 @@ export async function runOnce(
       .get(job.sessionId) as { last_message_ts: string | null } | null;
     const sinceTs = runRow?.last_message_ts ?? null;
 
+    // Idle-close before the window is built, so the classifier's "open activities
+    // this session" slice never offers an activity that idleness already ended.
+    closeIdleActivities(store, database, {
+      sessionId: job.sessionId,
+      windowStartedAt: windowStartedAt(database, job.sessionId, sinceTs) ?? now,
+      idleMinutes: intentConfig.activityIdleMinutes,
+    });
+
     const window = buildWindow(database, {
       sessionId: job.sessionId,
       sinceTs,
       maxMessages: 200,
-    });
-
-    closeIdleActivities(store, database, {
-      sessionId: job.sessionId,
-      windowStartedAt: window.messages[0]?.ts ?? now,
-      idleMinutes: intentConfig.activityIdleMinutes,
+      memoryHours: intentConfig.memoryHours,
+      memoryActivities: intentConfig.memoryActivities,
+      overlapMessages: intentConfig.overlapMessages,
     });
 
     const result = await classifier.classify(window);
@@ -103,7 +129,12 @@ export async function runOnce(
       actor: "hook",
       askingEnabled: !job.forced,
       now,
+      log: options.log,
     });
+
+    if (job.kind === "session_end") {
+      closeSessionActivities(store, database, { sessionId: job.sessionId, now });
+    }
 
     const turnsSinceLastRun = countUserMessages(database, job.sessionId, sinceTs);
     const activityMinutes = sessionActivityMinutes(database, job.sessionId, sinceTs);
@@ -116,7 +147,10 @@ export async function runOnce(
     });
 
     const lastMessage = window.messages.at(-1);
-    completeJob(database, job.id, lastMessage?.ts ?? sinceTs, now);
+    // `closeSessionActivities` cleared the note for a session that just ended;
+    // writing the classifier's note back would resurrect it.
+    const sessionNote = job.kind === "session_end" ? null : result.sessionNote;
+    completeJob(database, job.id, lastMessage?.ts ?? sinceTs, now, sessionNote);
 
     return { ran: true, sessionId: job.sessionId, summary };
   } catch (error) {
