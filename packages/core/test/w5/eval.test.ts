@@ -7,7 +7,7 @@ import { applyIncremental, ensureTables } from "../../src/intent/projections";
 import { registerAllProjections } from "../../src/intent/projections/register";
 import { EventStore } from "../../src/intent/store";
 import type { Classifier, ClassifierResult, ClassifierWindow } from "../../src/w5/classifier";
-import { runEval } from "../../src/w5/eval";
+import { InvalidEvalRangeError, runEval } from "../../src/w5/eval";
 
 registerAllProjections();
 
@@ -121,5 +121,95 @@ describe("w5 eval", () => {
 
     const sourceBytesAfter = await Bun.file(sourcePath).arrayBuffer();
     expect(Buffer.from(sourceBytesAfter).equals(Buffer.from(sourceBytesBefore))).toBe(true);
+  });
+
+  test("rejects a malformed --from/--to before touching the source database", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-bad-range-"));
+    const sourcePath = join(dir, "source.db");
+    seedSourceDb(sourcePath);
+
+    await expect(
+      runEval({
+        from: "not-a-date",
+        to: "2026-09-02",
+        sourceDbPath: sourcePath,
+        scratchDir: dir,
+        now: "2026-09-02T00:00:00.000Z",
+        classifier: new FakeClassifier(),
+        log: () => {},
+      }),
+    ).rejects.toBeInstanceOf(InvalidEvalRangeError);
+
+    await expect(
+      runEval({
+        from: "2026-09-02",
+        to: "not-a-date",
+        sourceDbPath: sourcePath,
+        scratchDir: dir,
+        now: "2026-09-02T00:00:00.000Z",
+        classifier: new FakeClassifier(),
+        log: () => {},
+      }),
+    ).rejects.toBeInstanceOf(InvalidEvalRangeError);
+
+    await expect(
+      runEval({
+        from: "2026-09-05",
+        to: "2026-09-01",
+        sourceDbPath: sourcePath,
+        scratchDir: dir,
+        now: "2026-09-05T00:00:00.000Z",
+        classifier: new FakeClassifier(),
+        log: () => {},
+      }),
+    ).rejects.toBeInstanceOf(InvalidEvalRangeError);
+  });
+
+  test("copies committed rows even when the source db's WAL sidecar has not been checkpointed", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-wal-"));
+    const sourcePath = join(dir, "source.db");
+
+    const database = openDatabase(sourcePath);
+    ensureTables(database);
+    const store = new EventStore(database);
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "hero.created",
+        subject: "H1",
+        payload: { name: "Saulo" },
+      }),
+    );
+    database
+      .query(
+        `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, title, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+         VALUES ('s1', '/c', 'p', '/c/p/s1.jsonl', '/w/p', 'personal', 'p', 'p session', 'main', '2026-09-01T10:00:00.000Z', '2026-09-01T10:30:00.000Z', 1, 0, '[]', 'host', '2026-09-01T10:30:00.000Z')`,
+      )
+      .run();
+    database
+      .query(
+        `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+         VALUES ('m1', 's1', '2026-09-01T10:00:00.000Z', 'user', 0, 'do the thing')`,
+      )
+      .run();
+    // Leave the source connection open (WAL mode, from openDatabase) rather than
+    // closing/checkpointing it -- this is the state a real tempad.db is in while
+    // `tempad w5 run` holds it open.
+
+    const metrics = await runEval({
+      from: "2026-09-01",
+      to: "2026-09-02",
+      sourceDbPath: sourcePath,
+      scratchDir: dir,
+      now: "2026-09-02T00:00:00.000Z",
+      classifier: new FakeClassifier(),
+      log: () => {},
+    });
+
+    database.close();
+
+    expect(metrics.traces).toBe(1);
+    expect(metrics.activities).toBe(1);
   });
 });
