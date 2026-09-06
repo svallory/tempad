@@ -15,7 +15,29 @@ export interface ClassifierWindow {
     objective: string | null;
     lastActivityAt: string | null;
   }[];
-  previousTrace: { activityId: string; what: string; questId: string | null } | null;
+  sessionOpenActivities: {
+    activityId: string;
+    what: string;
+    why: string;
+    questId: string | null;
+    questTitle: string | null;
+    openedAt: string;
+    lastTraceEndedAt: string;
+  }[];
+  recentActivities: {
+    activityId: string;
+    what: string;
+    why: string;
+    questId: string | null;
+    questTitle: string | null;
+    openedAt: string;
+    lastTraceEndedAt: string;
+    closedAt: string | null;
+    closeReason: string | null;
+  }[];
+  recentSideQuests: { id: string; title: string; trigger: string }[];
+  overlapMessages: { ts: string; role: string; text: string }[];
+  previousSessionNote: string | null;
 }
 
 export type QuestionKind = "which_quest" | "why" | "trigger";
@@ -29,6 +51,8 @@ export interface ClassifierSegment {
   matchedQuest: string | null;
   proposedQuest: { title: string; objective: string; commitment: Commitment } | null;
   matchedActivity: string | null;
+  continuesActivity: string | null;
+  newActivityReason: string | null;
   isSwitch: boolean;
   trigger: string | null;
   confidence: number;
@@ -37,7 +61,10 @@ export interface ClassifierSegment {
 
 export interface ClassifierResult {
   segments: ClassifierSegment[];
+  sessionNote: string | null;
 }
+
+export const MAX_SESSION_NOTE_LENGTH = 300;
 
 const QUESTION_KINDS = new Set<QuestionKind>(["which_quest", "why", "trigger"]);
 const COMMITMENTS = new Set<Commitment>(["promised", "personal", "exploratory"]);
@@ -92,6 +119,23 @@ function validateSegment(
   }
   if (segment.matchedActivity !== null && typeof segment.matchedActivity !== "string") {
     problems.push(`${where}.matchedActivity: expected string or null`);
+  }
+  if (segment.continuesActivity !== null && typeof segment.continuesActivity !== "string") {
+    problems.push(`${where}.continuesActivity: expected string or null`);
+  }
+  if (segment.newActivityReason !== null && typeof segment.newActivityReason !== "string") {
+    problems.push(`${where}.newActivityReason: expected string or null`);
+  }
+
+  const candidates = [
+    segment.matchedActivity,
+    segment.continuesActivity,
+    segment.newActivityReason,
+  ].filter((candidate) => candidate !== null && candidate !== undefined);
+  if (candidates.length !== 1) {
+    problems.push(
+      `${where}: set exactly one of matchedActivity, continuesActivity, newActivityReason (got ${candidates.length})`,
+    );
   }
   if (segment.trigger !== null && typeof segment.trigger !== "string") {
     problems.push(`${where}.trigger: expected string or null`);
@@ -152,10 +196,22 @@ export function validateResult(raw: unknown, window?: ClassifierWindow): Classif
   for (const [index, segment] of segments.entries()) {
     validateSegment(segment, index, problems, bounds);
   }
+
+  const sessionNote = (raw as { sessionNote?: unknown }).sessionNote;
+  if (
+    sessionNote !== undefined &&
+    sessionNote !== null &&
+    (typeof sessionNote !== "string" || sessionNote.length > MAX_SESSION_NOTE_LENGTH)
+  ) {
+    problems.push(
+      `sessionNote: expected null or a string of at most ${MAX_SESSION_NOTE_LENGTH} characters`,
+    );
+  }
   if (problems.length > 0) {
     throw new Error(`classifier result invalid:\n${problems.join("\n")}`);
   }
-  return raw as ClassifierResult;
+  const result = raw as { segments: ClassifierSegment[]; sessionNote?: string | null };
+  return { segments: result.segments, sessionNote: result.sessionNote ?? null };
 }
 
 export interface Classifier {

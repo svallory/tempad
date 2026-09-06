@@ -4,7 +4,7 @@ import {
   type ClassifierWindow,
   validateResult,
 } from "../../src/w5/classifier";
-import { buildUserPrompt } from "../../src/w5/prompt";
+import { buildSystemPrompt, buildUserPrompt } from "../../src/w5/prompt";
 
 const window: ClassifierWindow = {
   sessionId: "s",
@@ -29,7 +29,37 @@ const window: ClassifierWindow = {
       lastActivityAt: "2026-09-04T14:00:00.000Z",
     },
   ],
-  previousTrace: { activityId: "A1", what: "fixing walk order", questId: "Q1" },
+  sessionOpenActivities: [
+    {
+      activityId: "A1",
+      what: "fixing walk order",
+      why: "ship marko-ui",
+      questId: "Q1",
+      questTitle: "Ship marko-ui",
+      openedAt: "2026-09-04T14:00:00.000Z",
+      lastTraceEndedAt: "2026-09-04T14:30:00.000Z",
+    },
+  ],
+  recentActivities: [
+    {
+      activityId: "A0",
+      what: "renaming the walk helpers",
+      why: "ship marko-ui",
+      questId: "Q1",
+      questTitle: "Ship marko-ui",
+      openedAt: "2026-09-04T10:00:00.000Z",
+      lastTraceEndedAt: "2026-09-04T11:00:00.000Z",
+      closedAt: "2026-09-04T11:00:00.000Z",
+      closeReason: "session_end",
+    },
+  ],
+  recentSideQuests: [
+    { id: "Q2", title: "Compare Astryx", trigger: "what does Astryx do for agents?" },
+  ],
+  overlapMessages: [
+    { ts: "2026-09-04T14:50:00.000Z", role: "user", text: "context only tail message" },
+  ],
+  previousSessionNote: "was about to look at the walk order bug again",
 };
 
 const good = {
@@ -42,6 +72,8 @@ const good = {
       matchedQuest: "Q1",
       proposedQuest: null,
       matchedActivity: "A1",
+      continuesActivity: null,
+      newActivityReason: null,
       isSwitch: false,
       trigger: null,
       confidence: 0.9,
@@ -59,12 +91,15 @@ const good = {
         commitment: "exploratory",
       },
       matchedActivity: null,
+      continuesActivity: null,
+      newActivityReason: "a fresh comparison unrelated to any open activity",
       isSwitch: true,
       trigger: "what does Astryx do for agents?",
       confidence: 0.6,
       questions: ["which_quest"],
     },
   ],
+  sessionNote: "chasing the walk order bug, will compare Astryx after",
 };
 
 describe("classifier", () => {
@@ -77,11 +112,62 @@ describe("classifier", () => {
     ).toThrow(/confidence.*questions|questions.*confidence/s);
   });
 
-  test("user prompt contains messages, open quests and previous trace", () => {
+  test("user prompt contains messages, open quests and the memory slice sections", () => {
     const text = buildUserPrompt(window);
     expect(text).toContain("Astryx");
     expect(text).toContain("Ship marko-ui");
     expect(text).toContain("fixing walk order");
+    expect(text).toContain("your open activities this session");
+    expect(text).toContain("recent activities in this project");
+    expect(text).toContain("recent side quests");
+    expect(text).toContain("do not classify");
+    expect(text).toContain("context only tail message");
+    expect(text).toContain("was about to look at the walk order bug again");
+    expect(text).toContain("session_end");
+  });
+
+  test("system prompt states reuse is the default and stays under 2 KB", () => {
+    const text = buildSystemPrompt();
+    expect(text).toContain("matchedActivity");
+    expect(text).toContain("continuesActivity");
+    expect(text).toContain("newActivityReason");
+    expect(text).toMatch(/default/i);
+    expect(new TextEncoder().encode(text).length).toBeLessThan(2048);
+  });
+
+  test("validateResult rejects segments that set none or more than one activity candidate", () => {
+    expect(() =>
+      validateResult({
+        segments: [
+          {
+            ...good.segments[0],
+            matchedActivity: null,
+            continuesActivity: null,
+            newActivityReason: null,
+          },
+        ],
+      }),
+    ).toThrow(/matchedActivity.*continuesActivity.*newActivityReason/s);
+
+    expect(() =>
+      validateResult({
+        segments: [{ ...good.segments[0], continuesActivity: "A0" }],
+      }),
+    ).toThrow(/matchedActivity.*continuesActivity.*newActivityReason/s);
+
+    expect(() =>
+      validateResult({
+        segments: [{ ...good.segments[0], matchedActivity: null, continuesActivity: 7 }],
+      }),
+    ).toThrow(/continuesActivity/);
+  });
+
+  test("validateResult rejects a sessionNote that is not null or is over 300 characters", () => {
+    expect(() => validateResult({ ...good, sessionNote: "n".repeat(301) })).toThrow(
+      /sessionNote: expected null or a string of at most 300 characters/,
+    );
+    expect(() => validateResult({ ...good, sessionNote: 7 })).toThrow(/sessionNote/);
+    expect(validateResult({ ...good, sessionNote: null }).sessionNote).toBeNull();
   });
 
   test("anthropic client parses JSON text and retries once on invalid output", async () => {

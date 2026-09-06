@@ -111,6 +111,7 @@ export function completeJob(
   id: number,
   lastMessageTs: string | null,
   now?: string,
+  sessionNote?: string | null,
 ): void {
   const job = database.query("SELECT session_id FROM w5_jobs WHERE id = ?").get(id) as {
     session_id: string;
@@ -125,10 +126,12 @@ export function completeJob(
 
   database
     .query(
-      `INSERT INTO w5_runs (session_id, last_run_at, last_message_ts) VALUES (?, ?, ?)
-       ON CONFLICT(session_id) DO UPDATE SET last_run_at = excluded.last_run_at, last_message_ts = excluded.last_message_ts`,
+      `INSERT INTO w5_runs (session_id, last_run_at, last_message_ts, session_note) VALUES (?, ?, ?, ?)
+       ON CONFLICT(session_id) DO UPDATE SET last_run_at = excluded.last_run_at,
+                                             last_message_ts = excluded.last_message_ts,
+                                             session_note = excluded.session_note`,
     )
-    .run(job.session_id, finishedAt, lastMessageTs);
+    .run(job.session_id, finishedAt, lastMessageTs, sessionNote ?? null);
 }
 
 export function failJob(database: Database, id: number, error: string): void {

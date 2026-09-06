@@ -19,7 +19,11 @@ const window: ClassifierWindow = {
     { ts: "2026-09-04T15:05:00.000Z", role: "assistant", text: "done" },
   ],
   openQuests: [],
-  previousTrace: null,
+  sessionOpenActivities: [],
+  recentActivities: [],
+  recentSideQuests: [],
+  overlapMessages: [],
+  previousSessionNote: null,
 };
 
 const good = {
@@ -32,12 +36,15 @@ const good = {
       matchedQuest: null,
       proposedQuest: null,
       matchedActivity: null,
+      continuesActivity: null,
+      newActivityReason: "first segment of the session",
       isSwitch: false,
       trigger: null,
       confidence: 0.9,
       questions: [],
     },
   ],
+  sessionNote: null,
 };
 
 function envelope(resultText: string): string {
