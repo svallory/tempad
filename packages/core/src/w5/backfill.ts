@@ -19,7 +19,13 @@ export interface BackfillOptions {
   force?: boolean;
   /** Explicit lower bound, overriding the `days`-derived cutoff when given. */
   from?: string;
-  /** Explicit upper bound on both the session query and each session's message window. */
+  /**
+   * Explicit, exclusive upper bound on both the session query and each
+   * session's message window -- callers passing a bare date must normalize
+   * it to the start of the next day themselves (see `eval.ts`'s
+   * `normalizeEvalRange`), since a raw bare date compared with `<` would
+   * exclude the whole day instead of including it.
+   */
   to?: string;
 }
 
@@ -109,7 +115,7 @@ export async function backfill(
   const sessions = options.to
     ? (database
         .query(
-          "SELECT id, ended_at FROM claude_sessions WHERE ended_at >= ? AND ended_at <= ? ORDER BY ended_at ASC",
+          "SELECT id, ended_at FROM claude_sessions WHERE ended_at >= ? AND ended_at < ? ORDER BY ended_at ASC",
         )
         .all(cutoff, options.to) as SessionRow[])
     : (database
@@ -136,7 +142,7 @@ export async function backfill(
       overlapMessages: intentConfig.overlapMessages,
     });
     const boundedMessages = options.to
-      ? fullWindow.messages.filter((message) => message.ts <= (options.to as string))
+      ? fullWindow.messages.filter((message) => message.ts < (options.to as string))
       : fullWindow.messages;
     const chunks = chunkByWindow(boundedMessages, windowMinutes);
 

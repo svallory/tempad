@@ -513,14 +513,17 @@ describe("backfill", () => {
   test("to bounds each session's message window, not just the session query", async () => {
     const database = openDatabase(":memory:");
     seedHero(database);
-    // Session's own ended_at sits at or before `to` so it is selected by the
-    // session query, but claude_messages (the source `buildWindow` actually
-    // reads) has messages both before and after `to` -- e.g. from a later
-    // resync of the same session file. The window fed to the classifier must
-    // stop at `to`, not run to the session's actual last message.
+    // Session's own ended_at sits strictly before `to` so it is selected by
+    // the session query, but claude_messages (the source `buildWindow`
+    // actually reads) has messages both before and after `to` -- e.g. from a
+    // later resync of the same session file. The window fed to the
+    // classifier must stop before `to`, not run to the session's actual last
+    // message. `to` is an exclusive upper bound (see `eval.ts`'s
+    // `normalizeEvalRange`), so it sits strictly after the messages meant to
+    // be included and strictly before (or at) the one meant to be excluded.
     seedSession(database, {
       id: "s1",
-      endedAt: "2026-09-04T15:10:00.000Z",
+      endedAt: "2026-09-04T15:09:00.000Z",
       messageTimestamps: [
         "2026-09-04T15:00:00.000Z",
         "2026-09-04T15:05:00.000Z",
@@ -542,6 +545,6 @@ describe("backfill", () => {
       .query("SELECT started_at as startedAt, ended_at as endedAt FROM traces")
       .all() as { startedAt: string; endedAt: string }[];
     expect(traces.length).toBe(1);
-    expect((traces[0] as { endedAt: string }).endedAt <= "2026-09-04T15:10:00.000Z").toBe(true);
+    expect((traces[0] as { endedAt: string }).endedAt < "2026-09-04T15:10:00.000Z").toBe(true);
   });
 });

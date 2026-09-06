@@ -542,4 +542,96 @@ describe("w5 eval", () => {
     expect(metrics.traces).toBe(1);
     expect(metrics.activities).toBe(1);
   });
+
+  test("a bare --to date includes the whole to day, not just its start", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-to-day-"));
+    const sourcePath = join(dir, "source.db");
+
+    const database = openDatabase(sourcePath);
+    ensureTables(database);
+    const store = new EventStore(database);
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "hero.created",
+        subject: "H1",
+        payload: { name: "Saulo" },
+      }),
+    );
+    // Old cohort dated later in the day of --to (2026-09-02) -- a bare
+    // "2026-09-02" upper bound compared as TEXT with `<=` against this
+    // timestamp would previously evaluate false, leaving this old cohort
+    // out of the reset entirely.
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hook",
+        kind: "activity.opened",
+        subject: "A_LATE",
+        payload: { objective: "old late-in-day work" },
+        at: "2026-09-02T09:00:00.000Z",
+      }),
+    );
+    applyIncremental(
+      database,
+      store.append({
+        actor: "backfill",
+        kind: "trace.recorded",
+        subject: "T_LATE",
+        sessionId: "s1",
+        payload: {
+          activity: "A_LATE",
+          tool: "claude-code",
+          place: "p",
+          source: "session",
+          started_at: "2026-09-02T09:00:00.000Z",
+          ended_at: "2026-09-02T09:10:00.000Z",
+          who: "hero",
+          what: "old work",
+          why: "old",
+          where: "personal/p",
+          how: "claude-code",
+          confidence: 0.9,
+          classified_by: "assistant",
+        },
+      }),
+    );
+    database
+      .query(
+        `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, title, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+         VALUES ('s1', '/c', 'p', '/c/p/s1.jsonl', '/w/p', 'personal', 'p', 'p session', 'main', '2026-09-02T09:00:00.000Z', '2026-09-02T09:30:00.000Z', 1, 0, '[]', 'host', '2026-09-02T09:30:00.000Z')`,
+      )
+      .run();
+    database
+      .query(
+        `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+         VALUES ('m1', 's1', '2026-09-02T09:00:00.000Z', 'user', 0, 'do the thing')`,
+      )
+      .run();
+    database.close();
+
+    const metrics = await runEval({
+      from: "2026-09-01",
+      to: "2026-09-02",
+      sourceDbPath: sourcePath,
+      scratchDir: dir,
+      now: "2026-09-03T00:00:00.000Z",
+      classifier: new FakeClassifier(),
+      log: () => {},
+    });
+
+    // The late-in-day old cohort was reset and its trace's window reclassified.
+    expect(metrics.resetTraces).toBe(1);
+    expect(metrics.resetActivities).toBe(1);
+    expect(metrics.traces).toBe(1);
+    expect(metrics.activities).toBe(1);
+
+    const copied = openDatabase(metrics.copiedDbPath);
+    const oldTrace = copied.query("SELECT retracted_at FROM traces WHERE id = 'T_LATE'").get() as {
+      retracted_at: string | null;
+    };
+    expect(oldTrace.retracted_at).not.toBeNull();
+    copied.close();
+  });
 });
