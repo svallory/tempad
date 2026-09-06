@@ -34,6 +34,38 @@ throttle_minutes = 5
     expect(config.w5.backend).toBe("claude-cli");
     expect(config.w5.claudeCommand).toBe("claude");
     expect(config.w5.timeoutSeconds).toBe(180);
+    expect(config.w5.activityIdleMinutes).toBe(45);
+    expect(config.w5.memoryHours).toBe(8);
+    expect(config.w5.memoryActivities).toBe(10);
+    expect(config.w5.overlapMessages).toBe(3);
+  });
+
+  test("parses activity_idle_minutes, memory_hours, memory_activities, overlap_messages", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tempad-intent-"));
+    const path = join(directory, "tempad.toml");
+    writeFileSync(
+      path,
+      `
+[w5]
+activity_idle_minutes = 30
+memory_hours = 4
+memory_activities = 5
+overlap_messages = 2
+`,
+    );
+    const config = loadIntentConfig(path);
+    expect(config.w5.activityIdleMinutes).toBe(30);
+    expect(config.w5.memoryHours).toBe(4);
+    expect(config.w5.memoryActivities).toBe(5);
+    expect(config.w5.overlapMessages).toBe(2);
+  });
+
+  test("defaultIntentConfig().w5 has the activity lifecycle defaults", () => {
+    const config = defaultIntentConfig();
+    expect(config.w5.activityIdleMinutes).toBe(45);
+    expect(config.w5.memoryHours).toBe(8);
+    expect(config.w5.memoryActivities).toBe(10);
+    expect(config.w5.overlapMessages).toBe(3);
   });
 
   test("parses w5 timeout_seconds", () => {

@@ -21,6 +21,10 @@ const config: W5Config = {
   backend: "claude-cli",
   claudeCommand: "claude",
   timeoutSeconds: 180,
+  activityIdleMinutes: 45,
+  memoryHours: 8,
+  memoryActivities: 10,
+  overlapMessages: 3,
 };
 
 function makeConfig(): Config {

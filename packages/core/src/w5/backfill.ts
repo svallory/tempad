@@ -6,6 +6,7 @@ import { registerAllProjections } from "../intent/projections/register";
 import { EventStore } from "../intent/store";
 import { applyResult } from "./apply";
 import type { Classifier } from "./classifier";
+import { closeIdleActivities } from "./lifecycle";
 import { buildWindow } from "./window";
 
 registerAllProjections();
@@ -137,6 +138,13 @@ export async function backfill(
       const chunkWindow = { ...fullWindow, messages: chunk };
       const startedAt = chunk[0]?.ts ?? session.ended_at;
       const endedAt = chunk.at(-1)?.ts ?? session.ended_at;
+
+      closeIdleActivities(store, database, {
+        sessionId: session.id,
+        windowStartedAt: startedAt,
+        idleMinutes: intentConfig.activityIdleMinutes,
+        now: options.now,
+      });
 
       try {
         let result: Awaited<ReturnType<typeof classifier.classify>>;

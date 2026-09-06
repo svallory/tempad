@@ -100,6 +100,7 @@ function runEnqueue(args: string[], context: W5Context): number {
     options: {
       session: { type: "string" },
       forced: { type: "boolean", default: false },
+      kind: { type: "string" },
     },
     strict: true,
   });
@@ -111,6 +112,7 @@ function runEnqueue(args: string[], context: W5Context): number {
       sessionId: values.session,
       forced: values.forced === true,
       throttleMinutes: context.intentConfig.w5.throttleMinutes,
+      kind: values.kind,
     });
 
     const lockPath = lockPathFor(context.config);

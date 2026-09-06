@@ -12,7 +12,9 @@ export const activityProjection: Projection = {
       closed_at TEXT,
       outcome TEXT,
       revision INTEGER NOT NULL DEFAULT 1,
-      retracted_at TEXT
+      retracted_at TEXT,
+      continues TEXT,
+      close_reason TEXT
     );
     CREATE TABLE IF NOT EXISTS traces (
       id TEXT PRIMARY KEY,
@@ -62,13 +64,14 @@ export const activityProjection: Projection = {
       case "activity.opened":
         database
           .query(
-            "INSERT OR REPLACE INTO activities (id, quest_id, objective, opened_at, revision) VALUES (?, ?, ?, ?, 1)",
+            "INSERT OR REPLACE INTO activities (id, quest_id, objective, opened_at, revision, continues) VALUES (?, ?, ?, ?, 1, ?)",
           )
           .run(
             event.subject,
             payload.quest ? String(payload.quest) : null,
             String(payload.objective),
             event.at,
+            payload.continues ? String(payload.continues) : null,
           );
         return;
       case "activity.reworded":
@@ -78,8 +81,13 @@ export const activityProjection: Projection = {
         return;
       case "activity.closed":
         database
-          .query("UPDATE activities SET closed_at = ?, outcome = ? WHERE id = ?")
-          .run(event.at, payload.outcome ? String(payload.outcome) : null, event.subject);
+          .query("UPDATE activities SET closed_at = ?, outcome = ?, close_reason = ? WHERE id = ?")
+          .run(
+            event.at,
+            payload.outcome ? String(payload.outcome) : null,
+            payload.reason ? String(payload.reason) : null,
+            event.subject,
+          );
         return;
       case "activity.assigned":
         database

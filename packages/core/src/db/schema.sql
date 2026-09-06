@@ -142,7 +142,8 @@ CREATE TABLE w5_jobs (
 CREATE TABLE w5_runs (
   session_id      TEXT PRIMARY KEY,
   last_run_at     TEXT NOT NULL,
-  last_message_ts TEXT
+  last_message_ts TEXT,
+  session_note    TEXT
 );
 
 CREATE TABLE w5_quiet (
@@ -167,3 +168,7 @@ CREATE TABLE w5_quiet (
 -- yet). A `retracted` event's `subject` is the id of the row it retracts;
 -- projections apply it by UPDATEing whichever of traces/activities/quests
 -- has a matching id.
+--
+-- Migration 0007_activity_lifecycle.sql added `close_reason TEXT` and
+-- `continues TEXT` to `activities` (mirrored above in the `activities`
+-- projection's CREATE TABLE) and `session_note TEXT` to `w5_runs`.

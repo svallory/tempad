@@ -5,6 +5,7 @@ export interface EnqueueJobInput {
   forced: boolean;
   now?: string;
   throttleMinutes: number;
+  kind?: string;
 }
 
 export interface EnqueueJobResult {
@@ -58,13 +59,17 @@ export function isThrottled(
 export function enqueueJob(database: Database, input: EnqueueJobInput): EnqueueJobResult {
   const now = input.now ?? new Date().toISOString();
 
+  const kind = input.kind ?? "classify";
+
   const existingQueued = database
-    .query("SELECT id, forced FROM w5_jobs WHERE session_id = ? AND state = 'queued'")
-    .get(input.sessionId) as { id: number; forced: number } | null;
+    .query("SELECT id, forced, kind FROM w5_jobs WHERE session_id = ? AND state = 'queued'")
+    .get(input.sessionId) as { id: number; forced: number; kind: string } | null;
 
   if (existingQueued) {
-    if (input.forced && existingQueued.forced === 0) {
-      database.query("UPDATE w5_jobs SET forced = 1 WHERE id = ?").run(existingQueued.id);
+    if ((input.forced && existingQueued.forced === 0) || kind !== existingQueued.kind) {
+      database
+        .query("UPDATE w5_jobs SET forced = ?, kind = ? WHERE id = ?")
+        .run(input.forced ? 1 : existingQueued.forced, kind, existingQueued.id);
     }
     return { enqueued: false, reason: "duplicate" };
   }
@@ -75,9 +80,9 @@ export function enqueueJob(database: Database, input: EnqueueJobInput): EnqueueJ
 
   database
     .query(
-      "INSERT INTO w5_jobs (session_id, kind, forced, requested_at, state) VALUES (?, 'classify', ?, ?, 'queued')",
+      "INSERT INTO w5_jobs (session_id, kind, forced, requested_at, state) VALUES (?, ?, ?, ?, 'queued')",
     )
-    .run(input.sessionId, input.forced ? 1 : 0, now);
+    .run(input.sessionId, kind, input.forced ? 1 : 0, now);
 
   return { enqueued: true };
 }

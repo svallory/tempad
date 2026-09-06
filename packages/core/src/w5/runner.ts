@@ -7,6 +7,7 @@ import { EventStore } from "../intent/store";
 import { type AppliedSummary, applyResult } from "./apply";
 import type { Classifier } from "./classifier";
 import { claimNextJob, completeJob, failJob } from "./jobs";
+import { closeIdleActivities } from "./lifecycle";
 import { advanceQuestions } from "./questions";
 import { buildWindow, findSessionFile } from "./window";
 
@@ -89,6 +90,13 @@ export async function runOnce(
       sessionId: job.sessionId,
       sinceTs,
       maxMessages: 200,
+    });
+
+    closeIdleActivities(store, database, {
+      sessionId: job.sessionId,
+      windowStartedAt: window.messages[0]?.ts ?? now,
+      idleMinutes: intentConfig.activityIdleMinutes,
+      now,
     });
 
     const result = await classifier.classify(window);

@@ -24,10 +24,16 @@ fi
 # shellcheck disable=SC2206
 _bin=($TEMPAD_BIN)
 
+case "$hook_event_name" in
+  Stop) kind="classify" ;;
+  SessionEnd) kind="session_end" ;;
+  *) kind="classify" ;;
+esac
+
 if [ "$hook_event_name" != "Stop" ]; then
-  "${_bin[@]}" w5 enqueue --session "$session_id" --forced || true
+  "${_bin[@]}" w5 enqueue --session "$session_id" --forced --kind "$kind" || true
 else
-  "${_bin[@]}" w5 enqueue --session "$session_id" || true
+  "${_bin[@]}" w5 enqueue --session "$session_id" --kind "$kind" || true
 fi
 
 exit 0
