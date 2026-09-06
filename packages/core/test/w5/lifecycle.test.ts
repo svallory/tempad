@@ -50,7 +50,6 @@ describe("lifecycle", () => {
       sessionId: "s1",
       windowStartedAt: "2026-09-06T10:00:00.000Z",
       idleMinutes: 45,
-      now: "2026-09-06T10:00:00.000Z",
     });
 
     expect(result.closed).toEqual(["A-old"]);

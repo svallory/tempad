@@ -96,7 +96,6 @@ export async function runOnce(
       sessionId: job.sessionId,
       windowStartedAt: window.messages[0]?.ts ?? now,
       idleMinutes: intentConfig.activityIdleMinutes,
-      now,
     });
 
     const result = await classifier.classify(window);
