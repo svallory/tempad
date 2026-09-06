@@ -245,6 +245,13 @@ export function applyResult(
     ? { activityId: mostRecentOpen.activityId, questId: mostRecentOpen.questId }
     : null;
 
+  // Every activity of this session still open when the window started. A switch
+  // closes all of these except the one the switching segment lands on, since the
+  // recent-context slice can leave several open at once (see spec: switch).
+  const openSessionActivityIds = new Set(
+    window.sessionOpenActivities.map((activity) => activity.activityId),
+  );
+
   for (const segment of result.segments) {
     // Belt and braces: the prompt says the overlap tail is context only, but a
     // model that classifies it anyway must not double-record those minutes.
@@ -276,12 +283,17 @@ export function applyResult(
       );
     }
 
-    if (segment.isSwitch && previous !== null && previous.activityId !== activityId) {
-      closeActivityOnSwitch(store, database, {
-        activityId: previous.activityId,
-        closedAt: segment.startedAt,
-      });
+    if (segment.isSwitch) {
+      for (const openActivityId of openSessionActivityIds) {
+        if (openActivityId === activityId) continue;
+        closeActivityOnSwitch(store, database, {
+          activityId: openActivityId,
+          closedAt: segment.startedAt,
+        });
+        openSessionActivityIds.delete(openActivityId);
+      }
     }
+    if (activityOpened) openSessionActivityIds.add(activityId);
 
     if (segment.isSwitch && questId !== null && previous !== null && questId !== previous.questId) {
       branchQuest(store, database, {

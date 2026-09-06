@@ -389,6 +389,128 @@ describe("applyResult", () => {
     expect(closed.close_reason).toBe("switch");
   });
 
+  test("a switch closes every other open activity of the session, not only the most recent", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seed(database);
+    database
+      .query(
+        `INSERT INTO activities (id, quest_id, objective, opened_at, revision)
+         VALUES ('B1', 'Q1', 'second open activity', '2026-09-04T14:10:00.000Z', 1)`,
+      )
+      .run();
+
+    const twoOpenWindow: ClassifierWindow = {
+      ...window,
+      sessionOpenActivities: [
+        ...window.sessionOpenActivities,
+        {
+          activityId: "B1",
+          what: "second open activity",
+          why: "ship",
+          questId: "Q1",
+          questTitle: "Ship marko-ui",
+          openedAt: "2026-09-04T14:10:00.000Z",
+          lastTraceEndedAt: "2026-09-04T14:10:00.000Z",
+        },
+      ],
+    };
+
+    const switchToNew: ClassifierResult = {
+      segments: [
+        {
+          ...baseNew,
+          startedAt: "2026-09-04T15:10:00.000Z",
+          endedAt: "2026-09-04T15:20:00.000Z",
+          matchedActivity: null,
+          continuesActivity: null,
+          newActivityReason: "a third, different objective",
+          isSwitch: true,
+          questions: [],
+        },
+      ],
+      sessionNote: null,
+    };
+
+    applyResult(store, database, twoOpenWindow, switchToNew, {
+      actor: "hook",
+      askingEnabled: false,
+      now: "2026-09-04T15:21:00.000Z",
+      log: () => {},
+    });
+
+    const rows = database
+      .query(
+        "SELECT id, closed_at, close_reason FROM activities WHERE id IN ('A1', 'B1') ORDER BY id",
+      )
+      .all() as { id: string; closed_at: string | null; close_reason: string | null }[];
+    for (const row of rows) {
+      expect(row.closed_at).toBe("2026-09-04T15:10:00.000Z");
+      expect(row.close_reason).toBe("switch");
+    }
+  });
+
+  test("a switch landing on a matched still-open activity closes only the other one", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seed(database);
+    database
+      .query(
+        `INSERT INTO activities (id, quest_id, objective, opened_at, revision)
+         VALUES ('B1', 'Q1', 'second open activity', '2026-09-04T14:10:00.000Z', 1)`,
+      )
+      .run();
+
+    const twoOpenWindow: ClassifierWindow = {
+      ...window,
+      sessionOpenActivities: [
+        ...window.sessionOpenActivities,
+        {
+          activityId: "B1",
+          what: "second open activity",
+          why: "ship",
+          questId: "Q1",
+          questTitle: "Ship marko-ui",
+          openedAt: "2026-09-04T14:10:00.000Z",
+          lastTraceEndedAt: "2026-09-04T14:10:00.000Z",
+        },
+      ],
+    };
+
+    const switchToA1: ClassifierResult = {
+      segments: [
+        {
+          ...baseMatched,
+          startedAt: "2026-09-04T15:10:00.000Z",
+          endedAt: "2026-09-04T15:20:00.000Z",
+          matchedQuest: "Q1",
+          matchedActivity: "A1",
+          continuesActivity: null,
+          newActivityReason: null,
+          isSwitch: true,
+          questions: [],
+        },
+      ],
+      sessionNote: null,
+    };
+
+    applyResult(store, database, twoOpenWindow, switchToA1, {
+      actor: "hook",
+      askingEnabled: false,
+      now: "2026-09-04T15:21:00.000Z",
+      log: () => {},
+    });
+
+    const a1 = database
+      .query("SELECT closed_at, close_reason FROM activities WHERE id = 'A1'")
+      .get() as { closed_at: string | null; close_reason: string | null };
+    expect(a1.closed_at).toBeNull();
+
+    const b1 = database
+      .query("SELECT closed_at, close_reason FROM activities WHERE id = 'B1'")
+      .get() as { closed_at: string | null; close_reason: string | null };
+    expect(b1.closed_at).toBe("2026-09-04T15:10:00.000Z");
+    expect(b1.close_reason).toBe("switch");
+  });
+
   test("a segment entirely inside the overlap range records no trace", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);
