@@ -245,9 +245,11 @@ export function applyResult(
     ? { activityId: mostRecentOpen.activityId, questId: mostRecentOpen.questId }
     : null;
 
-  // Every activity of this session still open when the window started. A switch
-  // closes all of these except the one the switching segment lands on, since the
-  // recent-context slice can leave several open at once (see spec: switch).
+  // Attention is singular: a session has at most one activity actually in
+  // progress. More than one open here is a classifier artifact, and a switch
+  // corrects it by closing every open activity of the session except the one
+  // the segment lands on. A later return to a closed one is a new activity
+  // with `continues`, never a reopen.
   const openSessionActivityIds = new Set(
     window.sessionOpenActivities.map((activity) => activity.activityId),
   );
