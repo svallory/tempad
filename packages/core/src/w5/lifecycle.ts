@@ -50,23 +50,6 @@ export function closeIdleActivities(
   return { closed };
 }
 
-export function closeActivityOnSwitch(
-  store: EventStore,
-  database: Database,
-  input: { activityId: string; closedAt: string },
-): void {
-  applyIncremental(
-    database,
-    store.append({
-      actor: "hook",
-      kind: "activity.closed",
-      subject: input.activityId,
-      at: input.closedAt,
-      payload: { reason: "switch" },
-    }),
-  );
-}
-
 export function closeSessionActivities(
   store: EventStore,
   database: Database,
