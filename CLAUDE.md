@@ -71,6 +71,8 @@ Backfill rebuilds the slice **per chunk**, not once per session: chunk n+1 must 
 
 Ordering matters in `runOnce` (`src/w5/runner.ts`): `closeIdleActivities` runs **before** `buildWindow`, so the slice never offers an activity that idleness already ended — the window's start comes from a direct `MIN(ts)` query rather than the built window.
 
+**`tempad w5 eval --from <date> --to <date> [--db <path>]`** (`src/w5/eval.ts`) measures the activities/traces ratio against real history without ever touching the real database: it copies the source (`--db`, else `TEMPAD_HOME/tempad.db`) to `TEMPAD_HOME/scratch/eval-<timestamp>.db`, opens only the copy, and force-reclassifies every window in `[from, to]` against it via `backfill`'s new `force`/`to` options (`force` bypasses `w5_windows`/legacy coverage entirely; `to` bounds the session query's usual open-ended `ended_at >=` with an upper end). It prints trace count, activity count, the ratio, median activity duration, `continues` link count, quest conflicts, and 20 randomly sampled activities for a hand check.
+
 ## Gotchas
 
 - Monday.com's API `people` column filter by numeric id returns nothing. Filter client-side by name or id from the column's JSON value.
