@@ -511,6 +511,68 @@ describe("applyResult", () => {
     expect(b1.close_reason).toBe("switch");
   });
 
+  test("two switches in one window each close their own predecessor at their own startedAt, nothing closes twice", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seed(database);
+
+    const twoSwitches: ClassifierResult = {
+      segments: [
+        {
+          ...baseNew,
+          startedAt: "2026-09-04T15:00:00.000Z",
+          endedAt: "2026-09-04T15:10:00.000Z",
+          what: "switch to B",
+          matchedActivity: null,
+          continuesActivity: null,
+          newActivityReason: "switch to B",
+          isSwitch: true,
+          questions: [],
+        },
+        {
+          ...baseNew,
+          startedAt: "2026-09-04T15:10:00.000Z",
+          endedAt: "2026-09-04T15:20:00.000Z",
+          what: "switch to C",
+          matchedActivity: null,
+          continuesActivity: null,
+          newActivityReason: "switch to C",
+          isSwitch: true,
+          questions: [],
+        },
+      ],
+      sessionNote: null,
+    };
+
+    applyResult(store, database, window, twoSwitches, {
+      actor: "hook",
+      askingEnabled: false,
+      now: "2026-09-04T15:21:00.000Z",
+      log: () => {},
+    });
+
+    const a1 = database
+      .query("SELECT closed_at, close_reason FROM activities WHERE id = 'A1'")
+      .get() as { closed_at: string | null; close_reason: string | null };
+    expect(a1.closed_at).toBe("2026-09-04T15:00:00.000Z");
+    expect(a1.close_reason).toBe("switch");
+
+    const b1 = database
+      .query("SELECT closed_at, close_reason FROM activities WHERE objective = 'switch to B'")
+      .get() as { closed_at: string | null; close_reason: string | null };
+    expect(b1.closed_at).toBe("2026-09-04T15:10:00.000Z");
+    expect(b1.close_reason).toBe("switch");
+
+    const c1 = database
+      .query("SELECT closed_at FROM activities WHERE objective = 'switch to C'")
+      .get() as { closed_at: string | null };
+    expect(c1.closed_at).toBeNull();
+
+    const closedCount = database
+      .query("SELECT COUNT(*) as count FROM activities WHERE closed_at IS NOT NULL")
+      .get() as { count: number };
+    expect(closedCount.count).toBe(2);
+  });
+
   test("a segment entirely inside the overlap range records no trace", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);
