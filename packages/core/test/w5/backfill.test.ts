@@ -400,4 +400,87 @@ describe("backfill", () => {
     expect(result.windowsFailed).toBe(1);
     expect(result.windowsClassified).toBe(0);
   });
+
+  test("each chunk gets a fresh slice: chunk 2 sees chunk 1's activity and chunk 1's session note", async () => {
+    const database = openDatabase(":memory:");
+    seedHero(database);
+    // Two chunks: more than throttleMinutes * 3 = 30 minutes apart so chunkByWindow
+    // splits them, but less than activityIdleMinutes = 45 apart so chunk 1's activity
+    // is still open when chunk 2 is classified.
+    seedSession(database, {
+      id: "s1",
+      endedAt: "2026-09-04T15:40:00.000Z",
+      messageTimestamps: ["2026-09-04T15:00:00.000Z", "2026-09-04T15:40:00.000Z"],
+    });
+
+    /** Records the slice each chunk was handed, and reuses whatever it is offered. */
+    class SliceRecordingClassifier implements Classifier {
+      public seen: {
+        openActivities: string[];
+        recentActivities: string[];
+        previousSessionNote: string | null;
+      }[] = [];
+
+      async classify(window: ClassifierWindow): Promise<ClassifierResult> {
+        this.seen.push({
+          openActivities: window.sessionOpenActivities.map((a) => a.activityId),
+          recentActivities: window.recentActivities.map((a) => a.activityId),
+          previousSessionNote: window.previousSessionNote,
+        });
+        const open = window.sessionOpenActivities.at(-1) ?? null;
+        const first = window.messages[0]?.ts ?? "2026-09-04T15:00:00.000Z";
+        const last = window.messages.at(-1)?.ts ?? first;
+        return {
+          segments: [
+            {
+              startedAt: first,
+              endedAt: last,
+              what: "work",
+              why: "ship",
+              matchedQuest: null,
+              proposedQuest: null,
+              matchedActivity: open?.activityId ?? null,
+              continuesActivity: null,
+              newActivityReason: open === null ? "nothing open to reuse yet" : null,
+              isSwitch: false,
+              trigger: null,
+              confidence: 0.9,
+              questions: [],
+            },
+          ],
+          sessionNote: `note from chunk ${this.seen.length}`,
+        };
+      }
+    }
+
+    const classifier = new SliceRecordingClassifier();
+    const result = await backfill(database, makeConfig(), config, classifier, {
+      days: 15,
+      now: "2026-09-04T17:00:00.000Z",
+      log: () => {},
+    });
+
+    expect(result.windowsClassified).toBe(2);
+    expect(classifier.seen).toHaveLength(2);
+
+    // Chunk 1 starts cold; chunk 2 must see what chunk 1 actually produced.
+    expect(classifier.seen[0]?.openActivities).toEqual([]);
+    expect(classifier.seen[0]?.previousSessionNote).toBeNull();
+
+    const activity = database.query("SELECT id FROM activities").get() as { id: string };
+    expect(classifier.seen[1]?.openActivities).toEqual([activity.id]);
+    expect(classifier.seen[1]?.previousSessionNote).toBe("note from chunk 1");
+
+    // Chunk 2 reused chunk 1's activity rather than opening a second one.
+    const activityCount = database.query("SELECT COUNT(*) as count FROM activities").get() as {
+      count: number;
+    };
+    expect(activityCount.count).toBe(1);
+
+    // The last chunk's note is persisted for whatever runs next.
+    const run = database
+      .query("SELECT session_note FROM w5_runs WHERE session_id = 's1'")
+      .get() as { session_note: string | null } | null;
+    expect(run?.session_note).toBe("note from chunk 2");
+  });
 });

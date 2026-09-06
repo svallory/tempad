@@ -427,4 +427,159 @@ describe("applyResult", () => {
     const count = database.query("SELECT COUNT(*) as count FROM traces").get() as { count: number };
     expect(count.count).toBe(1);
   });
+
+  test("matchedActivity naming an id absent from the slice opens a new activity and counts it", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seed(database);
+
+    const hallucinated: ClassifierResult = {
+      segments: [{ ...baseMatched, matchedActivity: "A-does-not-exist", matchedQuest: "Q1" }],
+      sessionNote: null,
+    };
+
+    const logs: string[] = [];
+    const summary = applyResult(store, database, window, hallucinated, {
+      actor: "hook",
+      askingEnabled: false,
+      now: "2026-09-04T15:21:00.000Z",
+      log: (line) => logs.push(line),
+    });
+
+    expect(summary.unknownActivityIds).toBe(1);
+    expect(summary.activitiesOpened).toBe(1);
+    expect(summary.questConflicts).toBe(0);
+    expect(logs).toHaveLength(1);
+
+    const trace = database.query("SELECT activity_id FROM traces WHERE id != 'T0'").get() as {
+      activity_id: string;
+    };
+    expect(trace.activity_id).not.toBe("A-does-not-exist");
+  });
+
+  test("matchedActivity naming an activity that is closed or retracted is not reused", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seed(database);
+    database
+      .query(
+        `INSERT INTO activities (id, quest_id, objective, opened_at, closed_at, close_reason, revision)
+         VALUES ('A-closed', 'Q1', 'already finished', '2026-09-04T10:00:00.000Z', '2026-09-04T11:00:00.000Z', 'idle', 1)`,
+      )
+      .run();
+    database
+      .query(
+        `INSERT INTO activities (id, quest_id, objective, opened_at, retracted_at, revision)
+         VALUES ('A-retracted', 'Q1', 'wrong call', '2026-09-04T12:00:00.000Z', '2026-09-04T12:30:00.000Z', 1)`,
+      )
+      .run();
+
+    const closedWindow: ClassifierWindow = {
+      ...window,
+      sessionOpenActivities: [
+        ...window.sessionOpenActivities,
+        {
+          activityId: "A-retracted",
+          what: "wrong call",
+          why: "unknown",
+          questId: "Q1",
+          questTitle: "Ship marko-ui",
+          openedAt: "2026-09-04T12:00:00.000Z",
+          lastTraceEndedAt: "2026-09-04T12:30:00.000Z",
+        },
+      ],
+    };
+
+    const summary = applyResult(
+      store,
+      database,
+      closedWindow,
+      {
+        segments: [
+          { ...baseMatched, matchedActivity: "A-closed", matchedQuest: "Q1" },
+          {
+            ...baseNew,
+            matchedActivity: "A-retracted",
+            continuesActivity: null,
+            newActivityReason: null,
+            matchedQuest: "Q1",
+            proposedQuest: null,
+            isSwitch: false,
+            questions: [],
+          },
+        ],
+        sessionNote: null,
+      },
+      { actor: "hook", askingEnabled: false, now: "2026-09-04T15:21:00.000Z", log: () => {} },
+    );
+
+    expect(summary.unknownActivityIds).toBe(2);
+    const reused = database
+      .query(
+        "SELECT COUNT(*) as count FROM traces WHERE activity_id IN ('A-closed', 'A-retracted')",
+      )
+      .get() as { count: number };
+    expect(reused.count).toBe(0);
+  });
+
+  test("continuesActivity pointing at a still-open activity reuses it instead of opening a second", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seed(database);
+
+    const summary = applyResult(
+      store,
+      database,
+      window,
+      {
+        segments: [
+          { ...baseMatched, matchedActivity: null, continuesActivity: "A1", matchedQuest: "Q1" },
+        ],
+        sessionNote: null,
+      },
+      { actor: "hook", askingEnabled: false, now: "2026-09-04T15:21:00.000Z", log: () => {} },
+    );
+
+    // The objective never stopped, so this is a plain reuse: no new row, no continues link.
+    expect(summary.activitiesOpened).toBe(0);
+    expect(summary.unknownActivityIds).toBe(0);
+
+    const activityCount = database.query("SELECT COUNT(*) as count FROM activities").get() as {
+      count: number;
+    };
+    expect(activityCount.count).toBe(1);
+
+    const trace = database.query("SELECT activity_id FROM traces WHERE id != 'T0'").get() as {
+      activity_id: string;
+    };
+    expect(trace.activity_id).toBe("A1");
+  });
+
+  test("continuesActivity naming an unknown id opens a new activity with no continues link", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seed(database);
+
+    const summary = applyResult(
+      store,
+      database,
+      window,
+      {
+        segments: [
+          {
+            ...baseMatched,
+            matchedActivity: null,
+            continuesActivity: "A-nope",
+            matchedQuest: "Q1",
+          },
+        ],
+        sessionNote: null,
+      },
+      { actor: "hook", askingEnabled: false, now: "2026-09-04T15:21:00.000Z", log: () => {} },
+    );
+
+    expect(summary.unknownActivityIds).toBe(1);
+    expect(summary.activitiesOpened).toBe(1);
+
+    const linked = database
+      .query("SELECT COUNT(*) as count FROM activities WHERE continues IS NOT NULL")
+      .get() as { count: number };
+    expect(linked.count).toBe(0);
+  });
 });

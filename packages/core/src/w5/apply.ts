@@ -15,6 +15,7 @@ export interface AppliedSummary {
   questionsWatching: number;
   questConflicts: number;
   overlapDropped: number;
+  unknownActivityIds: number;
 }
 
 export interface ApplyOptions {
@@ -95,6 +96,28 @@ interface ResolvedActivity {
   activityOpened: boolean;
   questCreated: boolean;
   questConflict: boolean;
+  unknownActivityId: boolean;
+}
+
+interface ActivityState {
+  questId: string | null;
+  isOpen: boolean;
+}
+
+/**
+ * Reads an activity the classifier named, ignoring retracted rows. A classifier
+ * can return an id that never existed, belongs to another session, or was
+ * retracted since the slice was built, so every id it hands back is looked up
+ * before it is trusted.
+ */
+function readActivity(database: Database, activityId: string): ActivityState | null {
+  const row = database
+    .query(
+      "SELECT quest_id as questId, closed_at as closedAt FROM activities WHERE id = ? AND retracted_at IS NULL",
+    )
+    .get(activityId) as { questId: string | null; closedAt: string | null } | null;
+  if (!row) return null;
+  return { questId: row.questId, isOpen: row.closedAt === null };
 }
 
 function resolveQuest(
@@ -124,33 +147,57 @@ function resolveActivityForSegment(
   segment: ClassifierSegment,
   now: string,
 ): ResolvedActivity {
+  let unknownActivityId = false;
+
+  // `matchedActivity` means "this stretch of attention is still going", so it is
+  // only honoured for an activity that is actually still open.
   if (segment.matchedActivity !== null) {
-    const activity = database
-      .query("SELECT quest_id as questId FROM activities WHERE id = ?")
-      .get(segment.matchedActivity) as { questId: string | null } | null;
-    if (activity) {
+    const matched = readActivity(database, segment.matchedActivity);
+    if (matched?.isOpen) {
       // A quest disagreement never reassigns the activity's quest and never opens a
       // second activity over the same stretch of attention: it is reported instead.
-      const questConflict = (activity.questId ?? null) !== (segment.matchedQuest ?? null);
+      const questConflict = (matched.questId ?? null) !== (segment.matchedQuest ?? null);
       return {
         activityId: segment.matchedActivity,
-        questId: activity.questId,
+        questId: matched.questId,
         activityOpened: false,
         questCreated: false,
         questConflict,
+        unknownActivityId: false,
       };
+    }
+    unknownActivityId = true;
+  }
+
+  // `continuesActivity` means "the same objective, resumed after a gap", so it is
+  // only a link when the activity it names has actually closed. Pointing it at a
+  // still-open activity says the attention never stopped: that is a plain reuse,
+  // and opening a second row would leave two open activities for one objective.
+  let continues: string | null = null;
+  if (segment.continuesActivity !== null) {
+    const referenced = readActivity(database, segment.continuesActivity);
+    if (referenced === null) {
+      unknownActivityId = true;
+    } else if (referenced.isOpen) {
+      const questConflict = (referenced.questId ?? null) !== (segment.matchedQuest ?? null);
+      return {
+        activityId: segment.continuesActivity,
+        questId: referenced.questId,
+        activityOpened: false,
+        questCreated: false,
+        questConflict,
+        unknownActivityId: false,
+      };
+    } else {
+      continues = segment.continuesActivity;
     }
   }
 
-  const continues = segment.continuesActivity;
   let { questId, questCreated } = resolveQuest(store, database, heroId, segment);
 
   if (continues !== null && questId === null) {
     // Returning to a closed activity keeps its quest unless the classifier named another.
-    const closed = database
-      .query("SELECT quest_id as questId FROM activities WHERE id = ?")
-      .get(continues) as { questId: string | null } | null;
-    questId = closed?.questId ?? null;
+    questId = readActivity(database, continues)?.questId ?? null;
   }
 
   const activityId = openActivityContinuing(store, database, {
@@ -161,7 +208,14 @@ function resolveActivityForSegment(
     continues: continues ?? undefined,
   });
 
-  return { activityId, questId, activityOpened: true, questCreated, questConflict: false };
+  return {
+    activityId,
+    questId,
+    activityOpened: true,
+    questCreated,
+    questConflict: false,
+    unknownActivityId,
+  };
 }
 
 export function applyResult(
@@ -180,6 +234,7 @@ export function applyResult(
     questionsWatching: 0,
     questConflicts: 0,
     overlapDropped: 0,
+    unknownActivityIds: 0,
   };
 
   const overlapStart = window.overlapMessages[0]?.ts ?? null;
@@ -203,11 +258,17 @@ export function applyResult(
       continue;
     }
 
-    const { activityId, questId, activityOpened, questCreated, questConflict } =
+    const { activityId, questId, activityOpened, questCreated, questConflict, unknownActivityId } =
       resolveActivityForSegment(store, database, heroId, segment, options.now);
 
     if (activityOpened) summary.activitiesOpened += 1;
     if (questCreated) summary.questsProposed += 1;
+    if (unknownActivityId) {
+      summary.unknownActivityIds += 1;
+      options.log(
+        `w5 unknown activity id: classifier named ${segment.matchedActivity ?? segment.continuesActivity ?? "none"}, which is not an open activity in the window; opened ${activityId} instead`,
+      );
+    }
     if (questConflict) {
       summary.questConflicts += 1;
       options.log(
