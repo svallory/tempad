@@ -8,7 +8,7 @@ import { backfill } from "./backfill";
 import { AnthropicClassifier, type Classifier } from "./classifier";
 import { ClaudeCliClassifier } from "./classifier-cli";
 import { dedupe } from "./dedupe";
-import { runEval } from "./eval";
+import { InvalidEvalRangeError, runEval, validateEvalRange } from "./eval";
 import { buildAdditionalContext, installHooks, uninstallHooks } from "./hooks";
 import { enqueueJob } from "./jobs";
 import type { QuestionRow } from "./questions";
@@ -355,6 +355,16 @@ async function runEvalCommand(args: string[], context: W5Context): Promise<numbe
   if (!values.from || !values.to) {
     context.stdout("usage: tempad w5 eval --from <date> --to <date> [--db <path>]");
     return 2;
+  }
+
+  try {
+    validateEvalRange(values.from, values.to);
+  } catch (error) {
+    if (error instanceof InvalidEvalRangeError) {
+      context.stdout(error.message);
+      return 1;
+    }
+    throw error;
   }
 
   if (context.intentConfig.w5.backend === "api" && !process.env.ANTHROPIC_API_KEY) {

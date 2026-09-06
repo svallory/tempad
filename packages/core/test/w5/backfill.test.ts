@@ -509,4 +509,39 @@ describe("backfill", () => {
     expect(secondResult.windowsClassified).not.toBe(0);
     expect(secondResult.windowsSkipped).toBe(0);
   });
+
+  test("to bounds each session's message window, not just the session query", async () => {
+    const database = openDatabase(":memory:");
+    seedHero(database);
+    // Session's own ended_at sits at or before `to` so it is selected by the
+    // session query, but claude_messages (the source `buildWindow` actually
+    // reads) has messages both before and after `to` -- e.g. from a later
+    // resync of the same session file. The window fed to the classifier must
+    // stop at `to`, not run to the session's actual last message.
+    seedSession(database, {
+      id: "s1",
+      endedAt: "2026-09-04T15:10:00.000Z",
+      messageTimestamps: [
+        "2026-09-04T15:00:00.000Z",
+        "2026-09-04T15:05:00.000Z",
+        "2026-09-04T15:40:00.000Z",
+      ],
+    });
+
+    const classifier = new FakeClassifier();
+    const logs: string[] = [];
+
+    await backfill(database, makeConfig(), config, classifier, {
+      days: 15,
+      now: "2026-09-04T17:00:00.000Z",
+      log: (line) => logs.push(line),
+      to: "2026-09-04T15:10:00.000Z",
+    });
+
+    const traces = database
+      .query("SELECT started_at as startedAt, ended_at as endedAt FROM traces")
+      .all() as { startedAt: string; endedAt: string }[];
+    expect(traces.length).toBe(1);
+    expect((traces[0] as { endedAt: string }).endedAt <= "2026-09-04T15:10:00.000Z").toBe(true);
+  });
 });

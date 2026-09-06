@@ -1,9 +1,26 @@
+import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import type { Config } from "../config/env";
 import { openDatabase } from "../db/database";
 import { defaultIntentConfig } from "../intent/config";
 import { backfill } from "./backfill";
 import type { Classifier } from "./classifier";
+
+export class InvalidEvalRangeError extends Error {}
+
+export function validateEvalRange(from: string, to: string): void {
+  const fromMs = Date.parse(from);
+  const toMs = Date.parse(to);
+  if (Number.isNaN(fromMs)) {
+    throw new InvalidEvalRangeError(`--from is not a valid date: ${from}`);
+  }
+  if (Number.isNaN(toMs)) {
+    throw new InvalidEvalRangeError(`--to is not a valid date: ${to}`);
+  }
+  if (fromMs > toMs) {
+    throw new InvalidEvalRangeError(`--from (${from}) must be on or before --to (${to})`);
+  }
+}
 
 function minimalConfig(scratchDir: string): Config {
   return {
@@ -65,17 +82,30 @@ function filenameSafe(timestamp: string): string {
   return timestamp.replace(/[:.]/g, "-");
 }
 
+/**
+ * Copies via SQLite's own `VACUUM INTO`, not a file-level copy: `openDatabase`
+ * runs every database (including the real `tempad.db`) in WAL mode, so a
+ * plain file copy can silently miss committed transactions still sitting in
+ * the `-wal` sidecar. `VACUUM INTO` reads through the live connection and
+ * always sees the fully committed state, with no separate sidecar to miss.
+ */
+function copyDatabase(sourceDbPath: string, destinationPath: string): void {
+  const source = new Database(sourceDbPath, { readonly: true });
+  try {
+    source.exec("VACUUM INTO ?", [destinationPath]);
+  } finally {
+    source.close();
+  }
+}
+
 export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
+  validateEvalRange(options.from, options.to);
+
   const copiedDbPath = join(options.scratchDir, `eval-${filenameSafe(options.now)}.db`);
-  await Bun.write(copiedDbPath, Bun.file(options.sourceDbPath));
+  copyDatabase(options.sourceDbPath, copiedDbPath);
 
   const database = openDatabase(copiedDbPath);
   const intentConfig = defaultIntentConfig();
-
-  const days = Math.max(
-    1,
-    Math.ceil((Date.parse(options.to) - Date.parse(options.from)) / (24 * 60 * 60 * 1000)),
-  );
 
   const backfillResult = await backfill(
     database,
@@ -83,10 +113,11 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
     intentConfig.w5,
     options.classifier,
     {
-      days,
+      days: 0,
       now: options.to,
       log: options.log,
       force: true,
+      from: options.from,
       to: options.to,
     },
   );

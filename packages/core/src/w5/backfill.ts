@@ -17,6 +17,9 @@ export interface BackfillOptions {
   now: string;
   log: (line: string) => void;
   force?: boolean;
+  /** Explicit lower bound, overriding the `days`-derived cutoff when given. */
+  from?: string;
+  /** Explicit upper bound on both the session query and each session's message window. */
   to?: string;
 }
 
@@ -97,9 +100,9 @@ export async function backfill(
 ): Promise<BackfillResult> {
   ensureTables(database);
   const store = new EventStore(database);
-  const cutoff = new Date(
-    Date.parse(options.now) - options.days * 24 * 60 * 60 * 1000,
-  ).toISOString();
+  const cutoff =
+    options.from ??
+    new Date(Date.parse(options.now) - options.days * 24 * 60 * 60 * 1000).toISOString();
 
   const sessions = options.to
     ? (database
@@ -128,7 +131,10 @@ export async function backfill(
       memoryActivities: intentConfig.memoryActivities,
       overlapMessages: intentConfig.overlapMessages,
     });
-    const chunks = chunkByWindow(fullWindow.messages, windowMinutes);
+    const boundedMessages = options.to
+      ? fullWindow.messages.filter((message) => message.ts <= (options.to as string))
+      : fullWindow.messages;
+    const chunks = chunkByWindow(boundedMessages, windowMinutes);
 
     const pendingChunks = chunks
       .map((chunk, index) => ({ chunk, index }))
