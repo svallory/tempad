@@ -106,6 +106,25 @@ export function claimNextJob(database: Database, now?: string): Job | null {
   return toJob(job);
 }
 
+/**
+ * The classifier's scratch note for a session. Not an event and not rebuilt by
+ * `tempad rebuild`: it is a hint carried from one window to the next, which
+ * backfill needs between chunks exactly as the runner needs it between hook runs.
+ */
+export function writeSessionNote(
+  database: Database,
+  sessionId: string,
+  sessionNote: string | null,
+  now: string,
+): void {
+  database
+    .query(
+      `INSERT INTO w5_runs (session_id, last_run_at, last_message_ts, session_note) VALUES (?, ?, NULL, ?)
+       ON CONFLICT(session_id) DO UPDATE SET session_note = excluded.session_note`,
+    )
+    .run(sessionId, now, sessionNote);
+}
+
 export function completeJob(
   database: Database,
   id: number,

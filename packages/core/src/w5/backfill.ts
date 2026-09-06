@@ -6,6 +6,7 @@ import { registerAllProjections } from "../intent/projections/register";
 import { EventStore } from "../intent/store";
 import { applyResult } from "./apply";
 import type { Classifier } from "./classifier";
+import { writeSessionNote } from "./jobs";
 import { closeIdleActivities } from "./lifecycle";
 import { buildWindow } from "./window";
 
@@ -138,7 +139,6 @@ export async function backfill(
     let sessionHadSuccess = false;
 
     for (const { chunk, index } of pendingChunks) {
-      const chunkWindow = { ...fullWindow, messages: chunk };
       const startedAt = chunk[0]?.ts ?? session.ended_at;
       const endedAt = chunk.at(-1)?.ts ?? session.ended_at;
 
@@ -147,6 +147,25 @@ export async function backfill(
         windowStartedAt: startedAt,
         idleMinutes: intentConfig.activityIdleMinutes,
       });
+
+      // The slice is rebuilt per chunk, after the previous chunk's applyResult and
+      // session note landed: chunk n+1 must see the activities chunk n opened or
+      // closed, exactly as a live run sees the previous hook invocation's work.
+      // `sinceTs` is the previous chunk's last message, so the overlap tail is the
+      // messages before this chunk, never this chunk's own; `messages` is overridden
+      // because the chunk's bounds, not `sinceTs`, decide what it classifies.
+      const previousChunkEnd = index > 0 ? (chunks[index - 1]?.at(-1)?.ts ?? null) : null;
+      const chunkWindow = {
+        ...buildWindow(database, {
+          sessionId: session.id,
+          sinceTs: previousChunkEnd,
+          maxMessages: 5000,
+          memoryHours: intentConfig.memoryHours,
+          memoryActivities: intentConfig.memoryActivities,
+          overlapMessages: intentConfig.overlapMessages,
+        }),
+        messages: chunk,
+      };
 
       try {
         let result: Awaited<ReturnType<typeof classifier.classify>>;
@@ -161,6 +180,7 @@ export async function backfill(
           now: options.now,
           log: options.log,
         });
+        writeSessionNote(database, session.id, result.sessionNote, options.now);
         applyIncremental(
           database,
           store.append({
