@@ -4,9 +4,12 @@ import type { Config } from "../config/env";
 import { openDatabase } from "../db/database";
 import { defaultIntentConfig } from "../intent/config";
 import { applyIncremental } from "../intent/projections";
+import { registerAllProjections } from "../intent/projections/register";
 import { EventStore } from "../intent/store";
 import { backfill } from "./backfill";
 import type { Classifier } from "./classifier";
+
+registerAllProjections();
 
 export class InvalidEvalRangeError extends Error {}
 
@@ -107,82 +110,97 @@ function resetRange(database: Database, from: string, to: string): EvalResetResu
     traceRows.map((row) => row.session_id).filter((id): id is string => id !== null),
   );
 
-  for (const trace of traceRows) {
-    applyIncremental(
-      database,
-      store.append({
-        actor: "backfill",
-        kind: "retracted",
-        subject: trace.id,
-        payload: { retracts: trace.id, reason: RESET_REASON },
-      }),
-    );
-  }
-
   const affectedActivityIds = new Set(traceRows.map((row) => row.activity_id));
-  const activitiesToRetract: string[] = [];
-  for (const activityId of affectedActivityIds) {
-    const liveTrace = database
-      .query("SELECT id FROM traces WHERE activity_id = ? AND retracted_at IS NULL LIMIT 1")
-      .get(activityId) as { id: string } | null;
-    if (liveTrace === null) activitiesToRetract.push(activityId);
-  }
-  for (const activityId of activitiesToRetract) {
-    applyIncremental(
-      database,
-      store.append({
-        actor: "backfill",
-        kind: "retracted",
-        subject: activityId,
-        payload: { retracts: activityId, reason: RESET_REASON },
-      }),
-    );
-  }
+  const retractedTraceIds = new Set(traceRows.map((row) => row.id));
 
-  const affectedQuestIds = new Set(
-    activitiesToRetract
-      .map(
-        (activityId) =>
-          (
-            database.query("SELECT quest_id FROM activities WHERE id = ?").get(activityId) as {
-              quest_id: string | null;
-            } | null
-          )?.quest_id ?? null,
-      )
-      .filter((id): id is string => id !== null),
-  );
-  const questsToRetract: string[] = [];
-  for (const questId of affectedQuestIds) {
-    const quest = database
-      .query("SELECT confirmed FROM quests WHERE id = ? AND retracted_at IS NULL")
-      .get(questId) as { confirmed: number } | null;
-    if (!quest || quest.confirmed === 1) continue;
-    const liveActivity = database
-      .query("SELECT id FROM activities WHERE quest_id = ? AND retracted_at IS NULL LIMIT 1")
-      .get(questId) as { id: string } | null;
-    if (liveActivity === null) questsToRetract.push(questId);
-  }
-  for (const questId of questsToRetract) {
-    applyIncremental(
-      database,
-      store.append({
-        actor: "backfill",
-        kind: "retracted",
-        subject: questId,
-        payload: { retracts: questId, reason: RESET_REASON },
-      }),
-    );
-  }
+  const result = { traces: 0, activities: 0, quests: 0 };
 
-  for (const sessionId of sessionIds) {
-    database.query("UPDATE w5_runs SET session_note = NULL WHERE session_id = ?").run(sessionId);
-    database.query("DELETE FROM w5_windows WHERE session_id = ?").run(sessionId);
-  }
+  const run = database.transaction(() => {
+    for (const trace of traceRows) {
+      applyIncremental(
+        database,
+        store.append({
+          actor: "backfill",
+          kind: "retracted",
+          subject: trace.id,
+          payload: { retracts: trace.id, reason: RESET_REASON },
+        }),
+      );
+    }
+    result.traces = traceRows.length;
+
+    const activitiesToRetract: string[] = [];
+    for (const activityId of affectedActivityIds) {
+      const liveTraces = database
+        .query("SELECT id FROM traces WHERE activity_id = ? AND retracted_at IS NULL")
+        .all(activityId) as { id: string }[];
+      const hasLiveTrace = liveTraces.some((trace) => !retractedTraceIds.has(trace.id));
+      if (!hasLiveTrace) activitiesToRetract.push(activityId);
+    }
+    for (const activityId of activitiesToRetract) {
+      applyIncremental(
+        database,
+        store.append({
+          actor: "backfill",
+          kind: "retracted",
+          subject: activityId,
+          payload: { retracts: activityId, reason: RESET_REASON },
+        }),
+      );
+    }
+    result.activities = activitiesToRetract.length;
+
+    const affectedQuestIds = new Set(
+      activitiesToRetract
+        .map(
+          (activityId) =>
+            (
+              database.query("SELECT quest_id FROM activities WHERE id = ?").get(activityId) as {
+                quest_id: string | null;
+              } | null
+            )?.quest_id ?? null,
+        )
+        .filter((id): id is string => id !== null),
+    );
+    const retractedActivityIds = new Set(activitiesToRetract);
+    const questsToRetract: string[] = [];
+    for (const questId of affectedQuestIds) {
+      const quest = database
+        .query("SELECT confirmed FROM quests WHERE id = ? AND retracted_at IS NULL")
+        .get(questId) as { confirmed: number } | null;
+      if (!quest || quest.confirmed === 1) continue;
+      const liveActivities = database
+        .query("SELECT id FROM activities WHERE quest_id = ? AND retracted_at IS NULL")
+        .all(questId) as { id: string }[];
+      const hasLiveActivity = liveActivities.some(
+        (activity) => !retractedActivityIds.has(activity.id),
+      );
+      if (!hasLiveActivity) questsToRetract.push(questId);
+    }
+    for (const questId of questsToRetract) {
+      applyIncremental(
+        database,
+        store.append({
+          actor: "backfill",
+          kind: "retracted",
+          subject: questId,
+          payload: { retracts: questId, reason: RESET_REASON },
+        }),
+      );
+    }
+    result.quests = questsToRetract.length;
+
+    for (const sessionId of sessionIds) {
+      database.query("UPDATE w5_runs SET session_note = NULL WHERE session_id = ?").run(sessionId);
+      database.query("DELETE FROM w5_windows WHERE session_id = ?").run(sessionId);
+    }
+  });
+  run();
 
   return {
-    traces: traceRows.length,
-    activities: activitiesToRetract.length,
-    quests: questsToRetract.length,
+    traces: result.traces,
+    activities: result.activities,
+    quests: result.quests,
   };
 }
 

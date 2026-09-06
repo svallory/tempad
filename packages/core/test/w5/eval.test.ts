@@ -347,9 +347,24 @@ describe("w5 eval", () => {
       database,
       store.append({
         actor: "hook",
+        kind: "quest.created",
+        subject: "Q_IN",
+        payload: {
+          owner: { kind: "hero", id: "H1" },
+          title: "old in-range quest",
+          objective: "obj",
+          commitment: "focused",
+          confirmed: false,
+        },
+      }),
+    );
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hook",
         kind: "activity.opened",
         subject: "A_IN",
-        payload: { objective: "old in-range work" },
+        payload: { objective: "old in-range work", quest: "Q_IN" },
         at: "2026-09-01T09:00:00.000Z",
       }),
     );
@@ -381,9 +396,24 @@ describe("w5 eval", () => {
       database,
       store.append({
         actor: "hook",
+        kind: "quest.created",
+        subject: "Q_OUT",
+        payload: {
+          owner: { kind: "hero", id: "H1" },
+          title: "old out-of-range quest",
+          objective: "obj",
+          commitment: "focused",
+          confirmed: false,
+        },
+      }),
+    );
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hook",
         kind: "activity.opened",
         subject: "A_OUT",
-        payload: { objective: "old out-of-range work" },
+        payload: { objective: "old out-of-range work", quest: "Q_OUT" },
         at: "2026-08-01T09:00:00.000Z",
       }),
     );
@@ -423,7 +453,29 @@ describe("w5 eval", () => {
          VALUES ('m1', 's1', '2026-09-01T10:00:00.000Z', 'user', 0, 'do the thing')`,
       )
       .run();
+    database
+      .query(
+        "INSERT INTO w5_runs (session_id, last_run_at, last_message_ts, session_note) VALUES ('s1', '2026-09-01T09:10:00.000Z', '2026-09-01T09:10:00.000Z', 'touched note')",
+      )
+      .run();
+    database
+      .query(
+        "INSERT INTO w5_runs (session_id, last_run_at, last_message_ts, session_note) VALUES ('s2', '2026-08-01T09:10:00.000Z', '2026-08-01T09:10:00.000Z', 'untouched note')",
+      )
+      .run();
+    database
+      .query(
+        "INSERT INTO w5_windows (session_id, started_at, ended_at, classified_at) VALUES ('s1', '2026-09-01T09:00:00.000Z', '2026-09-01T09:10:00.000Z', '2026-09-01T09:10:00.000Z')",
+      )
+      .run();
+    database
+      .query(
+        "INSERT INTO w5_windows (session_id, started_at, ended_at, classified_at) VALUES ('s2', '2026-08-01T09:00:00.000Z', '2026-08-01T09:10:00.000Z', '2026-08-01T09:10:00.000Z')",
+      )
+      .run();
     database.close();
+
+    const sourceBytesBefore = await Bun.file(sourcePath).arrayBuffer();
 
     const metrics = await runEval({
       from: "2026-09-01",
@@ -435,8 +487,12 @@ describe("w5 eval", () => {
       log: () => {},
     });
 
+    const sourceBytesAfter = await Bun.file(sourcePath).arrayBuffer();
+    expect(Buffer.from(sourceBytesAfter).equals(Buffer.from(sourceBytesBefore))).toBe(true);
+
     expect(metrics.resetTraces).toBe(1);
     expect(metrics.resetActivities).toBe(1);
+    expect(metrics.resetQuests).toBe(1);
 
     const copied = openDatabase(metrics.copiedDbPath);
     const inRange = copied.query("SELECT retracted_at FROM traces WHERE id = 'T_IN'").get() as {
@@ -447,6 +503,39 @@ describe("w5 eval", () => {
       retracted_at: string | null;
     };
     expect(outOfRange.retracted_at).toBeNull();
+
+    const questIn = copied.query("SELECT retracted_at FROM quests WHERE id = 'Q_IN'").get() as {
+      retracted_at: string | null;
+    };
+    expect(questIn.retracted_at).not.toBeNull();
+    const questOut = copied.query("SELECT retracted_at FROM quests WHERE id = 'Q_OUT'").get() as {
+      retracted_at: string | null;
+    };
+    expect(questOut.retracted_at).toBeNull();
+
+    const runS1 = copied
+      .query("SELECT session_note FROM w5_runs WHERE session_id = 's1'")
+      .get() as { session_note: string | null };
+    expect(runS1.session_note).toBeNull();
+    const runS2 = copied
+      .query("SELECT session_note FROM w5_runs WHERE session_id = 's2'")
+      .get() as { session_note: string | null };
+    expect(runS2.session_note).toBe("untouched note");
+
+    // The old w5_windows row for s1 (classified_at "2026-09-01T09:10:00.000Z") is
+    // deleted by the reset; the rerun's backfill then inserts its own fresh row for
+    // s1, so the reset's deletion is checked by that old row's absence, not by count.
+    const oldWindowS1 = copied
+      .query(
+        "SELECT COUNT(*) as n FROM w5_windows WHERE session_id = 's1' AND classified_at = '2026-09-01T09:10:00.000Z'",
+      )
+      .get() as { n: number };
+    expect(oldWindowS1.n).toBe(0);
+    const windowsS2 = copied
+      .query("SELECT COUNT(*) as n FROM w5_windows WHERE session_id = 's2'")
+      .get() as { n: number };
+    expect(windowsS2.n).toBe(1);
+
     copied.close();
 
     // Only the rerun's rows count toward the metrics, not the reset old cohort.
