@@ -15,6 +15,16 @@ export interface BuildWindowInput {
   memoryHours: number;
   memoryActivities: number;
   overlapMessages: number;
+  /**
+   * The last message timestamp of the window being classified. Candidate
+   * activities must have opened strictly before it: backfill walks history, so
+   * without this bound a window on Sept 1 is offered activities opened on Sept 3
+   * by a session processed earlier, the classifier matches them, and the traces
+   * it records land before their activity's `opened_at` -- negative durations,
+   * and a `continues` link that can never fire. Omitted (or null) means "now",
+   * which is what a live run wants: nothing in the database is in its future.
+   */
+  windowEnd?: string | null;
 }
 
 interface ActivityRow {
@@ -109,14 +119,19 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
     lastActivityAt: string | null;
   }[];
 
+  // An activity opened after this window ended did not exist yet when the window
+  // happened, so it is never a candidate -- see `windowEnd` on `BuildWindowInput`.
+  const windowEnd = input.windowEnd ?? new Date().toISOString();
+
   const sessionOpenActivities = database
     .query(
       `${ACTIVITY_SLICE_SELECT}
          AND activities.closed_at IS NULL
+         AND activities.opened_at < ?
          AND latest.session_id = ?
        ORDER BY activities.opened_at ASC`,
     )
-    .all(input.sessionId) as (ActivityRow & {
+    .all(windowEnd, input.sessionId) as (ActivityRow & {
     closedAt: string | null;
     closeReason: string | null;
   })[];
@@ -135,6 +150,8 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
   const recentActivities = database
     .query(
       `${ACTIVITY_SLICE_SELECT}
+         AND activities.opened_at < ?
+         AND (activities.closed_at IS NULL OR activities.closed_at >= ?)
          AND (activities.opened_at >= ? OR activities.closed_at >= ?)
          AND (latest.session_id != ? OR activities.closed_at IS NOT NULL)
          AND latest.place = ?
@@ -142,6 +159,8 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
        LIMIT ?`,
     )
     .all(
+      windowEnd,
+      memoryCutoff,
       memoryCutoff,
       memoryCutoff,
       input.sessionId,

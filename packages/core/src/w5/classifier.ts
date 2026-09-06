@@ -62,9 +62,40 @@ export interface ClassifierSegment {
 export interface ClassifierResult {
   segments: ClassifierSegment[];
   sessionNote: string | null;
+  /**
+   * Segments that named none of the three activity selectors and were given a
+   * default `newActivityReason` instead of being rejected. Optional because a
+   * result built by hand (tests, a stub classifier) repaired nothing; only
+   * `validateResult` ever sets it.
+   */
+  selectorDefaulted?: number;
+  /**
+   * Segments that named more than one selector and were narrowed to the first by
+   * precedence (matchedActivity > continuesActivity > newActivityReason).
+   */
+  selectorAmbiguous?: number;
 }
 
 export const MAX_SESSION_NOTE_LENGTH = 300;
+
+/** Stands in for a `newActivityReason` the classifier omitted entirely. */
+export const DEFAULT_NEW_ACTIVITY_REASON = "classifier gave no reason";
+
+/**
+ * Optional fields a model routinely omits rather than sending as `null`. JSON has
+ * no way to distinguish "absent" from "null" here and the two mean the same thing
+ * to us, so absent is normalized to `null` before anything is validated -- a
+ * missing key used to be reported as "expected string or null" and fail the whole
+ * window.
+ */
+const NULLABLE_SEGMENT_FIELDS = [
+  "matchedQuest",
+  "proposedQuest",
+  "matchedActivity",
+  "continuesActivity",
+  "newActivityReason",
+  "trigger",
+] as const;
 
 const QUESTION_KINDS = new Set<QuestionKind>(["which_quest", "why", "trigger"]);
 const COMMITMENTS = new Set<Commitment>(["promised", "personal", "exploratory"]);
@@ -77,11 +108,17 @@ function requireString(value: unknown, path: string, problems: string[]): value 
   return true;
 }
 
+interface SelectorCounters {
+  selectorDefaulted: number;
+  selectorAmbiguous: number;
+}
+
 function validateSegment(
   raw: unknown,
   index: number,
   problems: string[],
   bounds: { firstTs: string; lastTs: string } | null,
+  counters: SelectorCounters,
 ): void {
   const where = `segments[${index}]`;
   if (typeof raw !== "object" || raw === null) {
@@ -89,6 +126,11 @@ function validateSegment(
     return;
   }
   const segment = raw as Record<string, unknown>;
+
+  for (const field of NULLABLE_SEGMENT_FIELDS) {
+    if (segment[field] === undefined) segment[field] = null;
+  }
+  if (segment.questions === undefined) segment.questions = [];
 
   const startedAtIsString = requireString(segment.startedAt, `${where}.startedAt`, problems);
   const endedAtIsString = requireString(segment.endedAt, `${where}.endedAt`, problems);
@@ -127,15 +169,26 @@ function validateSegment(
     problems.push(`${where}.newActivityReason: expected string or null`);
   }
 
-  const candidates = [
+  // The prompt still asks for exactly one selector, but a model that sets none or
+  // several is repaired rather than rejected: failing the window loses a real
+  // stretch of work over a formatting slip, and both repairs are counted so the
+  // run summary shows how often the model is missing the rule.
+  const selectors = [
     segment.matchedActivity,
     segment.continuesActivity,
     segment.newActivityReason,
-  ].filter((candidate) => candidate !== null && candidate !== undefined);
-  if (candidates.length !== 1) {
-    problems.push(
-      `${where}: set exactly one of matchedActivity, continuesActivity, newActivityReason (got ${candidates.length})`,
-    );
+  ].filter((candidate) => candidate !== null);
+  if (selectors.length === 0) {
+    segment.newActivityReason = DEFAULT_NEW_ACTIVITY_REASON;
+    counters.selectorDefaulted += 1;
+  } else if (selectors.length > 1) {
+    if (segment.matchedActivity !== null) {
+      segment.continuesActivity = null;
+      segment.newActivityReason = null;
+    } else {
+      segment.newActivityReason = null;
+    }
+    counters.selectorAmbiguous += 1;
   }
   if (segment.trigger !== null && typeof segment.trigger !== "string") {
     problems.push(`${where}.trigger: expected string or null`);
@@ -192,9 +245,10 @@ export function validateResult(raw: unknown, window?: ClassifierWindow): Classif
         }
       : null;
 
+  const counters: SelectorCounters = { selectorDefaulted: 0, selectorAmbiguous: 0 };
   const segments = (raw as { segments: unknown[] }).segments;
   for (const [index, segment] of segments.entries()) {
-    validateSegment(segment, index, problems, bounds);
+    validateSegment(segment, index, problems, bounds, counters);
   }
 
   const sessionNote = (raw as { sessionNote?: unknown }).sessionNote;
@@ -211,7 +265,12 @@ export function validateResult(raw: unknown, window?: ClassifierWindow): Classif
     throw new Error(`classifier result invalid:\n${problems.join("\n")}`);
   }
   const result = raw as { segments: ClassifierSegment[]; sessionNote?: string | null };
-  return { segments: result.segments, sessionNote: result.sessionNote ?? null };
+  return {
+    segments: result.segments,
+    sessionNote: result.sessionNote ?? null,
+    selectorDefaulted: counters.selectorDefaulted,
+    selectorAmbiguous: counters.selectorAmbiguous,
+  };
 }
 
 export interface Classifier {

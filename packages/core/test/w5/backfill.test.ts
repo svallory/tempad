@@ -548,3 +548,152 @@ describe("backfill", () => {
     expect((traces[0] as { endedAt: string }).endedAt < "2026-09-04T15:10:00.000Z").toBe(true);
   });
 });
+
+describe("chronological window order", () => {
+  /** A session whose `started_at` and `ended_at` differ, so the two can interleave. */
+  function seedSpanningSession(
+    database: ReturnType<typeof openDatabase>,
+    input: { id: string; startedAt: string; endedAt: string; messageTimestamps: string[] },
+  ) {
+    database
+      .query(
+        `INSERT INTO claude_sessions
+          (id, claude_dir, project_dir, file_path, cwd, org, project, title, git_branch,
+           started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+         VALUES (?, '/c', 'p', ?, '/w/p', 'personal', 'p', 't', 'main', ?, ?, 1, 0, '[]', 'host', ?)`,
+      )
+      .run(input.id, `/c/p/${input.id}.jsonl`, input.startedAt, input.endedAt, input.endedAt);
+    for (const [index, ts] of input.messageTimestamps.entries()) {
+      database
+        .query(
+          "INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview) VALUES (?, ?, ?, 'user', 0, 'work')",
+        )
+        .run(`${input.id}-m${index}`, input.id, ts);
+    }
+  }
+
+  test("windows of two interleaved sessions are classified in chronological order", async () => {
+    const database = openDatabase(":memory:");
+    seedHero(database);
+
+    // Session A's windows sit at 10:00 and 12:00; session B's single window at
+    // 11:00 falls between them. Chunks are split by throttleMinutes*3 = 30 min.
+    seedSpanningSession(database, {
+      id: "sA",
+      startedAt: "2026-09-04T10:00:00.000Z",
+      endedAt: "2026-09-04T12:00:00.000Z",
+      messageTimestamps: ["2026-09-04T10:00:00.000Z", "2026-09-04T12:00:00.000Z"],
+    });
+    seedSpanningSession(database, {
+      id: "sB",
+      startedAt: "2026-09-04T11:00:00.000Z",
+      endedAt: "2026-09-04T11:00:00.000Z",
+      messageTimestamps: ["2026-09-04T11:00:00.000Z"],
+    });
+
+    const seen: { sessionId: string; startedAt: string }[] = [];
+    class RecordingClassifier implements Classifier {
+      async classify(window: ClassifierWindow): Promise<ClassifierResult> {
+        const first = window.messages[0]?.ts ?? "2026-09-04T10:00:00.000Z";
+        const last = window.messages.at(-1)?.ts ?? first;
+        seen.push({ sessionId: window.sessionId, startedAt: first });
+        return {
+          segments: [
+            {
+              startedAt: first,
+              endedAt: last,
+              what: "work",
+              why: "ship",
+              matchedQuest: null,
+              proposedQuest: null,
+              matchedActivity: null,
+              continuesActivity: null,
+              newActivityReason: "new work",
+              isSwitch: false,
+              trigger: null,
+              confidence: 0.9,
+              questions: [],
+            },
+          ],
+          sessionNote: null,
+        };
+      }
+    }
+
+    const result = await backfill(database, makeConfig(), config, new RecordingClassifier(), {
+      days: 15,
+      now: "2026-09-04T17:00:00.000Z",
+      log: () => {},
+    });
+
+    expect(result.windowsClassified).toBe(3);
+    expect(seen).toEqual([
+      { sessionId: "sA", startedAt: "2026-09-04T10:00:00.000Z" },
+      { sessionId: "sB", startedAt: "2026-09-04T11:00:00.000Z" },
+      { sessionId: "sA", startedAt: "2026-09-04T12:00:00.000Z" },
+    ]);
+  });
+
+  test("each session's overlap tail still comes from its own previous chunk", async () => {
+    const database = openDatabase(":memory:");
+    seedHero(database);
+
+    seedSpanningSession(database, {
+      id: "sA",
+      startedAt: "2026-09-04T10:00:00.000Z",
+      endedAt: "2026-09-04T12:00:00.000Z",
+      messageTimestamps: ["2026-09-04T10:00:00.000Z", "2026-09-04T12:00:00.000Z"],
+    });
+    seedSpanningSession(database, {
+      id: "sB",
+      startedAt: "2026-09-04T11:00:00.000Z",
+      endedAt: "2026-09-04T11:00:00.000Z",
+      messageTimestamps: ["2026-09-04T11:00:00.000Z"],
+    });
+
+    const overlaps: { sessionId: string; overlap: string[] }[] = [];
+    class OverlapRecordingClassifier implements Classifier {
+      async classify(window: ClassifierWindow): Promise<ClassifierResult> {
+        const first = window.messages[0]?.ts ?? "2026-09-04T10:00:00.000Z";
+        const last = window.messages.at(-1)?.ts ?? first;
+        overlaps.push({
+          sessionId: window.sessionId,
+          overlap: window.overlapMessages.map((message) => message.ts),
+        });
+        return {
+          segments: [
+            {
+              startedAt: first,
+              endedAt: last,
+              what: "work",
+              why: "ship",
+              matchedQuest: null,
+              proposedQuest: null,
+              matchedActivity: null,
+              continuesActivity: null,
+              newActivityReason: "new work",
+              isSwitch: false,
+              trigger: null,
+              confidence: 0.9,
+              questions: [],
+            },
+          ],
+          sessionNote: null,
+        };
+      }
+    }
+
+    await backfill(database, makeConfig(), config, new OverlapRecordingClassifier(), {
+      days: 15,
+      now: "2026-09-04T17:00:00.000Z",
+      log: () => {},
+    });
+
+    // sA's second window (classified last) carries sA's own earlier message as
+    // its tail, not sB's 11:00 message that was classified just before it.
+    expect(overlaps.at(-1)).toEqual({
+      sessionId: "sA",
+      overlap: ["2026-09-04T10:00:00.000Z"],
+    });
+  });
+});

@@ -262,3 +262,114 @@ describe("window builder", () => {
     expect(after.previousSessionNote).toBe("heading back to the walk order bug");
   });
 });
+
+describe("candidate time bounds", () => {
+  /**
+   * An activity from a *later* session in the same project. Backfill walks
+   * history, so when the window under classification is an earlier one this
+   * activity has not happened yet from that window's point of view.
+   */
+  function seedFutureActivity(database: ReturnType<typeof openDatabase>) {
+    database
+      .query(
+        `INSERT INTO claude_sessions
+          (id, claude_dir, project_dir, file_path, cwd, org, project, title, git_branch,
+           started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+         VALUES ('s2', '/c', 'p', '/c/p/s2.jsonl', '/w/marko-ui', 'personal', 'marko-ui', 'later', 'main',
+                 '2026-09-06T10:00:00.000Z', '2026-09-06T11:00:00.000Z', 1, 0, '[]', 'host', '2026-09-06T11:00:00.000Z')`,
+      )
+      .run();
+    database
+      .query(
+        `INSERT INTO activities (id, quest_id, objective, opened_at, closed_at, close_reason, revision)
+         VALUES ('A9', 'Q1', 'work from two days later', '2026-09-06T10:00:00.000Z', '2026-09-06T11:00:00.000Z', 'session_end', 1)`,
+      )
+      .run();
+    database
+      .query(
+        `INSERT INTO traces (id, activity_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+         VALUES ('T9', 'A9', 'claude-code', 'personal/marko-ui', 'session', '2026-09-06T10:00:00.000Z', '2026-09-06T11:00:00.000Z', 'hero', 'later work', 'ship', 'personal/marko-ui', 'claude-code', 0.9, 'assistant', 's2', '2026-09-06T11:00:00.000Z')`,
+      )
+      .run();
+  }
+
+  test("an activity opened after the window is not offered as a candidate", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    seedSession(database);
+    seedOpenActivity(database);
+    seedEarlierSession(database);
+    seedFutureActivity(database);
+
+    const window = buildWindow(database, {
+      sessionId: "s1",
+      sinceTs: "2026-09-04T14:30:00.000Z",
+      ...memoryInput,
+      memoryHours: 240,
+      windowEnd: "2026-09-04T15:20:00.000Z",
+    });
+
+    const offered = window.recentActivities.map((activity) => activity.activityId);
+    expect(offered).not.toContain("A9");
+    // The genuinely earlier activity is still offered, so the bound is not just
+    // emptying the slice.
+    expect(offered).toContain("A0");
+  });
+
+  test("without a windowEnd bound the future activity would be offered", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    seedSession(database);
+    seedOpenActivity(database);
+    seedFutureActivity(database);
+
+    // `windowEnd` defaults to now, which is after the seeded 2026 timestamps only
+    // if the clock says so; pass an explicit bound past the future activity to
+    // show the filter is what excludes it above, not some other clause.
+    const window = buildWindow(database, {
+      sessionId: "s1",
+      sinceTs: "2026-09-04T14:30:00.000Z",
+      ...memoryInput,
+      memoryHours: 240,
+      windowEnd: "2026-09-07T00:00:00.000Z",
+    });
+
+    expect(window.recentActivities.map((activity) => activity.activityId)).toContain("A9");
+  });
+
+  test("an open activity of this session opened after the window is not offered", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    seedSession(database);
+    seedOpenActivity(database);
+
+    const window = buildWindow(database, {
+      sessionId: "s1",
+      sinceTs: null,
+      ...memoryInput,
+      // A1 opened at 14:00; this window ended before that.
+      windowEnd: "2026-09-04T13:55:00.000Z",
+    });
+
+    expect(window.sessionOpenActivities).toEqual([]);
+  });
+
+  test("a closed activity older than memory_hours is still excluded", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    seedSession(database);
+    seedOpenActivity(database);
+    seedEarlierSession(database);
+
+    const window = buildWindow(database, {
+      sessionId: "s1",
+      sinceTs: "2026-09-04T14:30:00.000Z",
+      ...memoryInput,
+      // A0 closed at 11:00, more than an hour before the 14:30 reference.
+      memoryHours: 1,
+      windowEnd: "2026-09-04T15:20:00.000Z",
+    });
+
+    expect(window.recentActivities.map((activity) => activity.activityId)).not.toContain("A0");
+  });
+});

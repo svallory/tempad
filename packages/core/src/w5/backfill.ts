@@ -38,6 +38,9 @@ export interface BackfillResult {
   questConflicts: number;
   unknownActivityIds: number;
   overlapDropped: number;
+  questProposedOnMatched: number;
+  selectorDefaulted: number;
+  selectorAmbiguous: number;
 }
 
 interface SessionRow {
@@ -115,11 +118,13 @@ export async function backfill(
   const sessions = options.to
     ? (database
         .query(
-          "SELECT id, ended_at FROM claude_sessions WHERE ended_at >= ? AND ended_at < ? ORDER BY ended_at ASC",
+          "SELECT id, ended_at FROM claude_sessions WHERE ended_at >= ? AND ended_at < ? ORDER BY started_at ASC",
         )
         .all(cutoff, options.to) as SessionRow[])
     : (database
-        .query("SELECT id, ended_at FROM claude_sessions WHERE ended_at >= ? ORDER BY ended_at ASC")
+        .query(
+          "SELECT id, ended_at FROM claude_sessions WHERE ended_at >= ? ORDER BY started_at ASC",
+        )
         .all(cutoff) as SessionRow[]);
 
   let sessionsClassified = 0;
@@ -130,7 +135,31 @@ export async function backfill(
   let questConflicts = 0;
   let unknownActivityIds = 0;
   let overlapDropped = 0;
+  let questProposedOnMatched = 0;
+  let selectorDefaulted = 0;
+  let selectorAmbiguous = 0;
   const windowMinutes = intentConfig.throttleMinutes * 3;
+
+  // Windows are classified in chronological order *across* sessions, not
+  // session by session. Two sessions running the same afternoon interleave in
+  // real time; processing one to its end before starting the other would show a
+  // window activities that, from its own point in time, had not happened yet --
+  // the same future-leak `windowEnd` bounds inside a single window. Each
+  // session's per-chunk `sinceTs` chain still holds, because a chunk's overlap
+  // tail is derived from its own session's previous chunk, not from whatever
+  // window happened to run before it.
+  interface PendingWindow {
+    session: SessionRow;
+    chunk: { ts: string; role: string; text: string }[];
+    /** Index within the session's own chunk list, as the failure log reports it. */
+    index: number;
+    startedAt: string;
+    endedAt: string;
+    /** Last message of this session's previous chunk; the overlap tail's cut. */
+    previousChunkEnd: string | null;
+  }
+
+  const pending: PendingWindow[] = [];
 
   for (const session of sessions) {
     const fullWindow = buildWindow(database, {
@@ -140,101 +169,133 @@ export async function backfill(
       memoryHours: intentConfig.memoryHours,
       memoryActivities: intentConfig.memoryActivities,
       overlapMessages: intentConfig.overlapMessages,
+      // Only the message list is used from this window; the slice is rebuilt per
+      // chunk below with that chunk's own end as the bound.
+      windowEnd: options.to ?? session.ended_at,
     });
     const boundedMessages = options.to
       ? fullWindow.messages.filter((message) => message.ts < (options.to as string))
       : fullWindow.messages;
     const chunks = chunkByWindow(boundedMessages, windowMinutes);
 
-    const pendingChunks = chunks
-      .map((chunk, index) => ({ chunk, index }))
-      .filter(({ chunk }) => {
-        const startedAt = chunk[0]?.ts ?? session.ended_at;
-        const endedAt = chunk.at(-1)?.ts ?? session.ended_at;
-        const covered = options.force
-          ? false
-          : isWindowCovered(database, session.id, startedAt, endedAt);
-        if (covered) windowsSkipped += 1;
-        return !covered;
-      });
-
-    if (chunks.length > 0 && pendingChunks.length === 0) {
-      sessionsSkipped += 1;
-      options.log(`backfill: skipping ${session.id} (already covered)`);
-      continue;
-    }
-
-    let sessionHadSuccess = false;
-
-    for (const { chunk, index } of pendingChunks) {
+    let sessionPending = 0;
+    for (const [index, chunk] of chunks.entries()) {
       const startedAt = chunk[0]?.ts ?? session.ended_at;
       const endedAt = chunk.at(-1)?.ts ?? session.ended_at;
-
-      closeIdleActivities(store, database, {
-        sessionId: session.id,
-        windowStartedAt: startedAt,
-        idleMinutes: intentConfig.activityIdleMinutes,
-      });
-
-      // The slice is rebuilt per chunk, after the previous chunk's applyResult and
-      // session note landed: chunk n+1 must see the activities chunk n opened or
-      // closed, exactly as a live run sees the previous hook invocation's work.
-      // `sinceTs` is the previous chunk's last message, so the overlap tail is the
-      // messages before this chunk, never this chunk's own; `messages` is overridden
-      // because the chunk's bounds, not `sinceTs`, decide what it classifies.
-      const previousChunkEnd = index > 0 ? (chunks[index - 1]?.at(-1)?.ts ?? null) : null;
-      const chunkWindow = {
-        ...buildWindow(database, {
-          sessionId: session.id,
-          sinceTs: previousChunkEnd,
-          maxMessages: 5000,
-          memoryHours: intentConfig.memoryHours,
-          memoryActivities: intentConfig.memoryActivities,
-          overlapMessages: intentConfig.overlapMessages,
-        }),
-        messages: chunk,
-      };
-
-      try {
-        let result: Awaited<ReturnType<typeof classifier.classify>>;
-        try {
-          result = await classifier.classify(chunkWindow);
-        } catch {
-          result = await classifier.classify(chunkWindow);
-        }
-        const applied = applyResult(store, database, chunkWindow, result, {
-          actor: "backfill",
-          askingEnabled: false,
-          now: options.now,
-          log: options.log,
-        });
-        questConflicts += applied.questConflicts;
-        unknownActivityIds += applied.unknownActivityIds;
-        overlapDropped += applied.overlapDropped;
-        writeSessionNote(database, session.id, result.sessionNote, options.now);
-        applyIncremental(
-          database,
-          store.append({
-            actor: "backfill",
-            kind: "window.classified",
-            subject: session.id,
-            sessionId: session.id,
-            payload: { session: session.id, startedAt, endedAt },
-            at: options.now,
-          }),
-        );
-        windowsClassified += 1;
-        sessionHadSuccess = true;
-      } catch (error) {
-        windowsFailed += 1;
-        const message = error instanceof Error ? error.message : String(error);
-        options.log(`backfill: failed ${session.id} window ${index}: ${message}`);
+      const covered = options.force
+        ? false
+        : isWindowCovered(database, session.id, startedAt, endedAt);
+      if (covered) {
+        windowsSkipped += 1;
+        continue;
       }
+      sessionPending += 1;
+      pending.push({
+        session,
+        chunk,
+        index,
+        startedAt,
+        endedAt,
+        previousChunkEnd: index > 0 ? (chunks[index - 1]?.at(-1)?.ts ?? null) : null,
+      });
     }
 
-    if (sessionHadSuccess) {
+    if (chunks.length > 0 && sessionPending === 0) {
+      sessionsSkipped += 1;
+      options.log(`backfill: skipping ${session.id} (already covered)`);
+    }
+  }
+
+  pending.sort((left, right) =>
+    left.startedAt === right.startedAt
+      ? left.session.id.localeCompare(right.session.id)
+      : left.startedAt < right.startedAt
+        ? -1
+        : 1,
+  );
+
+  const sessionSuccesses = new Map<string, number>();
+  const sessionPendingCounts = new Map<string, number>();
+  for (const window of pending) {
+    sessionPendingCounts.set(
+      window.session.id,
+      (sessionPendingCounts.get(window.session.id) ?? 0) + 1,
+    );
+  }
+
+  for (const { session, chunk, index, startedAt, endedAt, previousChunkEnd } of pending) {
+    closeIdleActivities(store, database, {
+      sessionId: session.id,
+      windowStartedAt: startedAt,
+      idleMinutes: intentConfig.activityIdleMinutes,
+    });
+
+    // The slice is rebuilt per chunk, after the previous chunk's applyResult and
+    // session note landed: chunk n+1 must see the activities chunk n opened or
+    // closed, exactly as a live run sees the previous hook invocation's work.
+    // `sinceTs` is this session's previous chunk's last message, so the overlap
+    // tail is the messages before this chunk, never this chunk's own; `messages`
+    // is overridden because the chunk's bounds, not `sinceTs`, decide what it
+    // classifies.
+    const chunkWindow = {
+      ...buildWindow(database, {
+        sessionId: session.id,
+        sinceTs: previousChunkEnd,
+        maxMessages: 5000,
+        memoryHours: intentConfig.memoryHours,
+        memoryActivities: intentConfig.memoryActivities,
+        overlapMessages: intentConfig.overlapMessages,
+        windowEnd: endedAt,
+      }),
+      messages: chunk,
+    };
+
+    try {
+      let result: Awaited<ReturnType<typeof classifier.classify>>;
+      try {
+        result = await classifier.classify(chunkWindow);
+      } catch {
+        result = await classifier.classify(chunkWindow);
+      }
+      const applied = applyResult(store, database, chunkWindow, result, {
+        actor: "backfill",
+        askingEnabled: false,
+        now: options.now,
+        log: options.log,
+      });
+      questConflicts += applied.questConflicts;
+      unknownActivityIds += applied.unknownActivityIds;
+      overlapDropped += applied.overlapDropped;
+      questProposedOnMatched += applied.questProposedOnMatched;
+      selectorDefaulted += result.selectorDefaulted ?? 0;
+      selectorAmbiguous += result.selectorAmbiguous ?? 0;
+      writeSessionNote(database, session.id, result.sessionNote, options.now);
+      applyIncremental(
+        database,
+        store.append({
+          actor: "backfill",
+          kind: "window.classified",
+          subject: session.id,
+          sessionId: session.id,
+          payload: { session: session.id, startedAt, endedAt },
+          at: options.now,
+        }),
+      );
+      windowsClassified += 1;
+      sessionSuccesses.set(session.id, (sessionSuccesses.get(session.id) ?? 0) + 1);
+    } catch (error) {
+      windowsFailed += 1;
+      const message = error instanceof Error ? error.message : String(error);
+      options.log(`backfill: failed ${session.id} window ${index}: ${message}`);
+    }
+  }
+
+  for (const session of sessions) {
+    if ((sessionSuccesses.get(session.id) ?? 0) > 0) {
       sessionsClassified += 1;
-      options.log(`backfill: classified ${session.id} (${pendingChunks.length} window(s))`);
+      options.log(
+        `backfill: classified ${session.id} (${sessionPendingCounts.get(session.id) ?? 0} window(s))`,
+      );
     }
   }
 
@@ -247,5 +308,8 @@ export async function backfill(
     questConflicts,
     unknownActivityIds,
     overlapDropped,
+    questProposedOnMatched,
+    selectorDefaulted,
+    selectorAmbiguous,
   };
 }

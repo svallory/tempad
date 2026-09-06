@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   AnthropicClassifier,
   type ClassifierWindow,
+  DEFAULT_NEW_ACTIVITY_REASON,
   validateResult,
 } from "../../src/w5/classifier";
 import { buildSystemPrompt, buildUserPrompt } from "../../src/w5/prompt";
@@ -152,26 +153,93 @@ describe("classifier", () => {
     expect(new TextEncoder().encode(text).length).toBeLessThan(2048);
   });
 
-  test("validateResult rejects segments that set none or more than one activity candidate", () => {
-    expect(() =>
-      validateResult({
-        segments: [
-          {
-            ...good.segments[0],
-            matchedActivity: null,
-            continuesActivity: null,
-            newActivityReason: null,
-          },
-        ],
-      }),
-    ).toThrow(/matchedActivity.*continuesActivity.*newActivityReason/s);
+  test("validateResult defaults a segment that names no activity selector", () => {
+    const result = validateResult({
+      segments: [
+        {
+          ...good.segments[0],
+          matchedActivity: null,
+          continuesActivity: null,
+          newActivityReason: null,
+        },
+      ],
+    });
 
-    expect(() =>
-      validateResult({
-        segments: [{ ...good.segments[0], continuesActivity: "A0" }],
-      }),
-    ).toThrow(/matchedActivity.*continuesActivity.*newActivityReason/s);
+    expect(result.segments[0]?.newActivityReason).toBe(DEFAULT_NEW_ACTIVITY_REASON);
+    expect(result.segments[0]?.matchedActivity).toBeNull();
+    expect(result.segments[0]?.continuesActivity).toBeNull();
+    expect(result.selectorDefaulted).toBe(1);
+    expect(result.selectorAmbiguous).toBe(0);
+  });
 
+  test("validateResult narrows two selectors to matchedActivity by precedence", () => {
+    const result = validateResult({
+      segments: [{ ...good.segments[0], matchedActivity: "A1", continuesActivity: "A0" }],
+    });
+
+    expect(result.segments[0]?.matchedActivity).toBe("A1");
+    expect(result.segments[0]?.continuesActivity).toBeNull();
+    expect(result.segments[0]?.newActivityReason).toBeNull();
+    expect(result.selectorAmbiguous).toBe(1);
+    expect(result.selectorDefaulted).toBe(0);
+  });
+
+  test("validateResult prefers continuesActivity over newActivityReason", () => {
+    const result = validateResult({
+      segments: [
+        {
+          ...good.segments[0],
+          matchedActivity: null,
+          continuesActivity: "A0",
+          newActivityReason: "nothing fit",
+        },
+      ],
+    });
+
+    expect(result.segments[0]?.continuesActivity).toBe("A0");
+    expect(result.segments[0]?.newActivityReason).toBeNull();
+    expect(result.selectorAmbiguous).toBe(1);
+  });
+
+  test("validateResult treats omitted optional fields as null instead of failing", () => {
+    const {
+      matchedQuest: _matchedQuest,
+      proposedQuest: _proposedQuest,
+      matchedActivity: _matchedActivity,
+      continuesActivity: _continuesActivity,
+      trigger: _trigger,
+      ...withoutOptionals
+    } = good.segments[0] as Record<string, unknown>;
+
+    // A selector is still present, so nothing is defaulted: this isolates the
+    // absent-means-null normalization from the selector repair.
+    const result = validateResult({
+      segments: [{ ...withoutOptionals, newActivityReason: "new thread of work" }],
+    });
+
+    expect(result.segments[0]?.matchedQuest).toBeNull();
+    expect(result.segments[0]?.proposedQuest).toBeNull();
+    expect(result.segments[0]?.matchedActivity).toBeNull();
+    expect(result.segments[0]?.continuesActivity).toBeNull();
+    expect(result.segments[0]?.trigger).toBeNull();
+    expect(result.selectorDefaulted).toBe(0);
+  });
+
+  test("validateResult defaults a segment with every selector omitted", () => {
+    const {
+      matchedActivity: _matchedActivity,
+      continuesActivity: _continuesActivity,
+      newActivityReason: _newActivityReason,
+      ...withoutSelectors
+    } = good.segments[0] as Record<string, unknown>;
+
+    const result = validateResult({ segments: [withoutSelectors] });
+
+    expect(result.segments[0]?.newActivityReason).toBe(DEFAULT_NEW_ACTIVITY_REASON);
+    expect(result.selectorDefaulted).toBe(1);
+  });
+
+  test("validateResult still rejects a selector of the wrong type", () => {
     expect(() =>
       validateResult({
         segments: [{ ...good.segments[0], matchedActivity: null, continuesActivity: 7 }],

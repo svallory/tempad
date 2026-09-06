@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { askQuestion, recordTrace } from "../intent/api";
+import { askQuestion, assignActivity, recordTrace } from "../intent/api";
 import type { Actor } from "../intent/events";
 import { newUlid } from "../intent/ids";
 import { applyIncremental } from "../intent/projections";
@@ -16,6 +16,10 @@ export interface AppliedSummary {
   questConflicts: number;
   overlapDropped: number;
   unknownActivityIds: number;
+  /**
+   * A matched activity that had no quest, for which the classifier proposed one.
+   */
+  questProposedOnMatched: number;
 }
 
 export interface ApplyOptions {
@@ -97,6 +101,7 @@ interface ResolvedActivity {
   questCreated: boolean;
   questConflict: boolean;
   unknownActivityId: boolean;
+  questProposedOnMatched: boolean;
 }
 
 interface ActivityState {
@@ -140,12 +145,69 @@ function resolveQuest(
   };
 }
 
+/**
+ * Reuse of an activity that already exists (matched, or `continues` pointed at a
+ * still-open one). Its quest is never reassigned, but the classifier's opinion is
+ * read for what it is:
+ *
+ * - `matchedQuest: null` is *no opinion*, not "no quest". A model that omits the
+ *   field means it did not judge the quest, so the activity keeps its own and
+ *   nothing is reported -- treating this as a disagreement made almost every
+ *   segment a conflict.
+ * - a different non-null `matchedQuest` is a real disagreement: counted, logged,
+ *   never applied.
+ * - `proposedQuest` on a matched activity that has *no* quest is the one case
+ *   where something is missing rather than contested, so the quest is created and
+ *   attached through the ordinary `activity.assigned` path.
+ */
+function reuseActivity(
+  store: EventStore,
+  database: Database,
+  heroId: string,
+  segment: ClassifierSegment,
+  activityId: string,
+  existingQuestId: string | null,
+): ResolvedActivity {
+  const questConflict =
+    segment.matchedQuest !== null && segment.matchedQuest !== (existingQuestId ?? null);
+
+  if (existingQuestId === null && segment.matchedQuest === null && segment.proposedQuest !== null) {
+    const questId = createQuest(store, database, {
+      heroId,
+      title: segment.proposedQuest.title,
+      objective: segment.proposedQuest.objective,
+      commitment: segment.proposedQuest.commitment,
+      confirmed: false,
+    });
+    assignActivity(store, database, activityId, questId, "hook");
+    return {
+      activityId,
+      questId,
+      activityOpened: false,
+      questCreated: true,
+      questConflict: false,
+      unknownActivityId: false,
+      questProposedOnMatched: true,
+    };
+  }
+
+  return {
+    activityId,
+    questId: existingQuestId,
+    activityOpened: false,
+    questCreated: false,
+    questConflict,
+    unknownActivityId: false,
+    questProposedOnMatched: false,
+  };
+}
+
 function resolveActivityForSegment(
   store: EventStore,
   database: Database,
   heroId: string,
   segment: ClassifierSegment,
-  now: string,
+  openedAt: string,
 ): ResolvedActivity {
   let unknownActivityId = false;
 
@@ -154,17 +216,14 @@ function resolveActivityForSegment(
   if (segment.matchedActivity !== null) {
     const matched = readActivity(database, segment.matchedActivity);
     if (matched?.isOpen) {
-      // A quest disagreement never reassigns the activity's quest and never opens a
-      // second activity over the same stretch of attention: it is reported instead.
-      const questConflict = (matched.questId ?? null) !== (segment.matchedQuest ?? null);
-      return {
-        activityId: segment.matchedActivity,
-        questId: matched.questId,
-        activityOpened: false,
-        questCreated: false,
-        questConflict,
-        unknownActivityId: false,
-      };
+      return reuseActivity(
+        store,
+        database,
+        heroId,
+        segment,
+        segment.matchedActivity,
+        matched.questId,
+      );
     }
     unknownActivityId = true;
   }
@@ -179,15 +238,14 @@ function resolveActivityForSegment(
     if (referenced === null) {
       unknownActivityId = true;
     } else if (referenced.isOpen) {
-      const questConflict = (referenced.questId ?? null) !== (segment.matchedQuest ?? null);
-      return {
-        activityId: segment.continuesActivity,
-        questId: referenced.questId,
-        activityOpened: false,
-        questCreated: false,
-        questConflict,
-        unknownActivityId: false,
-      };
+      return reuseActivity(
+        store,
+        database,
+        heroId,
+        segment,
+        segment.continuesActivity,
+        referenced.questId,
+      );
     } else {
       continues = segment.continuesActivity;
     }
@@ -203,7 +261,7 @@ function resolveActivityForSegment(
   const activityId = openActivityContinuing(store, database, {
     quest: questId ?? undefined,
     objective: segment.what,
-    at: now,
+    at: openedAt,
     actor: "hook",
     continues: continues ?? undefined,
   });
@@ -215,6 +273,7 @@ function resolveActivityForSegment(
     questCreated,
     questConflict: false,
     unknownActivityId,
+    questProposedOnMatched: false,
   };
 }
 
@@ -235,6 +294,7 @@ export function applyResult(
     questConflicts: 0,
     overlapDropped: 0,
     unknownActivityIds: 0,
+    questProposedOnMatched: 0,
   };
 
   const overlapStart = window.overlapMessages[0]?.ts ?? null;
@@ -267,8 +327,20 @@ export function applyResult(
       continue;
     }
 
-    const { activityId, questId, activityOpened, questCreated, questConflict, unknownActivityId } =
-      resolveActivityForSegment(store, database, heroId, segment, options.now);
+    // An activity opens when the work started, not when the classifier ran. For a
+    // live run the two are minutes apart, but backfill classifies history with
+    // `now` set to the run's own clock: stamping `opened_at` with it put every
+    // activity days after the traces it owns, which is what made measured
+    // durations negative and left `opened_at < windowEnd` unable to hold.
+    const {
+      activityId,
+      questId,
+      activityOpened,
+      questCreated,
+      questConflict,
+      unknownActivityId,
+      questProposedOnMatched,
+    } = resolveActivityForSegment(store, database, heroId, segment, segment.startedAt);
 
     if (activityOpened) summary.activitiesOpened += 1;
     if (questCreated) summary.questsProposed += 1;
@@ -276,6 +348,12 @@ export function applyResult(
       summary.unknownActivityIds += 1;
       options.log(
         `w5 unknown activity id: classifier named ${segment.matchedActivity ?? segment.continuesActivity ?? "none"}, which is not an open activity in the window; opened ${activityId} instead`,
+      );
+    }
+    if (questProposedOnMatched) {
+      summary.questProposedOnMatched += 1;
+      options.log(
+        `w5 quest proposed on matched activity: activity ${activityId} had no quest, attached newly proposed ${questId ?? "none"}`,
       );
     }
     if (questConflict) {

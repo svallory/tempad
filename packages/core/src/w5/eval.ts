@@ -102,6 +102,9 @@ export interface EvalMetrics {
   questConflicts: number;
   unknownActivityIds: number;
   overlapDropped: number;
+  questProposedOnMatched: number;
+  selectorDefaulted: number;
+  selectorAmbiguous: number;
   sample: EvalSampleActivity[];
 }
 
@@ -371,6 +374,9 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
     questConflicts: backfillResult.questConflicts,
     unknownActivityIds: backfillResult.unknownActivityIds,
     overlapDropped: backfillResult.overlapDropped,
+    questProposedOnMatched: backfillResult.questProposedOnMatched,
+    selectorDefaulted: backfillResult.selectorDefaulted,
+    selectorAmbiguous: backfillResult.selectorAmbiguous,
     sample,
   };
 }

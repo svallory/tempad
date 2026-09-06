@@ -403,6 +403,9 @@ async function runEvalCommand(args: string[], context: W5Context): Promise<numbe
   context.stdout(`quest_conflicts=${metrics.questConflicts}`);
   context.stdout(`unknown_activity_ids=${metrics.unknownActivityIds}`);
   context.stdout(`overlap_dropped=${metrics.overlapDropped}`);
+  context.stdout(`quest_proposed_on_matched=${metrics.questProposedOnMatched}`);
+  context.stdout(`selector_defaulted=${metrics.selectorDefaulted}`);
+  context.stdout(`selector_ambiguous=${metrics.selectorAmbiguous}`);
   for (const activity of metrics.sample) {
     context.stdout(
       `sample: what=${JSON.stringify(activity.what)} why=${JSON.stringify(activity.why)} quest=${
