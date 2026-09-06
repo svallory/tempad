@@ -8,6 +8,7 @@ import { backfill } from "./backfill";
 import { AnthropicClassifier, type Classifier } from "./classifier";
 import { ClaudeCliClassifier } from "./classifier-cli";
 import { dedupe } from "./dedupe";
+import { runEval } from "./eval";
 import { buildAdditionalContext, installHooks, uninstallHooks } from "./hooks";
 import { enqueueJob } from "./jobs";
 import type { QuestionRow } from "./questions";
@@ -300,6 +301,7 @@ async function runBackfill(args: string[], context: W5Context): Promise<number> 
     options: {
       days: { type: "string" },
       model: { type: "string" },
+      force: { type: "boolean", default: false },
     },
     strict: true,
   });
@@ -326,6 +328,7 @@ async function runBackfill(args: string[], context: W5Context): Promise<number> 
         log(context.config, line);
         context.stdout(line);
       },
+      force: values.force === true,
     },
   );
 
@@ -335,6 +338,64 @@ async function runBackfill(args: string[], context: W5Context): Promise<number> 
 
   const attemptedWindows = result.windowsClassified + result.windowsFailed;
   if (attemptedWindows > 0 && result.windowsClassified === 0) return 1;
+  return 0;
+}
+
+async function runEvalCommand(args: string[], context: W5Context): Promise<number> {
+  const { values } = parseArgs({
+    args,
+    options: {
+      from: { type: "string" },
+      to: { type: "string" },
+      db: { type: "string" },
+    },
+    strict: true,
+  });
+
+  if (!values.from || !values.to) {
+    context.stdout("usage: tempad w5 eval --from <date> --to <date> [--db <path>]");
+    return 2;
+  }
+
+  if (context.intentConfig.w5.backend === "api" && !process.env.ANTHROPIC_API_KEY) {
+    context.stdout("ANTHROPIC_API_KEY not set");
+    return 1;
+  }
+  const classifier = buildClassifier(context.config, context.intentConfig);
+  const sourceDbPath = values.db ?? join(context.config.home, "tempad.db");
+  const scratchDir = join(context.config.home, "scratch");
+  mkdirSync(scratchDir, { recursive: true });
+
+  const metrics = await runEval({
+    from: values.from,
+    to: values.to,
+    sourceDbPath,
+    scratchDir,
+    now: new Date().toISOString(),
+    classifier,
+    log: (line) => {
+      log(context.config, line);
+      context.stdout(line);
+    },
+  });
+
+  context.stdout(`copied_db=${metrics.copiedDbPath}`);
+  context.stdout(`traces=${metrics.traces}`);
+  context.stdout(`activities=${metrics.activities}`);
+  context.stdout(`ratio=${metrics.ratio.toFixed(3)}`);
+  context.stdout(
+    `median_activity_duration_minutes=${metrics.medianActivityDurationMinutes.toFixed(1)}`,
+  );
+  context.stdout(`continues_links=${metrics.continuesLinks}`);
+  context.stdout(`quest_conflicts=${metrics.questConflicts}`);
+  for (const activity of metrics.sample) {
+    context.stdout(
+      `sample: what=${JSON.stringify(activity.what)} why=${JSON.stringify(activity.why)} quest=${
+        activity.questTitle ?? "-"
+      } duration_minutes=${activity.durationMinutes ?? "-"} session=${activity.sessionTitle ?? "-"}`,
+    );
+  }
+
   return 0;
 }
 
@@ -359,6 +420,7 @@ export async function runW5Command(args: string[], context: W5Context): Promise<
   if (subcommand === "hook") return runHook(rest);
   if (subcommand === "backfill") return runBackfill(rest, context);
   if (subcommand === "dedupe") return runDedupe(rest, context);
+  if (subcommand === "eval") return runEvalCommand(rest, context);
 
   return 2;
 }

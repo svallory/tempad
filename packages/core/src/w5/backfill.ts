@@ -16,6 +16,8 @@ export interface BackfillOptions {
   days: number;
   now: string;
   log: (line: string) => void;
+  force?: boolean;
+  to?: string;
 }
 
 export interface BackfillResult {
@@ -24,6 +26,7 @@ export interface BackfillResult {
   windowsClassified: number;
   windowsFailed: number;
   windowsSkipped: number;
+  questConflicts: number;
 }
 
 interface SessionRow {
@@ -98,15 +101,22 @@ export async function backfill(
     Date.parse(options.now) - options.days * 24 * 60 * 60 * 1000,
   ).toISOString();
 
-  const sessions = database
-    .query("SELECT id, ended_at FROM claude_sessions WHERE ended_at >= ? ORDER BY ended_at ASC")
-    .all(cutoff) as SessionRow[];
+  const sessions = options.to
+    ? (database
+        .query(
+          "SELECT id, ended_at FROM claude_sessions WHERE ended_at >= ? AND ended_at <= ? ORDER BY ended_at ASC",
+        )
+        .all(cutoff, options.to) as SessionRow[])
+    : (database
+        .query("SELECT id, ended_at FROM claude_sessions WHERE ended_at >= ? ORDER BY ended_at ASC")
+        .all(cutoff) as SessionRow[]);
 
   let sessionsClassified = 0;
   let sessionsSkipped = 0;
   let windowsClassified = 0;
   let windowsFailed = 0;
   let windowsSkipped = 0;
+  const questConflicts = 0;
   const windowMinutes = intentConfig.throttleMinutes * 3;
 
   for (const session of sessions) {
@@ -125,7 +135,9 @@ export async function backfill(
       .filter(({ chunk }) => {
         const startedAt = chunk[0]?.ts ?? session.ended_at;
         const endedAt = chunk.at(-1)?.ts ?? session.ended_at;
-        const covered = isWindowCovered(database, session.id, startedAt, endedAt);
+        const covered = options.force
+          ? false
+          : isWindowCovered(database, session.id, startedAt, endedAt);
         if (covered) windowsSkipped += 1;
         return !covered;
       });
@@ -207,5 +219,12 @@ export async function backfill(
     }
   }
 
-  return { sessionsClassified, sessionsSkipped, windowsClassified, windowsFailed, windowsSkipped };
+  return {
+    sessionsClassified,
+    sessionsSkipped,
+    windowsClassified,
+    windowsFailed,
+    windowsSkipped,
+    questConflicts,
+  };
 }

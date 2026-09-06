@@ -483,4 +483,30 @@ describe("backfill", () => {
       .get() as { session_note: string | null } | null;
     expect(run?.session_note).toBe("note from chunk 2");
   });
+
+  test("force bypasses w5_windows coverage and reclassifies an already-covered window", async () => {
+    const database = openDatabase(":memory:");
+    seedHero(database);
+    seedSession(database, { id: "s1", endedAt: "2026-09-04T15:20:00.000Z" });
+
+    const classifier = new FakeClassifier();
+    const logs: string[] = [];
+
+    const firstResult = await backfill(database, makeConfig(), config, classifier, {
+      days: 15,
+      now: "2026-09-04T17:00:00.000Z",
+      log: (line) => logs.push(line),
+    });
+    expect(firstResult.windowsClassified).toBe(1);
+
+    const secondResult = await backfill(database, makeConfig(), config, classifier, {
+      days: 15,
+      now: "2026-09-04T17:00:00.000Z",
+      log: (line) => logs.push(line),
+      force: true,
+    });
+
+    expect(secondResult.windowsClassified).not.toBe(0);
+    expect(secondResult.windowsSkipped).toBe(0);
+  });
 });
