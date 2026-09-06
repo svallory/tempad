@@ -13,6 +13,10 @@ export interface W5Config {
   backend: W5Backend;
   claudeCommand: string;
   timeoutSeconds: number;
+  activityIdleMinutes: number;
+  memoryHours: number;
+  memoryActivities: number;
+  overlapMessages: number;
 }
 
 export interface IntentConfig {
@@ -37,6 +41,10 @@ export function defaultIntentConfig(): IntentConfig {
       backend: "claude-cli",
       claudeCommand: "claude",
       timeoutSeconds: 180,
+      activityIdleMinutes: 45,
+      memoryHours: 8,
+      memoryActivities: 10,
+      overlapMessages: 3,
     },
   };
 }
@@ -96,6 +104,10 @@ export function loadIntentConfig(tomlPath: string): IntentConfig {
       claudeCommand:
         typeof w5.claude_command === "string" ? w5.claude_command : config.w5.claudeCommand,
       timeoutSeconds: number("timeout_seconds", config.w5.timeoutSeconds),
+      activityIdleMinutes: number("activity_idle_minutes", config.w5.activityIdleMinutes),
+      memoryHours: number("memory_hours", config.w5.memoryHours),
+      memoryActivities: number("memory_activities", config.w5.memoryActivities),
+      overlapMessages: number("overlap_messages", config.w5.overlapMessages),
     };
   }
   return config;

@@ -23,6 +23,10 @@ ask_budget_minutes = 30
 ask_expire_turns = 2
 backfill_days = 15
 timeout_seconds = 180
+activity_idle_minutes = 45
+memory_hours = 8
+memory_activities = 10
+overlap_messages = 3
 
 [[projects]]
 pattern = "~/work/:org/:project/:rest*"

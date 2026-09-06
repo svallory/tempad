@@ -124,6 +124,38 @@ describe("w5 jobs", () => {
     expect(recordedMs).toBeLessThanOrEqual(after);
   });
 
+  test("enqueueJob stores kind, defaulting to classify, and upgrades kind on duplicate", () => {
+    const database = openDatabase(":memory:");
+    enqueueJob(database, {
+      sessionId: "s3",
+      forced: false,
+      now: "2026-09-06T10:00:00.000Z",
+      throttleMinutes: 10,
+    });
+    expect(
+      (database.query("SELECT kind FROM w5_jobs WHERE session_id = 's3'").get() as { kind: string })
+        .kind,
+    ).toBe("classify");
+
+    enqueueJob(database, {
+      sessionId: "s3",
+      forced: true,
+      kind: "session_end",
+      now: "2026-09-06T10:01:00.000Z",
+      throttleMinutes: 10,
+    });
+    const row = database
+      .query("SELECT kind, forced FROM w5_jobs WHERE session_id = 's3'")
+      .get() as {
+      kind: string;
+      forced: number;
+    };
+    expect(row).toEqual({ kind: "session_end", forced: 1 });
+
+    const job = claimNextJob(database, "2026-09-06T10:02:00.000Z");
+    expect(job?.kind).toBe("session_end");
+  });
+
   test("failJob records the error and frees the queue", () => {
     const database = openDatabase(":memory:");
     enqueueJob(database, { sessionId: "s2", forced: true, throttleMinutes: 10 });

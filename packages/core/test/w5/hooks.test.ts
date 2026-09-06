@@ -159,8 +159,40 @@ describe("w5-stop.sh", () => {
       await runHook("PreCompact");
 
       const argv = readFileSync(argvLog, "utf8").trim().split("\n");
-      expect(argv[0]).toBe("w5 enqueue --session s1");
-      expect(argv[1]).toBe("w5 enqueue --session s1 --forced");
+      expect(argv[0]).toBe("w5 enqueue --session s1 --kind classify");
+      expect(argv[1]).toBe("w5 enqueue --session s1 --forced --kind classify");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("forwards SessionEnd as --kind session_end and Stop as --kind classify", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-hookscript-test-"));
+    try {
+      const fakeTempad = join(dir, "tempad");
+      const argvLog = join(dir, "argv.log");
+      writeFileSync(fakeTempad, `#!/bin/sh\necho "$@" >> "${argvLog}"\n`);
+      chmodSync(fakeTempad, 0o755);
+
+      const scriptPath = join(import.meta.dir, "../../hooks/w5-stop.sh");
+
+      const spawnHookAndCaptureArgv = async (hookEventName: string) => {
+        const proc = Bun.spawn({
+          cmd: ["bash", scriptPath],
+          env: { ...process.env, TEMPAD_BIN: fakeTempad, TEMPAD_HOME: dir },
+          stdin: new Response(JSON.stringify({ session_id: "s1", hook_event_name: hookEventName })),
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        await proc.exited;
+      };
+
+      await spawnHookAndCaptureArgv("Stop");
+      await spawnHookAndCaptureArgv("SessionEnd");
+
+      const argv = readFileSync(argvLog, "utf8").trim().split("\n");
+      expect(argv[0]).toBe("w5 enqueue --session s1 --kind classify");
+      expect(argv[1]).toBe("w5 enqueue --session s1 --forced --kind session_end");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -264,7 +296,7 @@ describe("w5-stop.sh / w5-prompt.sh injection safety", () => {
       await proc.exited;
 
       const argv = readFileSync(argvLog, "utf8").trim();
-      expect(argv).toBe("w5 enqueue --session s1");
+      expect(argv).toBe("w5 enqueue --session s1 --kind classify");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
