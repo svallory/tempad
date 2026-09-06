@@ -30,6 +30,8 @@ export interface BackfillResult {
   windowsFailed: number;
   windowsSkipped: number;
   questConflicts: number;
+  unknownActivityIds: number;
+  overlapDropped: number;
 }
 
 interface SessionRow {
@@ -119,7 +121,9 @@ export async function backfill(
   let windowsClassified = 0;
   let windowsFailed = 0;
   let windowsSkipped = 0;
-  const questConflicts = 0;
+  let questConflicts = 0;
+  let unknownActivityIds = 0;
+  let overlapDropped = 0;
   const windowMinutes = intentConfig.throttleMinutes * 3;
 
   for (const session of sessions) {
@@ -192,12 +196,15 @@ export async function backfill(
         } catch {
           result = await classifier.classify(chunkWindow);
         }
-        applyResult(store, database, chunkWindow, result, {
+        const applied = applyResult(store, database, chunkWindow, result, {
           actor: "backfill",
           askingEnabled: false,
           now: options.now,
           log: options.log,
         });
+        questConflicts += applied.questConflicts;
+        unknownActivityIds += applied.unknownActivityIds;
+        overlapDropped += applied.overlapDropped;
         writeSessionNote(database, session.id, result.sessionNote, options.now);
         applyIncremental(
           database,
@@ -232,5 +239,7 @@ export async function backfill(
     windowsFailed,
     windowsSkipped,
     questConflicts,
+    unknownActivityIds,
+    overlapDropped,
   };
 }

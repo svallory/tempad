@@ -25,12 +25,15 @@ class FakeClassifier implements Classifier {
           matchedQuest: null,
           proposedQuest: null,
           matchedActivity: null,
+          continuesActivity: null,
+          newActivityReason: "first work of the window",
           isSwitch: false,
           trigger: null,
           confidence: 0.9,
           questions: [],
         },
       ],
+      sessionNote: null,
     };
   }
 }
@@ -211,5 +214,116 @@ describe("w5 eval", () => {
 
     expect(metrics.traces).toBe(1);
     expect(metrics.activities).toBe(1);
+  });
+
+  test("reports a real quest conflict count from the run summary", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-conflict-"));
+    const sourcePath = join(dir, "source.db");
+
+    const database = openDatabase(sourcePath);
+    ensureTables(database);
+    const store = new EventStore(database);
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "hero.created",
+        subject: "H1",
+        payload: { name: "Saulo" },
+      }),
+    );
+    database
+      .query(
+        `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, title, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+         VALUES ('s1', '/c', 'p', '/c/p/s1.jsonl', '/w/p', 'personal', 'p', 'p session', 'main', '2026-09-01T10:00:00.000Z', '2026-09-01T15:40:00.000Z', 1, 0, '[]', 'host', '2026-09-01T15:40:00.000Z')`,
+      )
+      .run();
+    // Two message groups more than throttleMinutes*3 = 30 minutes apart, so
+    // backfill splits them into two chunks classified one after another;
+    // less than activityIdleMinutes = 45 apart, so chunk 1's activity is
+    // still open when chunk 2 is classified.
+    for (const [index, ts] of ["2026-09-01T10:00:00.000Z", "2026-09-01T10:40:00.000Z"].entries()) {
+      database
+        .query(
+          `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+           VALUES (?, 's1', ?, 'user', 0, 'do the thing')`,
+        )
+        .run(`m${index}`, ts);
+    }
+    database.close();
+
+    /**
+     * Chunk 1 proposes a new quest for a new activity. Chunk 2 reuses that
+     * activity via `matchedActivity` but names a different `matchedQuest`
+     * (`null`, the activity's real quest is non-null) -- `apply.ts` never
+     * reassigns a matched activity's quest, so this is exactly a quest
+     * conflict, counted and returned in the run summary.
+     */
+    class ConflictingClassifier implements Classifier {
+      private chunk = 0;
+
+      async classify(window: ClassifierWindow): Promise<ClassifierResult> {
+        this.chunk += 1;
+        const first = window.messages[0]?.ts ?? "2026-09-01T10:00:00.000Z";
+        const last = window.messages.at(-1)?.ts ?? first;
+
+        if (this.chunk === 1) {
+          return {
+            segments: [
+              {
+                startedAt: first,
+                endedAt: last,
+                what: "work",
+                why: "ship",
+                matchedQuest: null,
+                proposedQuest: { title: "Q1", objective: "ship it", commitment: "personal" },
+                matchedActivity: null,
+                continuesActivity: null,
+                newActivityReason: "first work of the window",
+                isSwitch: false,
+                trigger: null,
+                confidence: 0.9,
+                questions: [],
+              },
+            ],
+            sessionNote: null,
+          };
+        }
+
+        const open = window.sessionOpenActivities.at(-1);
+        return {
+          segments: [
+            {
+              startedAt: first,
+              endedAt: last,
+              what: "more work",
+              why: "ship",
+              matchedQuest: null,
+              proposedQuest: null,
+              matchedActivity: open?.activityId ?? null,
+              continuesActivity: null,
+              newActivityReason: open ? null : "nothing open to reuse",
+              isSwitch: false,
+              trigger: null,
+              confidence: 0.9,
+              questions: [],
+            },
+          ],
+          sessionNote: null,
+        };
+      }
+    }
+
+    const metrics = await runEval({
+      from: "2026-09-01",
+      to: "2026-09-02",
+      sourceDbPath: sourcePath,
+      scratchDir: dir,
+      now: "2026-09-02T00:00:00.000Z",
+      classifier: new ConflictingClassifier(),
+      log: () => {},
+    });
+
+    expect(metrics.questConflicts).toBe(1);
   });
 });

@@ -65,6 +65,8 @@ export interface EvalMetrics {
   medianActivityDurationMinutes: number;
   continuesLinks: number;
   questConflicts: number;
+  unknownActivityIds: number;
+  overlapDropped: number;
   sample: EvalSampleActivity[];
 }
 
@@ -193,6 +195,8 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
     medianActivityDurationMinutes: median(durationsMinutes),
     continuesLinks: continuesCount.count,
     questConflicts: backfillResult.questConflicts,
+    unknownActivityIds: backfillResult.unknownActivityIds,
+    overlapDropped: backfillResult.overlapDropped,
     sample,
   };
 }
