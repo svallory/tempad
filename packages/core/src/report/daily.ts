@@ -167,11 +167,12 @@ function render(database: Database, config: Config, options: ReportOptions): str
           lines.push(
             `- ${questTitle}${unconfirmed}${inferred}: ${outcomes} (${minutesLabel(minutes)})`,
           );
-          const shortWork = keyDismissedMinutes.find(
-            (row) => row.questId === questStints[0]?.questId,
-          );
-          if (shortWork) {
-            lines.push(`  - short work: ${Math.round(shortWork.minutes)} min`);
+          const groupQuestIds = new Set(questStints.map((stint) => stint.questId));
+          const shortWorkMinutes = keyDismissedMinutes
+            .filter((row) => groupQuestIds.has(row.questId))
+            .reduce((sum, row) => sum + row.minutes, 0);
+          if (shortWorkMinutes > 0) {
+            lines.push(`  - short work: ${Math.round(shortWorkMinutes)} min`);
           }
         }
       }
