@@ -779,7 +779,7 @@ describe("backfill and declared quests", () => {
     seedHero(database);
     seedSession(database, { id: "s1", endedAt: "2026-09-04T15:20:00.000Z" });
 
-    await backfill(
+    const result = await backfill(
       database,
       makeConfig(),
       { ...config, inferenceFallback: false },
@@ -795,6 +795,8 @@ describe("backfill and declared quests", () => {
     }[];
     expect(activities.length).toBeGreaterThan(0);
     expect(activities.every((activity) => activity.questId === null)).toBe(true);
+    expect(result.sessionsDeclared).toBe(1);
+    expect(result.sessionsInferred).toBe(0);
   });
 
   test("a session that declares partway through never gets an inferred quest", async () => {
@@ -824,7 +826,7 @@ describe("backfill and declared quests", () => {
       heroId: hero.id,
     });
 
-    await backfill(database, makeConfig(), config, new FakeClassifier(), {
+    const result = await backfill(database, makeConfig(), config, new FakeClassifier(), {
       days: 15,
       now: "2026-09-04T17:00:00.000Z",
       log: () => {},
@@ -836,6 +838,8 @@ describe("backfill and declared quests", () => {
       .query("SELECT COUNT(*) as count FROM quests WHERE origin_kind = 'inferred'")
       .get() as { count: number };
     expect(inferred.count).toBe(0);
+    expect(result.sessionsDeclared).toBe(1);
+    expect(result.sessionsInferred).toBe(0);
   });
 
   test("the result field is named doubts", async () => {

@@ -42,6 +42,10 @@ export interface BackfillResult {
   questProposedOnMatched: number;
   selectorDefaulted: number;
   selectorAmbiguous: number;
+  /** Sessions classified this run whose `modeFor` was `"declared"`. */
+  sessionsDeclared: number;
+  /** Sessions classified this run whose `modeFor` was `"inferred"`. */
+  sessionsInferred: number;
 }
 
 interface SessionRow {
@@ -316,12 +320,16 @@ export async function backfill(
     }
   }
 
+  let sessionsDeclared = 0;
+  let sessionsInferred = 0;
   for (const session of sessions) {
     if ((sessionSuccesses.get(session.id) ?? 0) > 0) {
       sessionsClassified += 1;
       options.log(
         `backfill: classified ${session.id} (${sessionPendingCounts.get(session.id) ?? 0} window(s))`,
       );
+      if (modeFor(session.id) === "declared") sessionsDeclared += 1;
+      else sessionsInferred += 1;
     }
   }
 
@@ -337,5 +345,7 @@ export async function backfill(
     questProposedOnMatched,
     selectorDefaulted,
     selectorAmbiguous,
+    sessionsDeclared,
+    sessionsInferred,
   };
 }

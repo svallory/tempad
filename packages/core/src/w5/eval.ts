@@ -8,6 +8,7 @@ import { newUlid } from "../intent/ids";
 import { applyIncremental } from "../intent/projections";
 import { registerAllProjections } from "../intent/projections/register";
 import { EventStore } from "../intent/store";
+import { localDayBoundsUtc } from "../report/markdown.ts";
 import { backfill } from "./backfill";
 import type { Classifier } from "./classifier";
 
@@ -19,30 +20,29 @@ export class InvalidDeclareFileError extends Error {}
 const BARE_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * A bare `--from`/`--to` date (`"2026-09-02"`, no time component) compared as
- * TEXT against full ISO timestamps (`"2026-09-02T09:00:00.000Z"`) with `<=`
- * silently excludes the whole `to` day, since any timestamp on that day
- * sorts lexicographically after the bare date string. Normalizing once here
- * turns a bare `from` into that day's start and a bare `to` into the
- * *start of the next day*, so every caller can compare the upper bound with
- * a plain `<` and get an inclusive `to` day. A full ISO input is trusted
- * as given and used as an exclusive upper bound, matching how `from` is
- * always inclusive.
+ * A bare `--from`/`--to` date (`"2026-09-02"`, no time component) resolves to
+ * that day in the configured `TZ` -- the same local day reports use, via
+ * `localDayBoundsUtc` -- not to UTC midnight. Comparing a bare date as TEXT
+ * against full ISO timestamps with `<=` would also silently exclude the
+ * whole `to` day, since any timestamp on that day sorts lexicographically
+ * after the bare date string; normalizing once here turns a bare `from` into
+ * that local day's UTC start and a bare `to` into the *next local day's* UTC
+ * start, so every caller can compare the upper bound with a plain `<` and
+ * get an inclusive `to` day. A full ISO input is trusted as given and used
+ * as an exclusive upper bound, matching how `from` is always inclusive.
  */
 export interface EvalRange {
   from: string;
   to: string;
 }
 
-function normalizeEvalRange(from: string, to: string): EvalRange {
-  const normalizedFrom = BARE_DATE.test(from) ? `${from}T00:00:00.000Z` : from;
-  const normalizedTo = BARE_DATE.test(to)
-    ? new Date(Date.parse(`${to}T00:00:00.000Z`) + 24 * 60 * 60 * 1000).toISOString()
-    : to;
+function normalizeEvalRange(from: string, to: string, timeZone: string): EvalRange {
+  const normalizedFrom = BARE_DATE.test(from) ? localDayBoundsUtc(from, timeZone).start : from;
+  const normalizedTo = BARE_DATE.test(to) ? localDayBoundsUtc(to, timeZone).end : to;
   return { from: normalizedFrom, to: normalizedTo };
 }
 
-export function validateEvalRange(from: string, to: string): EvalRange {
+export function validateEvalRange(from: string, to: string, timeZone = "UTC"): EvalRange {
   const fromMs = Date.parse(from);
   const toMs = Date.parse(to);
   if (Number.isNaN(fromMs)) {
@@ -54,7 +54,7 @@ export function validateEvalRange(from: string, to: string): EvalRange {
   if (fromMs > toMs) {
     throw new InvalidEvalRangeError(`--from (${from}) must be on or before --to (${to})`);
   }
-  return normalizeEvalRange(from, to);
+  return normalizeEvalRange(from, to, timeZone);
 }
 
 function minimalConfig(scratchDir: string): Config {
@@ -83,6 +83,8 @@ export interface EvalOptions {
   classifier: Classifier;
   log: (line: string) => void;
   declareFile?: string;
+  /** IANA zone bare `from`/`to` dates resolve in. Defaults to UTC. */
+  timeZone?: string;
 }
 
 interface DeclareFileEntry {
@@ -262,6 +264,8 @@ export interface EvalMetrics {
   questProposedOnMatched: number;
   selectorDefaulted: number;
   selectorAmbiguous: number;
+  sessionsDeclared: number;
+  sessionsInferred: number;
   sample: EvalSampleActivity[];
 }
 
@@ -422,7 +426,7 @@ function copyDatabase(sourceDbPath: string, destinationPath: string): void {
 }
 
 export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
-  const range = validateEvalRange(options.from, options.to);
+  const range = validateEvalRange(options.from, options.to, options.timeZone);
 
   const copiedDbPath = join(options.scratchDir, `eval-${filenameSafe(options.now)}.db`);
   copyDatabase(options.sourceDbPath, copiedDbPath);
@@ -559,6 +563,8 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
     questProposedOnMatched: backfillResult.questProposedOnMatched,
     selectorDefaulted: backfillResult.selectorDefaulted,
     selectorAmbiguous: backfillResult.selectorAmbiguous,
+    sessionsDeclared: backfillResult.sessionsDeclared,
+    sessionsInferred: backfillResult.sessionsInferred,
     sample,
   };
 }
