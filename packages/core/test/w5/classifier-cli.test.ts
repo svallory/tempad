@@ -18,6 +18,7 @@ const window: ClassifierWindow = {
     { ts: "2026-09-04T15:00:00.000Z", role: "user", text: "fix bug" },
     { ts: "2026-09-04T15:05:00.000Z", role: "assistant", text: "done" },
   ],
+  mode: "declared",
   declaredQuest: null,
   parentDeclaredQuest: null,
   activityAliases: {},

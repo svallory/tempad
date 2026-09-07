@@ -326,6 +326,7 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
     org: session.org,
     project: session.project,
     messages,
+    mode,
     declaredQuest: toSlice(declaredQuest),
     parentDeclaredQuest: toSlice(parentDeclaredQuest),
     activityAliases,
