@@ -1,6 +1,5 @@
 import type { Database } from "bun:sqlite";
 import { askQuestion, assignStint, recordTrace } from "../intent/api";
-import { currentDeclaredQuest, currentDeclaredQuestForSubagent } from "../intent/declarations";
 import type { Actor } from "../intent/events";
 import { newUlid } from "../intent/ids";
 import { applyIncremental } from "../intent/projections";
@@ -236,7 +235,7 @@ function resolveStintForSegment(
 
   // `matchedStint` means "this stretch of attention is still going", so it is
   // only honoured for a stint that is actually still open.
-  if (segment.matchedStint !== null) {
+  if (typeof segment.matchedStint === "string") {
     const matched = readStint(database, segment.matchedStint);
     if (matched?.isOpen) {
       return reuseStint(store, database, heroId, segment, segment.matchedStint, matched.questId);
@@ -249,7 +248,7 @@ function resolveStintForSegment(
   // still-open stint says the attention never stopped: that is a plain reuse,
   // and opening a second row would leave two open stints for one outcome.
   let continues: string | null = null;
-  if (segment.continuesStint !== null) {
+  if (typeof segment.continuesStint === "string") {
     const referenced = readStint(database, segment.continuesStint);
     if (referenced === null) {
       unknownStintId = true;
@@ -294,100 +293,130 @@ function resolveStintForSegment(
 }
 
 /**
- * Declared mode's stint resolution. The three-way selector rule is unchanged,
- * but every branch ends with the session's declared quest: there is no per-segment
- * quest decision left to make, so nothing here creates, proposes, reassigns or
- * branches a quest.
+ * Declared mode's stint resolution. Quest identity is now a per-segment decision
+ * (`segment.quest`), since a session may have several quests active at once, but
+ * the rule that nothing here creates, proposes, reassigns or branches a quest is
+ * unchanged.
  *
- * Selectors arrive as aliases (`"A1"`). An alias the window never offered resolves
- * to nothing and opens a new stint, exactly as a fabricated id did before.
+ * `segment.stint` arrives as one of three prefixed shapes:
+ *
+ * - `P<n>.<m>` — a plan item of the segment's quest. A plan item is not a row
+ *   until the first segment names it; `planStints` keeps the one stint per
+ *   (quest, plan item) for the rest of the window, so a plan item named twice
+ *   reuses its stint instead of opening a second. Across windows the same reuse
+ *   comes from the open-stint lookup below.
+ * - `S<n>` — a stint already open in the session, reused exactly as
+ *   `matchedStint` did, including attaching a quest only when it has none.
+ * - `new: <text>` — nothing listed fits; the text is the new stint's outcome.
+ *
+ * An alias the window never offered resolves to nothing and opens a new stint,
+ * exactly as a fabricated id did before.
  */
 function resolveStintForSegmentDeclared(
   store: EventStore,
   database: Database,
   segment: ClassifierSegment,
   openedAt: string,
-  declaredQuestId: string | null,
-  aliases: Record<string, string>,
+  questId: string | null,
+  openStintAliases: Record<string, string>,
+  planAliases: Record<string, string>,
+  planStints: Map<string, string>,
 ): ResolvedStint {
-  let unknownStintId = false;
-  const resolveAlias = (alias: string | null): string | null => {
-    if (alias === null) return null;
-    return aliases[alias] ?? null;
+  const selector = segment.stint ?? "";
+
+  const reuse = (stintId: string, existingQuestId: string | null): ResolvedStint => {
+    // Reassignment is exactly what the verifier must never do, so the segment's
+    // quest is attached only to a stint that has none.
+    if (existingQuestId === null && questId !== null) {
+      assignStint(store, database, stintId, questId, "hook");
+    }
+    return {
+      stintId,
+      questId: existingQuestId ?? questId,
+      stintOpened: false,
+      questCreated: false,
+      questConflict: false,
+      unknownStintId: false,
+      questProposedOnMatched: false,
+    };
   };
 
-  const matchedId = resolveAlias(segment.matchedStint);
-  if (segment.matchedStint !== null) {
-    if (matchedId === null) {
-      unknownStintId = true;
-    } else {
-      const matched = readStint(database, matchedId);
-      if (matched?.isOpen) {
-        // A matched stint keeps its own row; the declared quest is attached only
-        // when it has none, since reassignment is exactly what the verifier must
-        // never do.
-        if (matched.questId === null && declaredQuestId !== null) {
-          assignStint(store, database, matchedId, declaredQuestId, "hook");
-        }
-        return {
-          stintId: matchedId,
-          questId: matched.questId ?? declaredQuestId,
-          stintOpened: false,
-          questCreated: false,
-          questConflict: false,
-          unknownStintId: false,
-          questProposedOnMatched: false,
-        };
-      }
-      unknownStintId = true;
-    }
-  }
-
-  let continues: string | null = null;
-  if (segment.continuesStint !== null) {
-    const continuesId = resolveAlias(segment.continuesStint);
-    if (continuesId === null) {
-      unknownStintId = true;
-    } else {
-      const referenced = readStint(database, continuesId);
-      if (referenced === null) {
-        unknownStintId = true;
-      } else if (referenced.isOpen) {
-        if (referenced.questId === null && declaredQuestId !== null) {
-          assignStint(store, database, continuesId, declaredQuestId, "hook");
-        }
-        return {
-          stintId: continuesId,
-          questId: referenced.questId ?? declaredQuestId,
-          stintOpened: false,
-          questCreated: false,
-          questConflict: false,
-          unknownStintId: false,
-          questProposedOnMatched: false,
-        };
-      } else {
-        continues = continuesId;
-      }
-    }
-  }
-
-  const stintId = openStintContinuing(store, database, {
-    quest: declaredQuestId ?? undefined,
-    outcome: segment.what,
-    at: openedAt,
-    actor: "hook",
-    continues: continues ?? undefined,
-  });
-
-  return {
-    stintId,
-    questId: declaredQuestId,
-    stintOpened: true,
-    questCreated: false,
-    questConflict: false,
-    unknownStintId,
-    questProposedOnMatched: false,
+  const open = (outcome: string, planIndex?: string, continues?: string): ResolvedStint => {
+    const stintId = openStintContinuing(store, database, {
+      quest: questId ?? undefined,
+      outcome,
+      at: openedAt,
+      actor: "hook",
+      continues,
+      planIndex,
+    });
+    return {
+      stintId,
+      questId,
+      stintOpened: true,
+      questCreated: false,
+      questConflict: false,
+      unknownStintId: false,
+      questProposedOnMatched: false,
+    };
   };
+
+  if (selector.startsWith("new: ")) {
+    return open(selector.slice("new: ".length));
+  }
+
+  if (selector.startsWith("S")) {
+    const stintId = openStintAliases[selector] ?? null;
+    const referenced = stintId === null ? null : readStint(database, stintId);
+    if (stintId !== null && referenced !== null) {
+      // A closed stint named as `Sn` is a return after a gap, which is a new
+      // stint linked to the old one -- reusing a closed row would reopen it.
+      if (referenced.isOpen) return reuse(stintId, referenced.questId);
+      return open(segment.what, undefined, stintId);
+    }
+    return { ...open(segment.what), unknownStintId: true };
+  }
+
+  if (selector.startsWith("P")) {
+    const outcome = planAliases[selector];
+    if (outcome === undefined) {
+      return { ...open(segment.what), unknownStintId: true };
+    }
+
+    // One plan item is at most one stint per session, so a match looks for the
+    // row already standing for it before opening anything.
+    const key = `${questId ?? "none"}:${selector}`;
+    const known = planStints.get(key);
+    if (known !== undefined) {
+      const referenced = readStint(database, known);
+      if (referenced?.isOpen) return reuse(known, referenced.questId);
+    }
+
+    const existing = database
+      .query(
+        `SELECT id, closed_at as closedAt FROM stints
+          WHERE plan_index = ? AND retracted_at IS NULL AND dismissed_at IS NULL
+            AND (quest_id IS ? OR quest_id = ?)
+          ORDER BY opened_at DESC LIMIT 1`,
+      )
+      .get(selector, questId, questId) as { id: string; closedAt: string | null } | null;
+
+    if (existing !== null && existing.closedAt === null) {
+      planStints.set(key, existing.id);
+      const referenced = readStint(database, existing.id);
+      return reuse(existing.id, referenced?.questId ?? null);
+    }
+
+    // The plan item had a stint that has since closed: coming back to it is a
+    // return, so the new row links to the old one.
+    const opened = open(outcome, selector, existing?.id);
+    planStints.set(key, opened.stintId);
+    return opened;
+  }
+
+  // Neither a known prefix nor a listed alias: validation repairs this shape
+  // before apply sees it, so reaching here means a hand-built result.
+  return open(segment.what);
 }
 
 /**
@@ -435,32 +464,24 @@ export function applyResult(
     questProposedOnMatched: 0,
   };
 
-  // Resolved once per window, not per segment: a re-declaration between two
-  // chunks is picked up by the next chunk's own `buildWindow` call.
-  let declaredQuestId: string | null = null;
+  // Which quest a segment serves is now the model's per-segment call, resolved
+  // through the window's alias maps: a session may hold several active at once,
+  // so there is no single window-wide declared quest left to resolve.
+  const questAliases: Record<string, string> = {
+    ...(window.activeQuestAliases ?? {}),
+    ...(window.parentActiveQuestAliases ?? {}),
+  };
   // A subagent's doubt is addressed to whoever can answer it: the parent session.
   let questionSessionId = window.sessionId;
-  if (declaredMode) {
+  if (declaredMode && window.parentActiveQuests.length > 0) {
     const at = window.messages.at(-1)?.ts ?? options.now;
-    // The window already resolved the parent for the prompt; `parentDeclaredQuest`
-    // being set is exactly "this session is a subagent with a known parent".
-    const parentSessionId =
-      window.parentDeclaredQuest !== null
-        ? latestDeclaredParentSessionId(database, window.sessionId, at)
-        : null;
-    if (parentSessionId !== null) {
-      declaredQuestId =
-        currentDeclaredQuestForSubagent(database, {
-          sessionId: window.sessionId,
-          parentSessionId,
-          at,
-        })?.questId ?? null;
-      questionSessionId = parentSessionId;
-    } else {
-      declaredQuestId =
-        currentDeclaredQuest(database, { sessionId: window.sessionId, at })?.questId ?? null;
-    }
+    questionSessionId =
+      latestDeclaredParentSessionId(database, window.sessionId, at) ?? window.sessionId;
   }
+
+  // One stint per (quest, plan item) for the life of this window; across windows
+  // the same reuse comes from the open-stint lookup in the resolver.
+  const planStints = new Map<string, string>();
 
   // A declared session with nothing declared *yet* records its work with no quest
   // and asks to declare once for the whole window -- an undeclared window is one
@@ -468,7 +489,7 @@ export function applyResult(
   // for the same stretch, so it is only asked once the window's undeclared time
   // meets stintMinMinutes; the doubt has nothing to dismiss below that (no stint
   // or question was created), so there is no bookkeeping to suppress alongside it.
-  const needsDeclaration = declaredMode && declaredQuestId === null;
+  const needsDeclaration = declaredMode && Object.keys(questAliases).length === 0;
 
   const overlapStart = window.overlapMessages[0]?.ts ?? null;
   const overlapEnd = window.overlapMessages.at(-1)?.ts ?? null;
@@ -538,8 +559,12 @@ export function applyResult(
           database,
           segment,
           segment.startedAt,
-          declaredQuestId,
-          window.stintAliases ?? {},
+          segment.quest === null || segment.quest === undefined
+            ? null
+            : (questAliases[segment.quest] ?? null),
+          window.openStintAliases ?? {},
+          window.planAliases ?? {},
+          planStints,
         )
       : resolveStintForSegment(store, database, heroId, segment, segment.startedAt);
 
@@ -548,7 +573,7 @@ export function applyResult(
     if (unknownStintId) {
       summary.unknownStintIds += 1;
       options.log(
-        `w5 unknown stint id: classifier named ${segment.matchedStint ?? segment.continuesStint ?? "none"}, which is not an open stint in the window; opened ${stintId} instead`,
+        `w5 unknown stint id: classifier named ${segment.stint ?? segment.matchedStint ?? segment.continuesStint ?? "none"}, which is not a candidate in the window; opened ${stintId} instead`,
       );
     }
     if (questProposedOnMatched) {

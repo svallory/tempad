@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { openDatabase } from "../../src/db/database";
 import {
+  activeDeclaredQuests,
   currentDeclaredQuest,
   currentDeclaredQuestForSubagent,
   declareQuest,
@@ -168,5 +169,259 @@ describe("declarations", () => {
       heroId,
     });
     expect(hasAnyDeclaration(database, "s1")).toBe(true);
+  });
+});
+
+describe("activeDeclaredQuests", () => {
+  /** Creates a quest row so a declaration of it resolves to a title. */
+  function seedQuest(
+    database: ReturnType<typeof openDatabase>,
+    store: EventStore,
+    heroId: string,
+    title: string,
+    outcome: string,
+  ): string {
+    const questId = newUlid();
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "quest.created",
+        subject: questId,
+        payload: { owner: { kind: "hero", id: heroId }, title, outcome, confirmed: true },
+      }),
+    );
+    return questId;
+  }
+
+  test("every declaration of a session stays active, aliased in declaration order", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    const store = new EventStore(database);
+    const heroId = seedHero(database, store);
+    const first = seedQuest(database, store, heroId, "Ship X", "x shipped");
+    const second = seedQuest(database, store, heroId, "Fix Y", "y fixed");
+
+    declareQuest(store, database, {
+      sessionId: "s1",
+      questId: first,
+      plan: ["ship it"],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-07T09:00:00.000Z",
+      heroId,
+    });
+    declareQuest(store, database, {
+      sessionId: "s1",
+      questId: second,
+      plan: [],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-07T10:00:00.000Z",
+      heroId,
+    });
+
+    const active = activeDeclaredQuests(database, {
+      sessionId: "s1",
+      at: "2026-09-07T11:00:00.000Z",
+    });
+
+    expect(active.map((quest) => quest.alias)).toEqual(["Q1", "Q2"]);
+    expect(active.map((quest) => quest.questId)).toEqual([first, second]);
+    expect(active[0]).toEqual({
+      questId: first,
+      title: "Ship X",
+      outcome: "x shipped",
+      plan: ["ship it"],
+      scope: "session",
+      parentSessionId: null,
+      alias: "Q1",
+    });
+  });
+
+  test("a done declaration removes its quest and the survivors renumber from the active set", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    const store = new EventStore(database);
+    const heroId = seedHero(database, store);
+    const first = seedQuest(database, store, heroId, "Ship X", "x shipped");
+    const second = seedQuest(database, store, heroId, "Fix Y", "y fixed");
+
+    for (const [questId, at] of [
+      [first, "2026-09-07T09:00:00.000Z"],
+      [second, "2026-09-07T10:00:00.000Z"],
+    ] as const) {
+      declareQuest(store, database, {
+        sessionId: "s1",
+        questId,
+        plan: [],
+        scope: "session",
+        declaredBy: "agent",
+        at,
+        heroId,
+      });
+    }
+    declareQuest(store, database, {
+      sessionId: "s1",
+      questId: first,
+      done: true,
+      plan: [],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-07T11:00:00.000Z",
+      heroId,
+    });
+
+    const active = activeDeclaredQuests(database, {
+      sessionId: "s1",
+      at: "2026-09-07T12:00:00.000Z",
+    });
+
+    // The survivor takes Q1: aliases are assigned fresh over the surviving set.
+    expect(active.map((quest) => quest.questId)).toEqual([second]);
+    expect(active.map((quest) => quest.alias)).toEqual(["Q1"]);
+  });
+
+  test("re-declaring an active quest amends its plan without moving its alias", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    const store = new EventStore(database);
+    const heroId = seedHero(database, store);
+    const first = seedQuest(database, store, heroId, "Ship X", "x shipped");
+    const second = seedQuest(database, store, heroId, "Fix Y", "y fixed");
+
+    declareQuest(store, database, {
+      sessionId: "s1",
+      questId: first,
+      plan: ["old plan"],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-07T09:00:00.000Z",
+      heroId,
+    });
+    declareQuest(store, database, {
+      sessionId: "s1",
+      questId: second,
+      plan: [],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-07T10:00:00.000Z",
+      heroId,
+    });
+    declareQuest(store, database, {
+      sessionId: "s1",
+      questId: first,
+      plan: ["new plan", "and more"],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-07T11:00:00.000Z",
+      heroId,
+    });
+
+    const active = activeDeclaredQuests(database, {
+      sessionId: "s1",
+      at: "2026-09-07T12:00:00.000Z",
+    });
+
+    expect(active.map((quest) => quest.alias)).toEqual(["Q1", "Q2"]);
+    expect(active[0]?.questId).toBe(first);
+    expect(active[0]?.plan).toEqual(["new plan", "and more"]);
+  });
+
+  test("a declaration after the reference time is not active yet", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    const store = new EventStore(database);
+    const heroId = seedHero(database, store);
+    const questId = seedQuest(database, store, heroId, "Ship X", "x shipped");
+
+    declareQuest(store, database, {
+      sessionId: "s1",
+      questId,
+      plan: [],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-07T12:00:00.000Z",
+      heroId,
+    });
+
+    expect(
+      activeDeclaredQuests(database, { sessionId: "s1", at: "2026-09-07T10:00:00.000Z" }),
+    ).toEqual([]);
+  });
+
+  test("a subagent-scope declaration is not part of the session's active quests", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    const store = new EventStore(database);
+    const heroId = seedHero(database, store);
+    const questId = seedQuest(database, store, heroId, "Verify the fix", "prove it");
+
+    declareQuest(store, database, {
+      sessionId: "s1",
+      parentSessionId: "parent",
+      questId,
+      plan: [],
+      scope: "subagent",
+      declaredBy: "agent",
+      at: "2026-09-07T09:00:00.000Z",
+      heroId,
+    });
+
+    expect(
+      activeDeclaredQuests(database, { sessionId: "s1", at: "2026-09-07T10:00:00.000Z" }),
+    ).toEqual([]);
+  });
+
+  test("declareQuest with done and no quest id throws", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    const store = new EventStore(database);
+    const heroId = seedHero(database, store);
+
+    expect(() =>
+      declareQuest(store, database, {
+        sessionId: "s1",
+        done: true,
+        plan: [],
+        scope: "session",
+        declaredBy: "agent",
+        at: "2026-09-07T09:00:00.000Z",
+        heroId,
+      }),
+    ).toThrow(/--done requires an existing quest id/);
+  });
+
+  test("a done declaration creates no quest and appends no quest.created", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    const store = new EventStore(database);
+    const heroId = seedHero(database, store);
+    const questId = seedQuest(database, store, heroId, "Ship X", "x shipped");
+    const before = (
+      database.query("SELECT COUNT(*) as count FROM events WHERE kind = 'quest.created'").get() as {
+        count: number;
+      }
+    ).count;
+
+    const result = declareQuest(store, database, {
+      sessionId: "s1",
+      questId,
+      done: true,
+      plan: [],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-07T09:00:00.000Z",
+      heroId,
+    });
+
+    expect(result.created).toBe(false);
+    expect(
+      (
+        database
+          .query("SELECT COUNT(*) as count FROM events WHERE kind = 'quest.created'")
+          .get() as { count: number }
+      ).count,
+    ).toBe(before);
   });
 });

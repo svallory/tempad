@@ -18,19 +18,35 @@ export interface ClassifierWindow {
    */
   mode: "declared" | "inferred";
   /**
-   * The quest this session declared (`tempad quest declare`), as of the window's
-   * reference time. `null` means the session has not declared anything yet, which
-   * the verifier reads as "ask to declare" rather than "infer one".
+   * Every quest this session has declared and not ended (`tempad quest declare`),
+   * as of the window's reference time, each with the alias the model names it by.
+   * Empty means the session has not declared anything yet, which the verifier
+   * reads as "ask to declare" rather than "infer one".
    */
-  declaredQuest: DeclaredQuestSlice | null;
-  /** Set only for a subagent session, from the parent's own declaration. */
-  parentDeclaredQuest: DeclaredQuestSlice | null;
+  activeQuests: (DeclaredQuestSlice & { alias: string })[];
+  /** alias -> real quest id, e.g. `{ Q1: "01H..." }`. */
+  activeQuestAliases: Record<string, string>;
   /**
-   * alias -> real stint id, e.g. `{ A1: "01H..." }`. The model only ever sees
+   * Set only for a subagent session, from the parent's own active quests, aliased
+   * `PQ1..PQn`. A subagent may place a segment on one of the parent's quests
+   * directly, so the two alias spaces are offered together and never collide.
+   */
+  parentActiveQuests: (DeclaredQuestSlice & { alias: string })[];
+  /** alias -> real quest id for the parent's quests, e.g. `{ PQ1: "01H..." }`. */
+  parentActiveQuestAliases: Record<string, string>;
+  /**
+   * alias -> real stint id, e.g. `{ S1: "01H..." }`. The model only ever sees
    * the alias, so there is no 26-character id for it to garble, and `apply.ts`
    * maps whatever it returns back through this map.
    */
-  stintAliases: Record<string, string>;
+  openStintAliases: Record<string, string>;
+  /**
+   * alias -> plan text, e.g. `{ "P2.1": "Refactor the window builder" }`, one
+   * entry per plan item of each active quest. A plan item becomes a real stint
+   * only once a segment names it, so these are prompt-only until `apply.ts`
+   * opens one.
+   */
+  planAliases?: Record<string, string>;
   /**
    * Inference-mode only (`[w5].mode = "inferred"`, or the backfill fallback for a
    * session that never declares anything). Absent in declared mode.
@@ -73,6 +89,16 @@ export interface DeclaredQuestSlice {
   plan: string[];
 }
 
+/**
+ * The plan-alias prefix for a quest alias: `Q2` numbers its plan `P2.1`, `P2.2`,
+ * and a parent's `PQ2` numbers its own `PP2.1` — swapping the trailing `Q` for a
+ * `P` keeps the two spaces distinct, which a bare number would not (`PQ1` and
+ * `Q1` would both yield `P1`).
+ */
+export function planAliasPrefix(questAlias: string): string {
+  return questAlias.replace(/Q(\d+)$/, "P$1");
+}
+
 export type QuestionKind = "belongs" | "declare";
 
 /** Retained for the inference fallback; declared mode proposes no quests. */
@@ -97,11 +123,26 @@ export interface ClassifierSegment {
    * false, forced to null when it is true. Declared mode only.
    */
   guess?: string | null;
-  /** Alias (`"A1"`), never a real id, in declared mode. */
-  matchedStint: string | null;
-  /** Alias (`"A1"`), never a real id, in declared mode. */
-  continuesStint: string | null;
-  newStintReason: string | null;
+  /**
+   * Declared mode: the alias (`"Q1"`, or a parent's `"PQ1"`) of the active quest
+   * this segment serves. `null` only when `belongs` is false -- a segment that
+   * serves nothing declared has no quest to name.
+   */
+  quest?: string | null;
+  /**
+   * Declared mode: which stint the segment lands on, as one of `"P<n>.<m>"` (a
+   * plan item of its quest), `"S<n>"` (a stint already open in the session), or
+   * `"new: <one line>"` (nothing listed fits). One field with a structural
+   * prefix rather than three optionals, because the candidates now come from two
+   * different sources that the value itself has to disambiguate.
+   */
+  stint?: string;
+  /** Inference mode only. Alias in declared mode is gone; see `stint`. */
+  matchedStint?: string | null;
+  /** Inference mode only. */
+  continuesStint?: string | null;
+  /** Inference mode only. */
+  newStintReason?: string | null;
   isSwitch: boolean;
   trigger: string | null;
   confidence: number;
@@ -137,20 +178,26 @@ export const MAX_SESSION_NOTE_LENGTH = 300;
 export const DEFAULT_NEW_STINT_REASON = "classifier gave no reason";
 
 /**
+ * The guess put on a segment whose `quest` alias the window never offered. The
+ * model was clearly trying to place the work somewhere, so the segment surfaces
+ * as a doubt rather than silently attaching to nothing.
+ */
+export const UNRECOGNIZED_QUEST_ALIAS_GUESS = "unrecognized quest alias";
+
+/**
  * Optional fields a model routinely omits rather than sending as `null`. JSON has
  * no way to distinguish "absent" from "null" here and the two mean the same thing
  * to us, so absent is normalized to `null` before anything is validated -- a
  * missing key used to be reported as "expected string or null" and fail the whole
  * window.
  */
-const NULLABLE_SEGMENT_FIELDS = [
-  "guess",
-  "matchedQuest",
-  "proposedQuest",
+const NULLABLE_SEGMENT_FIELDS = ["guess", "matchedQuest", "proposedQuest", "trigger"] as const;
+
+/** Inference mode's three-way selector fields, absent by design in declared mode. */
+const NULLABLE_INFERRED_SELECTOR_FIELDS = [
   "matchedStint",
   "continuesStint",
   "newStintReason",
-  "trigger",
 ] as const;
 
 export const QUESTION_KINDS = new Set<QuestionKind>(["belongs", "declare"]);
@@ -170,6 +217,25 @@ interface SelectorCounters {
   selectorAmbiguous: number;
 }
 
+interface DeclaredAliases {
+  quests: Set<string>;
+  openStints: Set<string>;
+  plans: Set<string>;
+}
+
+/**
+ * Whether a declared-mode `stint` value names something the window actually
+ * offered. `P` and `S` must resolve against the window's own maps; `new:` needs
+ * a non-empty outcome after the prefix, since the text becomes the stint's
+ * outcome verbatim.
+ */
+function isKnownStintSelector(selector: string, aliases: DeclaredAliases): boolean {
+  if (selector.startsWith("new: ")) return selector.slice("new: ".length).trim() !== "";
+  if (selector.startsWith("P")) return aliases.plans.has(selector);
+  if (selector.startsWith("S")) return aliases.openStints.has(selector);
+  return false;
+}
+
 function validateSegment(
   raw: unknown,
   index: number,
@@ -178,6 +244,7 @@ function validateSegment(
   counters: SelectorCounters,
   aliases: Set<string> | null,
   mode: "declared" | "inferred",
+  declaredAliases: DeclaredAliases | null,
 ): void {
   const where = `segments[${index}]`;
   if (typeof raw !== "object" || raw === null) {
@@ -188,6 +255,11 @@ function validateSegment(
 
   for (const field of NULLABLE_SEGMENT_FIELDS) {
     if (segment[field] === undefined) segment[field] = null;
+  }
+  if (mode === "inferred") {
+    for (const field of NULLABLE_INFERRED_SELECTOR_FIELDS) {
+      if (segment[field] === undefined) segment[field] = null;
+    }
   }
 
   const startedAtIsString = requireString(segment.startedAt, `${where}.startedAt`, problems);
@@ -223,16 +295,42 @@ function validateSegment(
     }
   } else if (typeof segment.belongs !== "boolean") {
     problems.push(`${where}.belongs: expected boolean`);
-  } else if (segment.belongs === false) {
-    // A doubt with nothing to say is useless to the human answering it, so this
-    // is the one new hard requirement rather than a repair.
-    if (typeof segment.guess !== "string" || segment.guess.trim() === "") {
-      problems.push(`${where}.guess: expected a non-empty string when belongs is false`);
+  } else {
+    // An alias the window never offered places the segment nowhere. The model
+    // meant to place it somewhere, so it becomes a doubt the human can settle
+    // rather than work silently attached to nothing.
+    if (
+      declaredAliases !== null &&
+      segment.belongs === true &&
+      typeof segment.quest === "string" &&
+      !declaredAliases.quests.has(segment.quest)
+    ) {
+      segment.belongs = false;
+      segment.quest = null;
+      if (typeof segment.guess !== "string" || segment.guess.trim() === "") {
+        segment.guess = UNRECOGNIZED_QUEST_ALIAS_GUESS;
+      }
+      counters.selectorDefaulted += 1;
     }
-  } else if (segment.guess !== null) {
-    // Repair, don't reject: a segment that belongs has no need to guess what else
-    // it might be, and a model that fills it in anyway is just noisy.
-    segment.guess = null;
+
+    if (segment.belongs === false) {
+      // A doubt with nothing to say is useless to the human answering it, so this
+      // is the one new hard requirement rather than a repair.
+      if (typeof segment.guess !== "string" || segment.guess.trim() === "") {
+        problems.push(`${where}.guess: expected a non-empty string when belongs is false`);
+      }
+      // A segment that serves nothing declared has no quest to name.
+      segment.quest = null;
+    } else {
+      if (segment.guess !== null) {
+        // Repair, don't reject: a segment that belongs has no need to guess what
+        // else it might be, and a model that fills it in anyway is just noisy.
+        segment.guess = null;
+      }
+      if (typeof segment.quest !== "string") {
+        problems.push(`${where}.quest: expected an active quest alias when belongs is true`);
+      }
+    }
   }
 
   if (
@@ -242,47 +340,59 @@ function validateSegment(
   ) {
     problems.push(`${where}.matchedQuest: expected string or null`);
   }
-  if (segment.matchedStint !== null && typeof segment.matchedStint !== "string") {
-    problems.push(`${where}.matchedStint: expected string or null`);
-  }
-  if (segment.continuesStint !== null && typeof segment.continuesStint !== "string") {
-    problems.push(`${where}.continuesStint: expected string or null`);
-  }
-  if (segment.newStintReason !== null && typeof segment.newStintReason !== "string") {
-    problems.push(`${where}.newStintReason: expected string or null`);
-  }
+  if (mode === "declared") {
+    // One field with a structural prefix, so there is no "exactly one of three"
+    // rule left to reconcile: the value either parses against a listed candidate
+    // or is repaired into a new stint named by the segment itself.
+    if (typeof segment.stint !== "string") {
+      problems.push(`${where}.stint: expected string`);
+    } else if (declaredAliases !== null && !isKnownStintSelector(segment.stint, declaredAliases)) {
+      segment.stint = `new: ${typeof segment.what === "string" ? segment.what : ""}`;
+      counters.selectorDefaulted += 1;
+    }
+  } else {
+    if (segment.matchedStint !== null && typeof segment.matchedStint !== "string") {
+      problems.push(`${where}.matchedStint: expected string or null`);
+    }
+    if (segment.continuesStint !== null && typeof segment.continuesStint !== "string") {
+      problems.push(`${where}.continuesStint: expected string or null`);
+    }
+    if (segment.newStintReason !== null && typeof segment.newStintReason !== "string") {
+      problems.push(`${where}.newStintReason: expected string or null`);
+    }
 
-  // An alias the window never offered resolves to nothing, exactly as a
-  // fabricated ULID did before the alias scheme: it is dropped here so the
-  // existing selector repair below re-defaults the segment, rather than adding a
-  // third counter for the same failure.
-  if (aliases !== null) {
-    if (typeof segment.matchedStint === "string" && !aliases.has(segment.matchedStint)) {
-      segment.matchedStint = null;
+    // An alias the window never offered resolves to nothing, exactly as a
+    // fabricated ULID did before the alias scheme: it is dropped here so the
+    // existing selector repair below re-defaults the segment, rather than adding
+    // a third counter for the same failure.
+    if (aliases !== null) {
+      if (typeof segment.matchedStint === "string" && !aliases.has(segment.matchedStint)) {
+        segment.matchedStint = null;
+      }
+      if (typeof segment.continuesStint === "string" && !aliases.has(segment.continuesStint)) {
+        segment.continuesStint = null;
+      }
     }
-    if (typeof segment.continuesStint === "string" && !aliases.has(segment.continuesStint)) {
-      segment.continuesStint = null;
-    }
-  }
 
-  // The prompt still asks for exactly one selector, but a model that sets none or
-  // several is repaired rather than rejected: failing the window loses a real
-  // stretch of work over a formatting slip, and both repairs are counted so the
-  // run summary shows how often the model is missing the rule.
-  const selectors = [segment.matchedStint, segment.continuesStint, segment.newStintReason].filter(
-    (candidate) => candidate !== null,
-  );
-  if (selectors.length === 0) {
-    segment.newStintReason = DEFAULT_NEW_STINT_REASON;
-    counters.selectorDefaulted += 1;
-  } else if (selectors.length > 1) {
-    if (segment.matchedStint !== null) {
-      segment.continuesStint = null;
-      segment.newStintReason = null;
-    } else {
-      segment.newStintReason = null;
+    // The prompt still asks for exactly one selector, but a model that sets none
+    // or several is repaired rather than rejected: failing the window loses a
+    // real stretch of work over a formatting slip, and both repairs are counted
+    // so the run summary shows how often the model is missing the rule.
+    const selectors = [segment.matchedStint, segment.continuesStint, segment.newStintReason].filter(
+      (candidate) => candidate !== null,
+    );
+    if (selectors.length === 0) {
+      segment.newStintReason = DEFAULT_NEW_STINT_REASON;
+      counters.selectorDefaulted += 1;
+    } else if (selectors.length > 1) {
+      if (segment.matchedStint !== null) {
+        segment.continuesStint = null;
+        segment.newStintReason = null;
+      } else {
+        segment.newStintReason = null;
+      }
+      counters.selectorAmbiguous += 1;
     }
-    counters.selectorAmbiguous += 1;
   }
   if (segment.trigger !== null && typeof segment.trigger !== "string") {
     problems.push(`${where}.trigger: expected string or null`);
@@ -346,14 +456,29 @@ export function validateResult(raw: unknown, window?: ClassifierWindow): Classif
   // Inference mode carries real ids in its slice, not aliases, so there is no
   // closed set to validate a selector against.
   const aliases =
-    mode === "declared" && window !== undefined && window.stintAliases !== undefined
-      ? new Set(Object.keys(window.stintAliases))
+    mode === "declared" && window !== undefined && window.openStintAliases !== undefined
+      ? new Set(Object.keys(window.openStintAliases))
+      : null;
+
+  // A hand-built window in a test may offer no maps at all; without them there
+  // is no closed set to check a selector against, so validation leaves the
+  // model's values alone rather than repairing everything into a new stint.
+  const declaredAliases: DeclaredAliases | null =
+    mode === "declared" && window !== undefined
+      ? {
+          quests: new Set([
+            ...Object.keys(window.activeQuestAliases ?? {}),
+            ...Object.keys(window.parentActiveQuestAliases ?? {}),
+          ]),
+          openStints: new Set(Object.keys(window.openStintAliases ?? {})),
+          plans: new Set(Object.keys(window.planAliases ?? {})),
+        }
       : null;
 
   const counters: SelectorCounters = { selectorDefaulted: 0, selectorAmbiguous: 0 };
   const segments = (raw as { segments: unknown[] }).segments;
   for (const [index, segment] of segments.entries()) {
-    validateSegment(segment, index, problems, bounds, counters, aliases, mode);
+    validateSegment(segment, index, problems, bounds, counters, aliases, mode, declaredAliases);
   }
 
   const sessionNote = (raw as { sessionNote?: unknown }).sessionNote;

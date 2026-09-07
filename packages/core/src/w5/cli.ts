@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Config } from "../config/env";
 import type { IntentConfig } from "../intent/config";
-import { currentDeclaredQuest } from "../intent/declarations";
+import { activeDeclaredQuests } from "../intent/declarations";
 import { backfill } from "./backfill";
 import { AnthropicClassifier, type Classifier } from "./classifier";
 import { ClaudeCliClassifier } from "./classifier-cli";
@@ -145,11 +145,14 @@ function runContext(args: string[], context: W5Context): number {
   });
   if (!values.session) return 0;
 
-  const declared = currentDeclaredQuest(context.database, {
+  const active = activeDeclaredQuests(context.database, {
     sessionId: values.session,
     at: new Date().toISOString(),
   });
-  const declarationLine = buildDeclarationLine(declared, values.session);
+  const declarationLine = buildDeclarationLine(
+    active.map((quest) => ({ title: quest.title, alias: quest.alias })),
+    values.session,
+  );
 
   const rows = context.database
     .query(
@@ -168,7 +171,7 @@ function runContext(args: string[], context: W5Context): number {
     ).map((row) => [row.id, row.guess]),
   );
   const text = buildAdditionalContext(questions, {
-    declaredTitle: declared?.title ?? null,
+    activeQuests: active.map((quest) => ({ title: quest.title, alias: quest.alias })),
     sessionId: values.session,
     guessFor: (questionId) => guesses.get(questionId) ?? null,
   });
@@ -276,14 +279,14 @@ function runReview(_args: string[], context: W5Context): number {
     if (question.kind === "belongs") {
       const declared =
         question.sessionId === null
-          ? null
-          : currentDeclaredQuest(context.database, {
+          ? []
+          : activeDeclaredQuests(context.database, {
               sessionId: question.sessionId,
               at: new Date().toISOString(),
             });
       context.stdout(
         `question ${question.id} expired — ${buildBelongsHandback(
-          declared?.title ?? "your declared quest",
+          declared.map((quest) => ({ title: quest.title, alias: quest.alias })),
           question.guess ?? "something else",
           question.id,
         )}`,

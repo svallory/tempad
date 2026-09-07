@@ -109,26 +109,36 @@ export function uninstallHooks(settingsPath: string): void {
 }
 
 export function buildDeclarationLine(
-  declared: { title: string } | null,
+  active: { title: string; alias: string }[],
   sessionId: string,
 ): string {
-  const quest = declared ? declared.title : "none";
-  return `tempad: session ${sessionId}, declared quest: ${quest}. Declare with the tempad-quest skill if this prompt starts a different outcome.`;
+  const quests =
+    active.length === 0
+      ? "none"
+      : active.map((quest) => `${quest.title} [${quest.alias}]`).join(", ");
+  return `tempad: session ${sessionId}, active quests: ${quests}. Declare with the tempad-quest skill if this prompt starts a different outcome.`;
 }
 
 /**
  * The hand-back for a doubt the verifier raised. Rendered fresh at read time from
- * the question's `kind`/`guess` plus the quest declared *now*, never from a
- * sentence stored when the question was asked: a title can change, and the stored
- * `text` is internal/debug only for the verifier's two kinds.
+ * the question's `kind`/`guess` plus the quests active *now*, never from a
+ * sentence stored when the question was asked: a title can change, a quest can be
+ * declared or ended since, and the stored `text` is internal/debug only for the
+ * verifier's two kinds. The doubt is against every active quest at once, so all
+ * of them are named -- answering it means picking one or saying it is something
+ * else entirely.
  */
 export function buildBelongsHandback(
-  declaredTitle: string,
+  active: { title: string; alias: string }[],
   guess: string,
   questionId: string,
 ): string {
+  const quests =
+    active.length === 0
+      ? "none"
+      : active.map((quest) => `${quest.title} [${quest.alias}]`).join(", ");
   return [
-    `w5 thinks the last stretch is not part of "${declaredTitle}" (looks like: ${guess}). Reply:`,
+    `w5 thinks the last stretch is not part of your active quests (${quests}) (looks like: ${guess}). Reply:`,
     `  tempad answer ${questionId} --belongs --why "<reason>"`,
     "  or",
     `  tempad answer ${questionId} --quest <id>|new:"<title>" --why "<reason>" [--origin current --trigger "<sentence>" --kind waiting|blocker|curiosity|unknown]`,
@@ -147,7 +157,7 @@ export function buildDeclareHandback(sessionId: string): string {
 export function buildAdditionalContext(
   questions: QuestionRow[],
   context?: {
-    declaredTitle: string | null;
+    activeQuests: { title: string; alias: string }[];
     sessionId: string;
     guessFor: (questionId: string) => string | null;
   },
@@ -163,7 +173,7 @@ export function buildAdditionalContext(
     if (context !== undefined && question.kind === "belongs") {
       lines.push(
         buildBelongsHandback(
-          context.declaredTitle ?? "your declared quest",
+          context.activeQuests,
           context.guessFor(question.id) ?? "something else",
           question.id,
         ),

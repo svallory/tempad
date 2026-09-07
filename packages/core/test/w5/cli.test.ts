@@ -342,10 +342,12 @@ describe("w5 context", () => {
     expect(code).toBe(0);
     expect(lines.length).toBeGreaterThan(0);
     const output = lines.join("\n").split("\n");
-    expect(output[0]).toMatch(/^tempad: session s1, declared quest: /);
+    expect(output[0]).toBe(
+      "tempad: session s1, active quests: Ship X [Q1]. Declare with the tempad-quest skill if this prompt starts a different outcome.",
+    );
   });
 
-  test("prints 'declared quest: none' with no declaration", async () => {
+  test("prints 'active quests: none' with no declaration", async () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
 
@@ -357,6 +359,6 @@ describe("w5 context", () => {
       stdout: (line) => lines.push(line),
     });
     expect(code).toBe(0);
-    expect(lines.join("\n")).toContain("tempad: session s1, declared quest: none.");
+    expect(lines.join("\n")).toContain("tempad: session s1, active quests: none.");
   });
 });
