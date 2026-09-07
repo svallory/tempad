@@ -420,7 +420,7 @@ async function runEvalCommand(args: string[], context: W5Context): Promise<numbe
   }
 
   try {
-    validateEvalRange(values.from, values.to);
+    validateEvalRange(values.from, values.to, context.config.tz);
   } catch (error) {
     if (error instanceof InvalidEvalRangeError) {
       context.stdout(error.message);
@@ -452,6 +452,7 @@ async function runEvalCommand(args: string[], context: W5Context): Promise<numbe
         context.stdout(line);
       },
       declareFile: values.declare,
+      timeZone: context.config.tz,
     });
   } catch (error) {
     if (error instanceof InvalidDeclareFileError) {
@@ -481,6 +482,8 @@ async function runEvalCommand(args: string[], context: W5Context): Promise<numbe
   context.stdout(`quest_proposed_on_matched=${metrics.questProposedOnMatched}`);
   context.stdout(`selector_defaulted=${metrics.selectorDefaulted}`);
   context.stdout(`selector_ambiguous=${metrics.selectorAmbiguous}`);
+  context.stdout(`sessions_declared=${metrics.sessionsDeclared}`);
+  context.stdout(`sessions_inferred=${metrics.sessionsInferred}`);
   for (const activity of metrics.sample) {
     context.stdout(
       `sample: what=${JSON.stringify(activity.what)} why=${JSON.stringify(activity.why)} quest=${

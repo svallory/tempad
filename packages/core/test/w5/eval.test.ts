@@ -12,7 +12,12 @@ import {
   type ClassifierWindow,
   validateResult,
 } from "../../src/w5/classifier";
-import { InvalidDeclareFileError, InvalidEvalRangeError, runEval } from "../../src/w5/eval";
+import {
+  InvalidDeclareFileError,
+  InvalidEvalRangeError,
+  runEval,
+  validateEvalRange,
+} from "../../src/w5/eval";
 
 registerAllProjections();
 
@@ -73,6 +78,36 @@ function seedSourceDb(path: string): void {
   database.close();
 }
 
+describe("validateEvalRange bare-date timezone", () => {
+  test("resolves a bare date to the configured TZ's local day", () => {
+    const range = validateEvalRange("2026-09-02", "2026-09-02", "America/Sao_Paulo");
+    expect(range.from).toBe("2026-09-02T03:00:00.000Z");
+    expect(range.to).toBe("2026-09-03T03:00:00.000Z");
+  });
+
+  test("resolves a bare date to UTC when TZ is UTC", () => {
+    const range = validateEvalRange("2026-09-02", "2026-09-02", "UTC");
+    expect(range.from).toBe("2026-09-02T00:00:00.000Z");
+    expect(range.to).toBe("2026-09-03T00:00:00.000Z");
+  });
+
+  test("defaults to UTC when no timezone is given", () => {
+    const range = validateEvalRange("2026-09-02", "2026-09-02");
+    expect(range.from).toBe("2026-09-02T00:00:00.000Z");
+    expect(range.to).toBe("2026-09-03T00:00:00.000Z");
+  });
+
+  test("leaves a full ISO input untouched regardless of timezone", () => {
+    const range = validateEvalRange(
+      "2026-09-02T09:00:00.000Z",
+      "2026-09-02T18:30:00.000Z",
+      "America/Sao_Paulo",
+    );
+    expect(range.from).toBe("2026-09-02T09:00:00.000Z");
+    expect(range.to).toBe("2026-09-02T18:30:00.000Z");
+  });
+});
+
 describe("w5 eval", () => {
   test("copies the source db, force-reclassifies the range, and reports metrics without touching the source", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tempad-eval-"));
@@ -95,6 +130,8 @@ describe("w5 eval", () => {
     expect(metrics.ratio).toBe(1);
     expect(metrics.continuesLinks).toBe(0);
     expect(metrics.doubts).toBe(0);
+    expect(metrics.sessionsDeclared).toBe(0);
+    expect(metrics.sessionsInferred).toBe(1);
     expect(metrics.sample.length).toBe(1);
     expect(metrics.sample[0]).toMatchObject({
       what: "work",
