@@ -192,6 +192,23 @@ describe("dailyReport", () => {
     database.close();
   });
 
+  test("a quest line gets an (inferred) suffix when its origin_kind is not declared", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(`UPDATE quests SET origin_kind = 'declared' WHERE id = 'quest-2'`);
+
+    const output = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+    });
+
+    expect(output).toContain("Polish the report output (inferred): ");
+    expect(output).not.toContain("Investigate flaky commit grouping [unconfirmed] (inferred)");
+
+    database.close();
+  });
+
   test("a weekday with nothing prints no evidence, a weekend with nothing is omitted", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     // no seed: empty database

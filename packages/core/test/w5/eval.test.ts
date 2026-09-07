@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDatabase } from "../../src/db/database";
@@ -824,5 +824,63 @@ describe("w5 eval", () => {
     };
     expect(oldTrace.retracted_at).not.toBeNull();
     copied.close();
+  });
+
+  test("--declare applies declarations to the copy before rerunning, producing doubts/doubtsAnswered/tracesUnattributed", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-declare-"));
+    const sourcePath = join(dir, "source.db");
+    seedSourceDb(sourcePath);
+    const declareFile = join(dir, "declare.json");
+    writeFileSync(
+      declareFile,
+      JSON.stringify([
+        {
+          session_id: "s1",
+          at: "2026-09-01T09:00:00.000Z",
+          new: { title: "Ship p", objective: "ship it", commitment: "personal" },
+        },
+      ]),
+    );
+
+    const metrics = await runEval({
+      from: "2026-09-01",
+      to: "2026-09-02",
+      sourceDbPath: sourcePath,
+      scratchDir: dir,
+      now: "2026-09-02T00:00:00.000Z",
+      classifier: new FakeClassifier(),
+      log: () => {},
+      declareFile,
+    });
+
+    expect(metrics.doubts).toBeDefined();
+    expect(metrics.doubtsAnswered).toBe(0);
+    expect(metrics.tracesUnattributed).toBe(0);
+
+    const copied = openDatabase(metrics.copiedDbPath);
+    const quest = copied
+      .query("SELECT title, origin_kind as originKind FROM quests WHERE title = 'Ship p'")
+      .get() as { title: string; originKind: string } | null;
+    expect(quest).not.toBeNull();
+    expect(quest?.originKind).toBe("declared");
+    copied.close();
+  });
+
+  test("--declare leaves traces unattributed when the session never declares in that window", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-undeclared-"));
+    const sourcePath = join(dir, "source.db");
+    seedSourceDb(sourcePath);
+
+    const metrics = await runEval({
+      from: "2026-09-01",
+      to: "2026-09-02",
+      sourceDbPath: sourcePath,
+      scratchDir: dir,
+      now: "2026-09-02T00:00:00.000Z",
+      classifier: new FakeClassifier(),
+      log: () => {},
+    });
+
+    expect(metrics.tracesUnattributed).toBeGreaterThan(0);
   });
 });

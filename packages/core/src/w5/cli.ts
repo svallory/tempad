@@ -407,12 +407,15 @@ async function runEvalCommand(args: string[], context: W5Context): Promise<numbe
       from: { type: "string" },
       to: { type: "string" },
       db: { type: "string" },
+      declare: { type: "string" },
     },
     strict: true,
   });
 
   if (!values.from || !values.to) {
-    context.stdout("usage: tempad w5 eval --from <date> --to <date> [--db <path>]");
+    context.stdout(
+      "usage: tempad w5 eval --from <date> --to <date> [--db <path>] [--declare <file>]",
+    );
     return 2;
   }
 
@@ -446,6 +449,7 @@ async function runEvalCommand(args: string[], context: W5Context): Promise<numbe
       log(context.config, line);
       context.stdout(line);
     },
+    declareFile: values.declare,
   });
 
   context.stdout(`copied_db=${metrics.copiedDbPath}`);
@@ -460,6 +464,8 @@ async function runEvalCommand(args: string[], context: W5Context): Promise<numbe
   );
   context.stdout(`continues_links=${metrics.continuesLinks}`);
   context.stdout(`doubts=${metrics.doubts}`);
+  context.stdout(`doubts_answered=${metrics.doubtsAnswered}`);
+  context.stdout(`traces_unattributed=${metrics.tracesUnattributed}`);
   context.stdout(`unknown_activity_ids=${metrics.unknownActivityIds}`);
   context.stdout(`overlap_dropped=${metrics.overlapDropped}`);
   context.stdout(`quest_proposed_on_matched=${metrics.questProposedOnMatched}`);

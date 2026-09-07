@@ -3,10 +3,16 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDatabase } from "../src/db/database.ts";
+import { declareQuest } from "../src/intent/declarations.ts";
+import { newUlid } from "../src/intent/ids.ts";
+import { applyIncremental } from "../src/intent/projections/index.ts";
+import { EventStore } from "../src/intent/store.ts";
 import {
+  attributeNonClaudeEvidence,
   queryActivities,
   queryOpenQuestions,
   queryQuests,
+  querySideQuestDoubts,
   querySideQuests,
 } from "../src/report/intent-queries.ts";
 import { REPORT_CONFIG, seedReportFixtures } from "./fixtures/report-golden/seed.ts";
@@ -41,6 +47,7 @@ describe("queryActivities", () => {
     expect(main?.org).toBe("acme");
     expect(main?.project).toBe("widgets");
     expect(main?.minutes).toBe(70);
+    expect(main?.questOriginKind).toBe("inferred");
 
     database.close();
   });
@@ -215,6 +222,99 @@ describe("queryQuests", () => {
 
     const wrongClient = queryQuests(database, { ...RANGE, client: "other" });
     expect(wrongClient.find((quest) => quest.id === "quest-1")).toBeUndefined();
+
+    database.close();
+  });
+
+  test("carries the quest's origin_kind", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    const quests = queryQuests(database, RANGE);
+    const quest1 = quests.find((quest) => quest.id === "quest-1");
+    expect(quest1?.originKind).toBe("inferred");
+
+    database.close();
+  });
+});
+
+describe("attributeNonClaudeEvidence", () => {
+  test("attributes a commit to the declaring session active at authored_at, and leaves an unmatched commit unattributed", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    const store = new EventStore(database);
+    const heroId = newUlid();
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "hero.created",
+        subject: heroId,
+        payload: { name: "Saulo" },
+      }),
+    );
+    declareQuest(store, database, {
+      sessionId: "session-1",
+      newQuest: { title: "Ship p", objective: "ship it", commitment: "personal" },
+      plan: [],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-01T12:00:00.000Z",
+      heroId,
+    });
+
+    // "bbbbbbb2222..." (authored 2026-09-01T14:00Z) falls outside session-1's
+    // 12:15Z-13:45Z window, so it has no overlapping session and stays
+    // unattributed.
+    database.exec(
+      `INSERT INTO gh_commits (sha, repo, branches, author_name, author_email, authored_at, committed_at, subject, body, files_changed, insertions, deletions)
+       VALUES ('ccccccc9999999999999999999999999999999', 'acme/widgets', '["feature/report-polish"]', 'Octo Cat', 'octocat@example.com', '2026-09-01T12:30:00.000Z', '2026-09-01T12:30:00.000Z', 'feat(widgets): inside declared window', NULL, 1, 1, 1)`,
+    );
+
+    const rows = attributeNonClaudeEvidence(database, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+      timeZone: REPORT_CONFIG.tz,
+    });
+
+    const inRange = rows.find((row) => row.id === "ccccccc9999999999999999999999999999999");
+    expect(inRange?.questTitle).toBe("Ship p");
+
+    const noSession = rows.find((row) => row.id === "bbbbbbb2222222222222222222222222222222");
+    expect(noSession?.questId).toBeNull();
+
+    database.close();
+  });
+});
+
+describe("querySideQuestDoubts", () => {
+  test("counts 'belongs' questions tied to a trace/session in range", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(
+      `INSERT INTO questions (id, trace_id, session_id, text, kind, state, turns_watched)
+       VALUES ('question-belongs-1', 'trace-1', 'session-1', 'does this belong to the declared quest?', 'belongs', 'watching', 1)`,
+    );
+
+    expect(querySideQuestDoubts(database, RANGE)).toBe(1);
+
+    database.close();
+  });
+
+  test("is zero outside the range", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(
+      `INSERT INTO questions (id, trace_id, session_id, text, kind, state, turns_watched)
+       VALUES ('question-belongs-1', 'trace-1', 'session-1', 'does this belong to the declared quest?', 'belongs', 'watching', 1)`,
+    );
+
+    expect(querySideQuestDoubts(database, { ...RANGE, from: "2026-09-02", to: "2026-09-02" })).toBe(
+      0,
+    );
 
     database.close();
   });

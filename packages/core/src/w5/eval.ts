@@ -3,6 +3,8 @@ import { join } from "node:path";
 import type { Config } from "../config/env";
 import { openDatabase } from "../db/database";
 import { defaultIntentConfig } from "../intent/config";
+import { declareQuest } from "../intent/declarations";
+import { newUlid } from "../intent/ids";
 import { applyIncremental } from "../intent/projections";
 import { registerAllProjections } from "../intent/projections/register";
 import { EventStore } from "../intent/store";
@@ -79,6 +81,69 @@ export interface EvalOptions {
   now: string;
   classifier: Classifier;
   log: (line: string) => void;
+  declareFile?: string;
+}
+
+interface DeclareFileEntry {
+  session_id: string;
+  at: string;
+  quest?: string;
+  new?: {
+    title: string;
+    objective: string;
+    commitment: "promised" | "personal" | "exploratory";
+    project?: string;
+  };
+}
+
+/**
+ * Reads a `--declare` file (TOML or JSON, chosen by extension) and applies
+ * each entry as a `quest.declared` (plus `quest.created` when `new` is
+ * given) event against the copy -- so history can be evaluated in declared
+ * mode without the source database ever holding hand-authored declarations.
+ */
+async function applyDeclareFile(database: Database, declareFilePath: string): Promise<void> {
+  const text = await Bun.file(declareFilePath).text();
+  const entries: DeclareFileEntry[] = declareFilePath.endsWith(".toml")
+    ? (Bun.TOML.parse(text) as DeclareFileEntry[])
+    : (JSON.parse(text) as DeclareFileEntry[]);
+
+  const store = new EventStore(database);
+
+  let hero = database.query("SELECT id FROM heroes LIMIT 1").get() as { id: string } | null;
+  if (!hero) {
+    const heroId = newUlid();
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "hero.created",
+        subject: heroId,
+        payload: { name: "eval" },
+      }),
+    );
+    hero = { id: heroId };
+  }
+
+  for (const entry of entries) {
+    declareQuest(store, database, {
+      sessionId: entry.session_id,
+      questId: entry.quest,
+      newQuest: entry.new
+        ? {
+            title: entry.new.title,
+            objective: entry.new.objective,
+            commitment: entry.new.commitment,
+            project: entry.new.project,
+          }
+        : undefined,
+      plan: [],
+      scope: "session",
+      declaredBy: "hero",
+      at: entry.at,
+      heroId: hero.id,
+    });
+  }
 }
 
 export interface EvalSampleActivity {
@@ -100,6 +165,8 @@ export interface EvalMetrics {
   medianActivityDurationMinutes: number;
   continuesLinks: number;
   doubts: number;
+  doubtsAnswered: number;
+  tracesUnattributed: number;
   unknownActivityIds: number;
   overlapDropped: number;
   questProposedOnMatched: number;
@@ -273,6 +340,10 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
   const database = openDatabase(copiedDbPath);
   const intentConfig = defaultIntentConfig();
 
+  if (options.declareFile) {
+    await applyDeclareFile(database, options.declareFile);
+  }
+
   const resetResult = resetRange(database, range.from, range.to);
   options.log(
     `eval: reset traces=${resetResult.traces} activities=${resetResult.activities} quests=${resetResult.quests}`,
@@ -306,6 +377,22 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
   const continuesCount = database
     .query(
       "SELECT COUNT(*) as count FROM activities WHERE continues IS NOT NULL AND retracted_at IS NULL AND opened_at >= ? AND opened_at < ?",
+    )
+    .get(range.from, range.to) as { count: number };
+  const doubtsAnsweredCount = database
+    .query(
+      `SELECT COUNT(*) as count FROM questions qu
+       JOIN traces t ON t.id = qu.trace_id
+       WHERE qu.kind IN ('belongs', 'declare') AND qu.state IN ('resolved_by_context', 'answered')
+         AND t.started_at >= ? AND t.started_at < ?`,
+    )
+    .get(range.from, range.to) as { count: number };
+  const tracesUnattributedCount = database
+    .query(
+      `SELECT COUNT(*) as count FROM traces t
+       JOIN activities a ON a.id = t.activity_id
+       WHERE t.retracted_at IS NULL AND a.quest_id IS NULL
+         AND t.started_at >= ? AND t.started_at < ?`,
     )
     .get(range.from, range.to) as { count: number };
 
@@ -372,6 +459,8 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
     medianActivityDurationMinutes: median(durationsMinutes),
     continuesLinks: continuesCount.count,
     doubts: backfillResult.doubts,
+    doubtsAnswered: doubtsAnsweredCount.count,
+    tracesUnattributed: tracesUnattributedCount.count,
     unknownActivityIds: backfillResult.unknownActivityIds,
     overlapDropped: backfillResult.overlapDropped,
     questProposedOnMatched: backfillResult.questProposedOnMatched,

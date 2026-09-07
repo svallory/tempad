@@ -143,9 +143,15 @@ function render(database: Database, config: Config, options: ReportOptions): str
         lines.push(heading(4, "Quests"));
         for (const [questTitle, questActivities] of groupByQuest(keyActivities)) {
           const unconfirmed = questActivities[0]?.questConfirmed === false ? " [unconfirmed]" : "";
+          const inferred =
+            questActivities[0]?.questOriginKind && questActivities[0].questOriginKind !== "declared"
+              ? " (inferred)"
+              : "";
           const objectives = questActivities.map((activity) => activity.objective).join("; ");
           const minutes = questActivities.reduce((sum, activity) => sum + activity.minutes, 0);
-          lines.push(`- ${questTitle}${unconfirmed}: ${objectives} (${minutesLabel(minutes)})`);
+          lines.push(
+            `- ${questTitle}${unconfirmed}${inferred}: ${objectives} (${minutesLabel(minutes)})`,
+          );
         }
       }
 

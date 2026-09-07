@@ -114,16 +114,20 @@ function render(database: Database, config: Config, options: ReportOptions): str
       (row) => row.org === key.org && row.project === key.project,
     );
 
-    const questRows: string[][] = projectQuests.map((quest) => [
-      quest.confirmed ? quest.title : `${quest.title} [unconfirmed]`,
-      localDateTime(quest.firstEvidence, range.timeZone),
-      localDateTime(quest.lastEvidence, range.timeZone),
-      elapsedLabel(quest.firstEvidence, quest.lastEvidence),
-      "-",
-      "-",
-      String(quest.activities),
-      minutesLabel(quest.sideQuestMinutes),
-    ]);
+    const questRows: string[][] = projectQuests.map((quest) => {
+      const base = quest.confirmed ? quest.title : `${quest.title} [unconfirmed]`;
+      const title = quest.originKind !== "declared" ? `${base} (inferred)` : base;
+      return [
+        title,
+        localDateTime(quest.firstEvidence, range.timeZone),
+        localDateTime(quest.lastEvidence, range.timeZone),
+        elapsedLabel(quest.firstEvidence, quest.lastEvidence),
+        "-",
+        "-",
+        String(quest.activities),
+        minutesLabel(quest.sideQuestMinutes),
+      ];
+    });
 
     const otherRows: string[][] = (
       projectMondayItems.length > 0
