@@ -303,6 +303,31 @@ describe("tempad answer --belongs", () => {
     expect(await runIntentCommand(["answer", question], context)).toBe(2);
   });
 
+  test("--belongs on a declare-kind question is refused with a message, exit 1", async () => {
+    const { database, context, activity } = await seedBelongsQuestion();
+    const store = new EventStore(database);
+    const trace = database.query("SELECT id FROM traces").get() as { id: string };
+    const declareQuestion = askQuestion(store, database, {
+      trace: trace.id,
+      sessionId: "s1",
+      kind: "declare",
+      text: "declare",
+      actor: "hook",
+    });
+
+    expect(await runIntentCommand(["answer", declareQuestion, "--belongs"], context)).toBe(1);
+
+    const row = database.query("SELECT state FROM questions WHERE id = ?").get(declareQuestion) as {
+      state: string;
+    };
+    expect(row.state).not.toBe("answered");
+
+    const activityRow = database
+      .query("SELECT quest_id as questId FROM activities WHERE id = ?")
+      .get(activity) as { questId: string | null };
+    expect(activityRow.questId).not.toBeNull();
+  });
+
   test("--quest on a belongs question still moves the trace's activity", async () => {
     const { database, context, question, activity } = await seedBelongsQuestion();
 
