@@ -26,6 +26,7 @@ export const EVENT_KINDS = [
   "stint.opened",
   "stint.reworded",
   "stint.closed",
+  "stint.dismissed",
   "stint.assigned",
   "trace.recorded",
   "trace.relinked",

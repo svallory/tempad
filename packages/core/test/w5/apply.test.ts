@@ -137,6 +137,7 @@ describe("applyResult", () => {
       now: "2026-09-04T15:21:00.000Z",
       log: () => {},
       mode: "inferred",
+      stintMinMinutes: 5,
     });
 
     expect(summary.traces).toBe(2);
@@ -241,6 +242,7 @@ describe("applyResult", () => {
       now: "2026-09-04T15:31:00.000Z",
       log: () => {},
       mode: "inferred",
+      stintMinMinutes: 5,
     });
 
     // Two switches happened (Q1 -> Compare Astryx, Compare Astryx -> Check email).
@@ -270,6 +272,7 @@ describe("applyResult", () => {
       now: "2026-09-04T15:21:00.000Z",
       log: () => {},
       mode: "inferred",
+      stintMinMinutes: 5,
     });
 
     const count = database.query("SELECT COUNT(*) as count FROM questions").get() as {
@@ -309,6 +312,7 @@ describe("applyResult", () => {
       now: "2026-09-04T15:21:00.000Z",
       log: (line) => logs.push(line),
       mode: "inferred",
+      stintMinMinutes: 5,
     });
 
     expect(summary.doubts).toBe(1);
@@ -355,6 +359,7 @@ describe("applyResult", () => {
       now: "2026-09-04T15:21:00.000Z",
       log: (line) => logs.push(line),
       mode: "inferred",
+      stintMinMinutes: 5,
     });
 
     expect(summary.doubts).toBe(0);
@@ -401,6 +406,7 @@ describe("applyResult", () => {
       now: "2026-09-04T15:21:00.000Z",
       log: (line) => logs.push(line),
       mode: "inferred",
+      stintMinMinutes: 5,
     });
 
     expect(summary.questProposedOnMatched).toBe(1);
@@ -451,6 +457,7 @@ describe("applyResult", () => {
       now: "2026-09-04T15:21:00.000Z",
       log: () => {},
       mode: "inferred",
+      stintMinMinutes: 5,
     });
 
     expect(summary.questProposedOnMatched).toBe(0);
@@ -493,6 +500,7 @@ describe("applyResult", () => {
       now: "2026-09-04T15:21:00.000Z",
       log: () => {},
       mode: "inferred",
+      stintMinMinutes: 5,
     });
 
     expect(summary.stintsOpened).toBe(1);
@@ -543,6 +551,7 @@ describe("applyResult", () => {
       now: "2026-09-04T15:21:00.000Z",
       log: () => {},
       mode: "inferred",
+      stintMinMinutes: 5,
     });
 
     const untouched = database
@@ -608,6 +617,7 @@ describe("applyResult", () => {
       now: "2026-09-04T15:21:00.000Z",
       log: () => {},
       mode: "inferred",
+      stintMinMinutes: 5,
     });
 
     const a1 = database
@@ -668,6 +678,7 @@ describe("applyResult", () => {
       now: "2026-09-04T15:21:00.000Z",
       log: () => {},
       mode: "inferred",
+      stintMinMinutes: 5,
     });
 
     // One branch (A to B); the return to A is attention moving back to a quest
@@ -722,6 +733,7 @@ describe("applyResult", () => {
       now: "2026-09-04T15:21:00.000Z",
       log: () => {},
       mode: "inferred",
+      stintMinMinutes: 5,
     });
 
     expect(summary.traces).toBe(0);
@@ -746,6 +758,7 @@ describe("applyResult", () => {
       now: "2026-09-04T15:21:00.000Z",
       log: (line) => logs.push(line),
       mode: "inferred",
+      stintMinMinutes: 5,
     });
 
     expect(summary.unknownStintIds).toBe(1);
@@ -813,7 +826,13 @@ describe("applyResult", () => {
         ],
         sessionNote: null,
       },
-      { actor: "hook", askingEnabled: false, now: "2026-09-04T15:21:00.000Z", log: () => {} },
+      {
+        actor: "hook",
+        askingEnabled: false,
+        now: "2026-09-04T15:21:00.000Z",
+        log: () => {},
+        stintMinMinutes: 5,
+      },
     );
 
     expect(summary.unknownStintIds).toBe(2);
@@ -837,7 +856,13 @@ describe("applyResult", () => {
         ],
         sessionNote: null,
       },
-      { actor: "hook", askingEnabled: false, now: "2026-09-04T15:21:00.000Z", log: () => {} },
+      {
+        actor: "hook",
+        askingEnabled: false,
+        now: "2026-09-04T15:21:00.000Z",
+        log: () => {},
+        stintMinMinutes: 5,
+      },
     );
 
     // The outcome never stopped, so this is a plain reuse: no new row, no continues link.
@@ -876,7 +901,13 @@ describe("applyResult", () => {
         ],
         sessionNote: null,
       },
-      { actor: "hook", askingEnabled: false, now: "2026-09-04T15:21:00.000Z", log: () => {} },
+      {
+        actor: "hook",
+        askingEnabled: false,
+        now: "2026-09-04T15:21:00.000Z",
+        log: () => {},
+        stintMinMinutes: 5,
+      },
     );
 
     expect(summary.unknownStintIds).toBe(1);
@@ -919,6 +950,7 @@ describe("applyResult", () => {
       now: "2026-09-04T15:21:00.000Z",
       log: () => {},
       mode: "inferred",
+      stintMinMinutes: 5,
     });
 
     const branched = database
@@ -976,6 +1008,7 @@ describe("applyResult in declared mode", () => {
     now: "2026-09-04T15:30:00.000Z",
     log: () => {},
     mode: "declared" as const,
+    stintMinMinutes: 5,
   };
 
   test("a belonging segment gets the declared quest and asks nothing", () => {
@@ -1156,6 +1189,52 @@ describe("applyResult in declared mode", () => {
     const questions = database.query("SELECT kind FROM questions").all() as { kind: string }[];
     expect(questions).toHaveLength(1);
     expect(questions[0]?.kind).toBe("declare");
+  });
+
+  test("a declare question is suppressed when the window's undeclared time is below stintMinMinutes", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seed(database);
+
+    applyResult(
+      store,
+      database,
+      declaredWindow,
+      {
+        segments: [
+          segment({ startedAt: "2026-09-04T15:00:00.000Z", endedAt: "2026-09-04T15:02:00.000Z" }),
+        ],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+
+    const asked = database.query("SELECT kind FROM questions WHERE state = 'watching'").all() as {
+      kind: string;
+    }[];
+    expect(asked.some((q) => q.kind === "declare")).toBe(false);
+  });
+
+  test("a declare question is asked once undeclared time meets stintMinMinutes", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seed(database);
+
+    applyResult(
+      store,
+      database,
+      declaredWindow,
+      {
+        segments: [
+          segment({ startedAt: "2026-09-04T15:00:00.000Z", endedAt: "2026-09-04T15:06:00.000Z" }),
+        ],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+
+    const asked = database.query("SELECT kind FROM questions WHERE state = 'watching'").all() as {
+      kind: string;
+    }[];
+    expect(asked.some((q) => q.kind === "declare")).toBe(true);
   });
 
   test("a subagent's doubt is addressed to the parent session", () => {

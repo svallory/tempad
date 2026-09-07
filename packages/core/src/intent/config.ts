@@ -14,6 +14,7 @@ export interface W5Config {
   claudeCommand: string;
   timeoutSeconds: number;
   stintIdleMinutes: number;
+  stintMinMinutes: number;
   memoryHours: number;
   memoryStints: number;
   overlapMessages: number;
@@ -44,6 +45,7 @@ export function defaultIntentConfig(): IntentConfig {
       claudeCommand: "claude",
       timeoutSeconds: 180,
       stintIdleMinutes: 45,
+      stintMinMinutes: 5,
       memoryHours: 8,
       memoryStints: 10,
       overlapMessages: 3,
@@ -157,6 +159,7 @@ export function loadIntentConfig(
         typeof w5.claude_command === "string" ? w5.claude_command : config.w5.claudeCommand,
       timeoutSeconds: number("timeout_seconds", config.w5.timeoutSeconds),
       stintIdleMinutes: number("stint_idle_minutes", config.w5.stintIdleMinutes),
+      stintMinMinutes: number("stint_min_minutes", config.w5.stintMinMinutes),
       memoryHours: number("memory_hours", config.w5.memoryHours),
       memoryStints: number("memory_stints", config.w5.memoryStints),
       overlapMessages: number("overlap_messages", config.w5.overlapMessages),

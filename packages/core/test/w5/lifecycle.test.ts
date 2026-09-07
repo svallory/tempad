@@ -45,6 +45,7 @@ describe("lifecycle", () => {
       sessionId: "s1",
       windowStartedAt: "2026-09-06T10:00:00.000Z",
       idleMinutes: 45,
+      stintMinMinutes: 5,
     });
 
     expect(result.closed).toEqual(["A-old"]);
@@ -82,6 +83,7 @@ describe("lifecycle", () => {
     const result = closeSessionStints(store, database, {
       sessionId: "s1",
       now: "2026-09-06T09:30:00.000Z",
+      stintMinMinutes: 5,
     });
 
     expect(result.closed.sort()).toEqual(["A1", "A2"]);
@@ -95,6 +97,84 @@ describe("lifecycle", () => {
       session_note: string | null;
     };
     expect(note.session_note).toBeNull();
+  });
+
+  test("closeIdleStints dismisses a stint whose live trace minutes are below stintMinMinutes", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    const store = new EventStore(database);
+    seedStintWithTrace(database, {
+      stintId: "A-short",
+      sessionId: "s1",
+      endedAt: "2026-09-06T09:02:00.000Z",
+    });
+
+    const result = closeIdleStints(store, database, {
+      sessionId: "s1",
+      windowStartedAt: "2026-09-06T10:00:00.000Z",
+      idleMinutes: 45,
+      stintMinMinutes: 5,
+    });
+
+    expect(result.closed).toEqual(["A-short"]);
+    const row = database.query("SELECT dismissed_at FROM stints WHERE id = ?").get("A-short") as {
+      dismissed_at: string | null;
+    };
+    expect(row.dismissed_at).not.toBeNull();
+  });
+
+  test("closeIdleStints does not dismiss a stint whose live trace minutes meet stintMinMinutes", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    const store = new EventStore(database);
+    seedStintWithTrace(database, {
+      stintId: "A-long",
+      sessionId: "s1",
+      endedAt: "2026-09-06T09:06:00.000Z",
+    });
+
+    const result = closeIdleStints(store, database, {
+      sessionId: "s1",
+      windowStartedAt: "2026-09-06T10:00:00.000Z",
+      idleMinutes: 45,
+      stintMinMinutes: 5,
+    });
+
+    expect(result.closed).toEqual(["A-long"]);
+    const row = database.query("SELECT dismissed_at FROM stints WHERE id = ?").get("A-long") as {
+      dismissed_at: string | null;
+    };
+    expect(row.dismissed_at).toBeNull();
+  });
+
+  test("closeSessionStints dismisses a below-minimum stint the same way", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    const store = new EventStore(database);
+    seedStintWithTrace(database, {
+      stintId: "A-short",
+      sessionId: "s1",
+      endedAt: "2026-09-06T09:02:00.000Z",
+    });
+    seedStintWithTrace(database, {
+      stintId: "A-long",
+      sessionId: "s1",
+      endedAt: "2026-09-06T09:10:00.000Z",
+    });
+
+    const result = closeSessionStints(store, database, {
+      sessionId: "s1",
+      now: "2026-09-06T09:30:00.000Z",
+      stintMinMinutes: 5,
+    });
+
+    expect(result.closed.sort()).toEqual(["A-long", "A-short"]);
+    const rows = database.query("SELECT id, dismissed_at FROM stints ORDER BY id").all() as {
+      id: string;
+      dismissed_at: string | null;
+    }[];
+    expect(rows.find((r) => r.id === "A-short")?.dismissed_at).not.toBeNull();
+    expect(rows.find((r) => r.id === "A-long")?.dismissed_at).toBeNull();
   });
 
   test("openActivityContinuing stores the continues link", () => {

@@ -68,7 +68,8 @@ const ACTIVITY_SLICE_SELECT = `
             WHERE traces.stint_id = stints.id AND traces.retracted_at IS NULL
             ORDER BY traces.ended_at DESC LIMIT 1)
     LEFT JOIN quests ON quests.id = stints.quest_id
-   WHERE stints.retracted_at IS NULL`;
+   WHERE stints.retracted_at IS NULL
+     AND stints.dismissed_at IS NULL`;
 
 /**
  * The `parent_session_id` on the session's latest declaration at `at`, or null

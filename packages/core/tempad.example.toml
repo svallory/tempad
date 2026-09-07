@@ -29,6 +29,7 @@ memory_activities = 10
 overlap_messages = 3
 mode = "declared"
 inference_fallback = true
+stint_min_minutes = 5
 
 [[projects]]
 pattern = "~/work/:org/:project/:rest*"

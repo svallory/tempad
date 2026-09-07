@@ -198,4 +198,14 @@ inference_fallback = false
     expect(config.w5.mode).toBe("declared");
     expect(config.w5.inferenceFallback).toBe(true);
   });
+
+  test("loadIntentConfig reads stint_min_minutes, defaulting to 5", () => {
+    expect(defaultIntentConfig().w5.stintMinMinutes).toBe(5);
+
+    const directory = mkdtempSync(join(tmpdir(), "tempad-intent-"));
+    const path = join(directory, "tempad.toml");
+    writeFileSync(path, `[w5]\nstint_min_minutes = 10\n`);
+    const config = loadIntentConfig(path);
+    expect(config.w5.stintMinMinutes).toBe(10);
+  });
 });

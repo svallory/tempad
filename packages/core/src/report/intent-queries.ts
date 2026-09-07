@@ -222,7 +222,7 @@ export function queryStintTraceIntervals(
       `SELECT a.id as id, a.outcome as outcome, q.title as questTitle
        FROM stints a
        LEFT JOIN quests q ON q.id = a.quest_id
-       WHERE a.retracted_at IS NULL AND a.id IN (${[...stintIds].map(() => "?").join(", ")})`,
+       WHERE a.retracted_at IS NULL AND a.dismissed_at IS NULL AND a.id IN (${[...stintIds].map(() => "?").join(", ")})`,
     )
     .all(...stintIds) as { id: string; outcome: string; questTitle: string | null }[];
   const stintsById = new Map(stintRows.map((row) => [row.id, row]));
@@ -264,7 +264,7 @@ export function queryStints(database: Database, range: DateRange): StintRow[] {
               q.title as questTitle, q.confirmed as questConfirmed, q.origin_kind as questOriginKind
        FROM stints a
        LEFT JOIN quests q ON q.id = a.quest_id
-       WHERE a.retracted_at IS NULL AND a.id IN (${[...stintIds].map(() => "?").join(", ")})`,
+       WHERE a.retracted_at IS NULL AND a.dismissed_at IS NULL AND a.id IN (${[...stintIds].map(() => "?").join(", ")})`,
     )
     .all(...stintIds) as {
     id: string;
@@ -333,7 +333,9 @@ export function querySideQuests(database: Database, range: DateRange): SideQuest
 
   return rows.map((row) => {
     const questStints = database
-      .query("SELECT id FROM stints WHERE quest_id = ? AND retracted_at IS NULL")
+      .query(
+        "SELECT id FROM stints WHERE quest_id = ? AND retracted_at IS NULL AND dismissed_at IS NULL",
+      )
       .all(row.id) as { id: string }[];
 
     let minutes = 0;
@@ -391,7 +393,7 @@ export function queryQuests(database: Database, range: DateRange): QuestSummaryR
 
   const stintRows = database
     .query(
-      `SELECT id, quest_id as questId FROM stints WHERE retracted_at IS NULL AND id IN (${[
+      `SELECT id, quest_id as questId FROM stints WHERE retracted_at IS NULL AND dismissed_at IS NULL AND id IN (${[
         ...stintIds,
       ]
         .map(() => "?")

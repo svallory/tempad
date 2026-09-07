@@ -113,6 +113,7 @@ export async function runOnce(
       sessionId: job.sessionId,
       windowStartedAt: windowStartedAt(database, job.sessionId, sinceTs) ?? now,
       idleMinutes: intentConfig.stintIdleMinutes,
+      stintMinMinutes: intentConfig.stintMinMinutes,
     });
 
     // A live session that has never declared anything still runs in declared mode
@@ -140,10 +141,15 @@ export async function runOnce(
       now,
       log: options.log,
       mode,
+      stintMinMinutes: intentConfig.stintMinMinutes,
     });
 
     if (job.kind === "session_end") {
-      closeSessionStints(store, database, { sessionId: job.sessionId, now });
+      closeSessionStints(store, database, {
+        sessionId: job.sessionId,
+        now,
+        stintMinMinutes: intentConfig.stintMinMinutes,
+      });
     }
 
     const turnsSinceLastRun = countUserMessages(database, job.sessionId, sinceTs);

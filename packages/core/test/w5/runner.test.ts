@@ -50,6 +50,7 @@ const config: W5Config = {
   overlapMessages: 3,
   mode: "declared",
   inferenceFallback: true,
+  stintMinMinutes: 5,
 };
 
 const good: ClassifierResult = {

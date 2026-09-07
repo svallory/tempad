@@ -26,6 +26,7 @@ const config: W5Config = {
   overlapMessages: 3,
   mode: "declared",
   inferenceFallback: true,
+  stintMinMinutes: 5,
 };
 
 function seedStintAndTrace(
@@ -622,5 +623,68 @@ describe("advanceQuestions and the verifier's question kinds", () => {
         }
       ).state,
     ).toBe("watching");
+  });
+});
+
+describe("advanceQuestions and dismissed stints", () => {
+  test("advanceQuestions expires a watching belongs question on a stint that has been dismissed", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    const store = new EventStore(database);
+    const traceId = seedStintAndTrace(database, {
+      stintId: "A1",
+      questId: "Q1",
+      sessionId: "s1",
+      isSwitch: false,
+    });
+    const questionId = seedQuestion(database, store, { traceId, sessionId: "s1", kind: "belongs" });
+    applyIncremental(
+      database,
+      store.append({
+        actor: "system",
+        kind: "stint.dismissed",
+        subject: "A1",
+        payload: { reason: "below minimum" },
+      }),
+    );
+
+    const result = advanceQuestions(store, database, config, {
+      sessionId: "s1",
+      now: "2026-09-04T15:40:00.000Z",
+      turnsSinceLastRun: 1,
+      sessionStintMinutes: 0,
+      resolvedByContext: [],
+    });
+
+    expect(result.expired.map((q) => q.id)).toContain(questionId);
+    expect(result.asked.map((q) => q.id)).not.toContain(questionId);
+    const question = database.query("SELECT state FROM questions WHERE id = ?").get(questionId) as {
+      state: string;
+    };
+    expect(question.state).toBe("expired");
+  });
+
+  test("advanceQuestions still promotes a belongs question when its stint is not dismissed", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    const store = new EventStore(database);
+    const traceId = seedStintAndTrace(database, {
+      stintId: "A1",
+      questId: "Q1",
+      sessionId: "s1",
+      isSwitch: false,
+    });
+    const questionId = seedQuestion(database, store, { traceId, sessionId: "s1", kind: "belongs" });
+
+    const result = advanceQuestions(store, database, config, {
+      sessionId: "s1",
+      now: "2026-09-04T15:40:00.000Z",
+      turnsSinceLastRun: 3,
+      sessionStintMinutes: 0,
+      resolvedByContext: [],
+    });
+
+    expect(result.asked.map((q) => q.id)).toEqual([questionId]);
+    expect(result.expired.map((q) => q.id)).not.toContain(questionId);
   });
 });
