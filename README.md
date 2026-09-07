@@ -26,22 +26,23 @@ Commits get batched and pushed days after the work. Planning leaves no git trace
 
 TemPad is a self-awareness tool, not a surveillance tool. It exists to show what you did, why, and where your attention went, so you can change it. These are the words it uses.
 
-- **Goal**: a direction, not a finish line. Quests serve goals.
-- **Quest**: something you set out to finish. It has a done condition, a deadline and a budget. Activities are how it actually went.
-- **Side Quest**: a quest you did not plan. It started from an activity and has a trigger.
+- **Saga**: a direction, open-ended, owned by the hero or a party. A quest _serves_ a saga.
+- **Quest**: planned work with an outcome. A quest may _advance_ another quest (contributing work) or _deviate from_ one; a quest that deviates is a side quest and carries the nexus event. Never both.
+- **Stint**: a stretch of your attention pursuing one quest. It starts when you begin pursuing an outcome and ends when that outcome is delivered, abandoned or handed off, or after an idle gap. Stints interleave. A stint contains one or more maneuvers. Test: would it be its own line in a standup or a timesheet?
+- **Maneuver**: anything done inside a stint: read a file, run tests, rebase, check on a dev, answer a clarifying question. Never reported on its own.
+- **Trace**: evidence of a stint, from a tool at a place at a time.
+- **Declaration**: the executor stating which quest the coming work pursues.
 - **Nexus Event**: the moment attention branched: when, from what, and what pulled you.
-- **Activity**: a stretch of attention with one objective. What you were actually doing, as seen in traces.
-- **Trace**: one piece of evidence: something a tool saw you do at a place, at a time.
 - **Project**: an undertaking with a name, people, and places.
 - **Place**: one spot where work leaves a trace: a repo, a board, a folder, a channel. A place belongs to one project and is reached through one tool.
 - **Tool**: what you work through: Claude Code, git, Monday, a browser.
 - **Hero**: you. The root everything hangs from.
-- **Party**: a group the hero belongs to, with a membership span. Goals and quests can belong to the hero or to a party.
+- **Party**: a group the hero belongs to, with a membership span. Sagas and quests can belong to the hero or to a party.
 - **Client**: who a project is for. Not a party.
 
-Rule of thumb: **Goals** give direction, **Quests** are planned, **Activities** are what happened, **Traces** are the proof, **Places** are where, **Tools** are how, **Projects** are whose and what for.
+Rule of thumb: Sagas give direction, Quests are planned, Stints are what happened, Maneuvers are how, Traces are the proof, Places are where, Tools are how, Projects are whose and what for.
 
-The first release stores traces, places and projects. Goals, quests and activities arrive with the `w5` hook (see the roadmap).
+The first release stores traces, places and projects. Sagas, quests and stints arrive with the `w5` hook (see the roadmap).
 
 ## Features
 
@@ -80,7 +81,7 @@ The w5 hook classifies through the local `claude` CLI (`[w5].backend = "claude-c
 
 ## Repository layout
 
-| Path            | Purpose                                                             |
+| Path            | Why                                                                 |
 | --------------- | ------------------------------------------------------------------- |
 | `packages/core` | TypeScript library and `tempad` binary: schema, collectors, reports |
 | `apps/`         | Runnable programs (a Go TUI built on charmbracelet is planned)      |
@@ -92,10 +93,10 @@ Tooling: [moon](https://moonrepo.dev) orchestrates tasks, [Biome](https://biomej
 ## Roadmap
 
 - **Profiles.** All configuration is global today (`TEMPAD_HOME/.env` and `tempad.toml`), so one machine can only serve one TemPad. Introduce profiles (for example `~/.tempad/profiles/<name>/` selected by `--profile` or `TEMPAD_PROFILE`) so a person can keep separate databases, tokens and path rules per client or per persona.
-- **w5 hook.** A Claude Code hook that periodically asks a small model _who, when, what, why, where, how_ about the live session and writes a trace, opening or matching activities, quests and side quests (with their nexus events), with a batch backfill over existing sessions. This is what turns raw sessions into "things I worked on", including side quests that never produced a commit.
-- **Weekly table.** Per weekday, per project: activities and quests touched, shipped vs abandoned, side-quest share. Depends on the w5 hook.
+- **w5 hook.** A Claude Code hook that periodically asks a small model _who, when, what, why, where, how_ about the live session and writes a trace, opening or matching stints, quests and side quests (with their nexus events), with a batch backfill over existing sessions. This is what turns raw sessions into "things I worked on", including side quests that never produced a commit.
+- **Weekly table.** Per weekday, per project: stints and quests touched, shipped vs abandoned, side-quest share. Depends on the w5 hook.
 - **Places in config.** Replace the separate `[[projects]]`, `[[repositories]]` and `[[boards]]` rules with one `[[places]]` list with a `kind`.
-- **Goals and drift.** Set goals and get a nudge when time drifts away from them for too long.
+- **Sagas and drift.** Set sagas and get a nudge when time drifts away from them for too long.
 - **TUI** in Go (charmbracelet) under `apps/`.
 - **Timesheet export.** A recurring agent that fills external timesheets (Deel) from the reports.
 
