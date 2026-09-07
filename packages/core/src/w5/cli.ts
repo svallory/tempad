@@ -256,13 +256,38 @@ function runQuiet(args: string[], context: W5Context): number {
 
 const REVIEW_DEFAULT_DAYS = 7;
 
+const REVIEW_USAGE = "usage: tempad review [--days <positive integer>]";
+
 function runReview(args: string[], context: W5Context): number {
-  const { values } = parseArgs({
-    args,
-    options: { days: { type: "string" } },
-    strict: true,
-  });
-  const days = values.days ? Number.parseInt(values.days, 10) : REVIEW_DEFAULT_DAYS;
+  let daysValue: string | undefined;
+  try {
+    const { values } = parseArgs({
+      args,
+      options: { days: { type: "string" } },
+      strict: true,
+    });
+    daysValue = values.days;
+  } catch {
+    // node:util's parseArgs itself throws on a value that looks like another
+    // flag (e.g. `--days -5` un-joined) before any of our own validation
+    // runs; treated the same as a value that fails the pattern below.
+    context.stdout(REVIEW_USAGE);
+    return 2;
+  }
+
+  let days = REVIEW_DEFAULT_DAYS;
+  if (daysValue !== undefined) {
+    // Same convention as `runQuiet`'s duration argument: a strict pattern
+    // match, not a bare `parseInt`, so a typo (`--days abc`, `--days=-5`)
+    // fails loudly with a usage message instead of silently producing a
+    // `NaN`/negative bound and an empty or wrong review listing.
+    const match = daysValue.match(/^[1-9]\d*$/);
+    if (!match) {
+      context.stdout(REVIEW_USAGE);
+      return 2;
+    }
+    days = Number.parseInt(daysValue, 10);
+  }
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
   const doubtedTraces = context.database
