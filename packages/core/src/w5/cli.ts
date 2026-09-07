@@ -267,9 +267,11 @@ function runReview(args: string[], context: W5Context): number {
 
   const doubtedTraces = context.database
     .query(
-      `SELECT id, what, doubt FROM traces
-        WHERE doubt IS NOT NULL AND retracted_at IS NULL AND started_at >= ?
-        ORDER BY started_at ASC`,
+      `SELECT traces.id as id, traces.what as what, traces.doubt as doubt FROM traces
+        JOIN stints ON stints.id = traces.stint_id
+        WHERE traces.doubt IS NOT NULL AND traces.retracted_at IS NULL AND traces.started_at >= ?
+          AND stints.dismissed_at IS NULL AND stints.retracted_at IS NULL
+        ORDER BY traces.started_at ASC`,
     )
     .all(since) as { id: string; what: string; doubt: string }[];
   for (const trace of doubtedTraces) {

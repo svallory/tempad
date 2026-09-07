@@ -312,6 +312,17 @@ function resolveStintForSegment(
  * An alias the window never offered resolves to nothing and opens a new stint,
  * exactly as a fabricated id did before.
  */
+/**
+ * Trims, collapses internal whitespace, and lowercases an outcome for
+ * `new:` reuse matching. A model that rephrases the same stint's outcome
+ * with different capitalization or spacing across windows is plausible
+ * variance, not a genuinely new outcome, so both sides of the comparison go
+ * through this before being compared.
+ */
+function normalizeOutcome(outcome: string): string {
+  return outcome.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 function resolveStintForSegmentDeclared(
   store: EventStore,
   database: Database,
@@ -370,39 +381,49 @@ function resolveStintForSegmentDeclared(
 
   if (selector.startsWith("new: ")) {
     const outcome = selector.slice("new: ".length).trim();
+    const normalizedOutcome = normalizeOutcome(outcome);
 
     // A `new:` selector whose text matches a stint already open or recently
     // closed in this session is the same outcome named twice, not a fresh one
     // -- without this, the same duplicate-screenshots outcome opened a new
     // stint every time the classifier phrased its `new:` the same way instead
-    // of naming the stint's own `S<n>` alias.
-    const openMatch = database
+    // of naming the stint's own `S<n>` alias. Matching is on normalized text
+    // (trimmed, internal whitespace collapsed, case-insensitive) on both
+    // sides, since a model that rephrases the same outcome with different
+    // capitalization or spacing is plausible variance, not a new outcome.
+    const openCandidates = database
       .query(
-        `SELECT stints.id as id, stints.quest_id as questId FROM stints
-          WHERE stints.outcome = ? AND stints.closed_at IS NULL
+        `SELECT stints.id as id, stints.outcome as outcome, stints.quest_id as questId FROM stints
+          WHERE stints.closed_at IS NULL
             AND stints.retracted_at IS NULL AND stints.dismissed_at IS NULL
             AND EXISTS (
               SELECT 1 FROM traces
                WHERE traces.stint_id = stints.id AND traces.retracted_at IS NULL
                  AND traces.session_id = ?)
-          ORDER BY stints.opened_at DESC LIMIT 1`,
+          ORDER BY stints.opened_at DESC`,
       )
-      .get(outcome, sessionId) as { id: string; questId: string | null } | null;
-    if (openMatch !== null) return reuse(openMatch.id, openMatch.questId);
+      .all(sessionId) as { id: string; outcome: string; questId: string | null }[];
+    const openMatch = openCandidates.find(
+      (candidate) => normalizeOutcome(candidate.outcome) === normalizedOutcome,
+    );
+    if (openMatch !== undefined) return reuse(openMatch.id, openMatch.questId);
 
-    const closedMatch = database
+    const closedCandidates = database
       .query(
-        `SELECT stints.id as id FROM stints
-          WHERE stints.outcome = ? AND stints.closed_at IS NOT NULL
+        `SELECT stints.id as id, stints.outcome as outcome FROM stints
+          WHERE stints.closed_at IS NOT NULL
             AND stints.retracted_at IS NULL AND stints.dismissed_at IS NULL
             AND EXISTS (
               SELECT 1 FROM traces
                WHERE traces.stint_id = stints.id AND traces.retracted_at IS NULL
                  AND traces.session_id = ?)
-          ORDER BY stints.closed_at DESC LIMIT 1`,
+          ORDER BY stints.closed_at DESC`,
       )
-      .get(outcome, sessionId) as { id: string } | null;
-    if (closedMatch !== null) return open(outcome, undefined, closedMatch.id);
+      .all(sessionId) as { id: string; outcome: string }[];
+    const closedMatch = closedCandidates.find(
+      (candidate) => normalizeOutcome(candidate.outcome) === normalizedOutcome,
+    );
+    if (closedMatch !== undefined) return open(outcome, undefined, closedMatch.id);
 
     return open(outcome);
   }
