@@ -818,9 +818,14 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       // Ending a declaration the session never made (or already ended) writes an
       // event that changes nothing, so it is a mistake worth reporting rather
       // than a silent no-op -- most often a typo'd quest or the wrong session.
+      // `--parent` declares subagent scope, so the guard has to look at the
+      // same scope the ending event will be written in -- session-scope
+      // declarations are a different set entirely.
       const activeNow = activeDeclaredQuests(context.database, {
         sessionId: values.session,
         at: values.at ?? new Date().toISOString(),
+        scope: values.parent ? "subagent" : "session",
+        parentSessionId: values.parent,
       });
       if (!activeNow.some((quest) => quest.questId === resolved)) {
         console.error(`quest ${resolved} is not active in session ${values.session}`);

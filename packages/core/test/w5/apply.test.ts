@@ -11,6 +11,7 @@ import type {
   ClassifierSegment,
   ClassifierWindow,
 } from "../../src/w5/classifier";
+import { openStintContinuing } from "../../src/w5/lifecycle";
 
 registerAllProjections();
 
@@ -1574,6 +1575,160 @@ describe("applyResult in declared mode", () => {
     expect(oldTraces.count).toBe(1);
   });
 
+  test("a still-open plan item reuses its stint after an insertion shifts its alias", () => {
+    const database = openDatabase(":memory:");
+    const { store, heroId, questId } = seedDeclared(database);
+
+    const windowFor = (plan: string[]): ClassifierWindow => ({
+      ...declaredWindow,
+      activeQuests: [{ alias: "Q1", title: "Ship marko-ui", outcome: "86 components", plan }],
+      planAliases: Object.fromEntries(plan.map((item, index) => [`P1.${index + 1}`, item])),
+    });
+
+    applyResult(
+      store,
+      database,
+      windowFor(["walk order"]),
+      { segments: [segment({ quest: "Q1", stint: "P1.1" })], sessionNote: null },
+      declaredOptions,
+    );
+
+    const first = database.query("SELECT id FROM stints WHERE plan_item = 'walk order'").get() as {
+      id: string;
+    };
+
+    // A new item is inserted ahead of the unfinished one: "walk order" is now
+    // P1.2. It is the same outcome, still in flight, so it keeps its stint --
+    // the alias moved, the plan line did not.
+    declareQuest(store, database, {
+      sessionId: "s1",
+      questId,
+      plan: ["new first item", "walk order"],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-04T15:19:00.000Z",
+      heroId,
+    });
+
+    const summary = applyResult(
+      store,
+      database,
+      windowFor(["new first item", "walk order"]),
+      {
+        segments: [
+          segment({
+            startedAt: "2026-09-04T15:20:00.000Z",
+            endedAt: "2026-09-04T15:20:00.000Z",
+            quest: "Q1",
+            stint: "P1.2",
+          }),
+        ],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+
+    expect(summary.stintsOpened).toBe(0);
+    expect(
+      (
+        database
+          .query("SELECT COUNT(*) as count FROM stints WHERE plan_item = 'walk order'")
+          .get() as { count: number }
+      ).count,
+    ).toBe(1);
+    const traces = database
+      .query("SELECT COUNT(*) as count FROM traces WHERE stint_id = ?")
+      .get(first.id) as { count: number };
+    expect(traces.count).toBe(2);
+  });
+
+  test("two segments naming a shifted plan item in one window share its stint", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seedDeclared(database);
+
+    const planWindow: ClassifierWindow = {
+      ...declaredWindow,
+      activeQuests: [
+        {
+          alias: "Q1",
+          title: "Ship marko-ui",
+          outcome: "86 components",
+          plan: ["first", "walk order"],
+        },
+      ],
+      planAliases: { "P1.1": "first", "P1.2": "walk order" },
+    };
+
+    const summary = applyResult(
+      store,
+      database,
+      planWindow,
+      {
+        segments: [
+          segment({ quest: "Q1", stint: "P1.2" }),
+          segment({
+            startedAt: "2026-09-04T15:20:00.000Z",
+            endedAt: "2026-09-04T15:20:00.000Z",
+            quest: "Q1",
+            stint: "P1.2",
+          }),
+        ],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+
+    expect(summary.stintsOpened).toBe(1);
+    const opened = database
+      .query("SELECT plan_index as planIndex, plan_item as planItem FROM stints WHERE id != 'A1'")
+      .all() as { planIndex: string; planItem: string }[];
+    expect(opened).toHaveLength(1);
+    // The alias is still recorded as written, for display and audit.
+    expect(opened[0]?.planIndex).toBe("P1.2");
+    expect(opened[0]?.planItem).toBe("walk order");
+  });
+
+  test("a plan item of another session does not leak into this session's reuse", () => {
+    const database = openDatabase(":memory:");
+    const { store, questId } = seedDeclared(database);
+
+    const planWindow: ClassifierWindow = {
+      ...declaredWindow,
+      activeQuests: [
+        { alias: "Q1", title: "Ship marko-ui", outcome: "86 components", plan: ["walk order"] },
+      ],
+      planAliases: { "P1.1": "walk order" },
+    };
+
+    // Another session already has an open stint for the same plan line of the
+    // same quest. A plan item is one stint *per session*, so this one is not it.
+    database
+      .query(
+        "INSERT INTO stints (id, quest_id, outcome, opened_at, revision, plan_index, plan_item) VALUES ('A-other', ?, 'walk order', '2026-09-04T09:00:00.000Z', 1, 'P1.1', 'walk order')",
+      )
+      .run(questId);
+    database
+      .query(
+        `INSERT INTO traces (id, stint_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+         VALUES ('T-other', 'A-other', 'claude-code', 'personal/marko-ui', 'session', '2026-09-04T09:00:00.000Z', '2026-09-04T09:30:00.000Z', 'hero', 'walk order', 'ship', 'personal/marko-ui', 'claude-code', 0.9, 'assistant', 'other-session', '2026-09-04T09:30:00.000Z')`,
+      )
+      .run();
+
+    const summary = applyResult(
+      store,
+      database,
+      planWindow,
+      { segments: [segment({ quest: "Q1", stint: "P1.1" })], sessionNote: null },
+      declaredOptions,
+    );
+
+    expect(summary.stintsOpened).toBe(1);
+    const traces = database
+      .query("SELECT COUNT(*) as count FROM traces WHERE stint_id = 'A-other'")
+      .get() as { count: number };
+    expect(traces.count).toBe(1);
+  });
+
   test("a plan item still reuses its stint when the plan is re-declared unchanged", () => {
     const database = openDatabase(":memory:");
     const { store, heroId, questId } = seedDeclared(database);
@@ -1749,6 +1904,28 @@ describe("applyResult in declared mode", () => {
         }
       ).questId,
     ).toBe(questId);
+  });
+
+  test("an empty plan item is stored, not silently turned into NULL", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seedDeclared(database);
+
+    // `--plan` filters empty parts today, so this is a guard on the projection
+    // rather than a reachable CLI state: an empty string is a value, and a
+    // truthiness check would store NULL for it.
+    openStintContinuing(store, database, {
+      outcome: "walk order",
+      at: "2026-09-04T15:00:00.000Z",
+      actor: "hook",
+      planIndex: "P1.1",
+      planItem: "",
+    });
+
+    const opened = database
+      .query("SELECT plan_index as planIndex, plan_item as planItem FROM stints WHERE id != 'A1'")
+      .get() as { planIndex: string | null; planItem: string | null };
+    expect(opened.planIndex).toBe("P1.1");
+    expect(opened.planItem).toBe("");
   });
 
   test("a new: selector opens a stint whose outcome is the text after the prefix", () => {

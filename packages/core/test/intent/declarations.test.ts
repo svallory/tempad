@@ -373,6 +373,85 @@ describe("activeDeclaredQuests", () => {
     ).toEqual([]);
   });
 
+  test("subagent scope returns the subagent's own declarations and honours done", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    const store = new EventStore(database);
+    const heroId = seedHero(database, store);
+    const questId = seedQuest(database, store, heroId, "Verify the fix", "prove it");
+
+    declareQuest(store, database, {
+      sessionId: "sub",
+      parentSessionId: "parent",
+      questId,
+      plan: ["run the suite"],
+      scope: "subagent",
+      declaredBy: "agent",
+      at: "2026-09-07T09:00:00.000Z",
+      heroId,
+    });
+
+    const active = activeDeclaredQuests(database, {
+      sessionId: "sub",
+      at: "2026-09-07T10:00:00.000Z",
+      scope: "subagent",
+      parentSessionId: "parent",
+    });
+    expect(active.map((quest) => quest.questId)).toEqual([questId]);
+    expect(active[0]?.alias).toBe("Q1");
+    expect(active[0]?.scope).toBe("subagent");
+    expect(active[0]?.parentSessionId).toBe("parent");
+
+    declareQuest(store, database, {
+      sessionId: "sub",
+      parentSessionId: "parent",
+      questId,
+      done: true,
+      plan: [],
+      scope: "subagent",
+      declaredBy: "agent",
+      at: "2026-09-07T11:00:00.000Z",
+      heroId,
+    });
+
+    expect(
+      activeDeclaredQuests(database, {
+        sessionId: "sub",
+        at: "2026-09-07T12:00:00.000Z",
+        scope: "subagent",
+        parentSessionId: "parent",
+      }),
+    ).toEqual([]);
+  });
+
+  test("subagent scope ignores a declaration made under a different parent", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    const store = new EventStore(database);
+    const heroId = seedHero(database, store);
+    const questId = seedQuest(database, store, heroId, "Verify the fix", "prove it");
+
+    declareQuest(store, database, {
+      sessionId: "sub",
+      parentSessionId: "other-parent",
+      questId,
+      plan: [],
+      scope: "subagent",
+      declaredBy: "agent",
+      at: "2026-09-07T09:00:00.000Z",
+      heroId,
+    });
+
+    expect(
+      activeDeclaredQuests(database, {
+        sessionId: "sub",
+        at: "2026-09-07T10:00:00.000Z",
+        scope: "subagent",
+        parentSessionId: "parent",
+      }),
+    ).toEqual([]);
+  });
+
   test("declareQuest with done and no quest id throws", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);

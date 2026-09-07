@@ -204,8 +204,9 @@ CREATE TABLE w5_quiet (
 -- stints (mirrored in the `stints` projection's CREATE TABLE). A declaration's
 -- --plan lists the stints a quest expects; the verifier names one as `P<n>.<m>`
 -- and the stint opened for it records both the alias (plan_index) and the plan
--- line's text at that index (plan_item). Reuse is keyed on plan_item, not on
--- the alias: plan numbering is assigned fresh per window, so amending a plan
--- shifts what `P2.1` names, and without the text a stint opened for the old
--- item would silently absorb the new one's traces. See
--- docs/specs/2026-09-07-stints-design.md.
+-- line's text at that index (plan_item). Reuse is keyed on
+-- (session, quest, plan_item) and never on the alias, which is stored for
+-- display and audit only: plan numbering is assigned fresh per window, so
+-- inserting a line ahead of an unfinished item moves it from `P1.1` to `P1.2`
+-- while naming the same outcome, and keying on the alias would open a second
+-- stint for work already in flight. See docs/specs/2026-09-07-stints-design.md.

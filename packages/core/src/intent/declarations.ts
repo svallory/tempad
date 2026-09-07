@@ -209,16 +209,28 @@ export interface ActiveDeclaredQuest extends DeclaredQuest {
  */
 export function activeDeclaredQuests(
   database: Database,
-  input: { sessionId: string; at: string },
+  input: {
+    sessionId: string;
+    at: string;
+    /**
+     * Which declarations to fold. Defaults to `"session"`, the multi-quest case
+     * this function exists for. `"subagent"` additionally requires
+     * `parentSessionId`: a subagent's declarations are keyed by the pair, so
+     * folding them without it would mix in another parent's.
+     */
+    scope?: "session" | "subagent";
+    parentSessionId?: string;
+  },
 ): ActiveDeclaredQuest[] {
+  const scope = input.scope ?? "session";
   const rows = database
     .query(
       `SELECT payload, at FROM events
         WHERE kind = 'quest.declared' AND json_extract(payload, '$.session_id') = ?
-          AND json_extract(payload, '$.scope') = 'session' AND at <= ?
+          AND json_extract(payload, '$.scope') = ? AND at <= ?
         ORDER BY at ASC, id ASC`,
     )
-    .all(input.sessionId, input.at) as { payload: string; at: string }[];
+    .all(input.sessionId, scope, input.at) as { payload: string; at: string }[];
 
   // Insertion order is declaration order, so a quest re-declared later to amend
   // its plan keeps its position and its alias does not jump around.
@@ -228,7 +240,9 @@ export function activeDeclaredQuests(
       quest_id?: string;
       plan?: string[];
       done?: boolean;
+      parent_session_id?: string;
     };
+    if (scope === "subagent" && payload.parent_session_id !== input.parentSessionId) continue;
     const questId = payload.quest_id;
     if (!questId) continue;
     if (payload.done === true) {
@@ -257,8 +271,8 @@ export function activeDeclaredQuests(
       title: quest.title,
       outcome: quest.outcome,
       plan: entry.plan,
-      scope: "session",
-      parentSessionId: null,
+      scope,
+      parentSessionId: scope === "subagent" ? (input.parentSessionId ?? null) : null,
       alias: `Q${aliasNumber}`,
     });
   }

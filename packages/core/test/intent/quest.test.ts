@@ -453,6 +453,48 @@ describe("quests", () => {
     expect(await run(["quest", "declare", "--session", "s1", "--done", "nope"])).toBe(1);
   });
 
+  test("quest declare --parent --done ends a subagent's own declaration", async () => {
+    const { run, database } = harness();
+    await run(["hero", "init", "S"]);
+    await run(["quest", "add", "--owner", "hero", "Verify the fix"]);
+    const quest = database.query("SELECT id FROM quests").get() as { id: string };
+    await run(["quest", "declare", "--session", "sub", "--parent", "s1", "--quest", quest.id]);
+
+    const exitCode = await run([
+      "quest",
+      "declare",
+      "--session",
+      "sub",
+      "--parent",
+      "s1",
+      "--done",
+      quest.id,
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(
+      activeDeclaredQuests(database, {
+        sessionId: "sub",
+        at: new Date().toISOString(),
+        scope: "subagent",
+        parentSessionId: "s1",
+      }),
+    ).toEqual([]);
+  });
+
+  test("quest declare --parent --done rejects a quest the subagent never declared", async () => {
+    const { run, database } = harness();
+    await run(["hero", "init", "S"]);
+    await run(["quest", "add", "--owner", "hero", "Verify the fix"]);
+    const quest = database.query("SELECT id FROM quests").get() as { id: string };
+    // Declared session-scope for the parent, never for the subagent.
+    await run(["quest", "declare", "--session", "s1", "--quest", quest.id]);
+
+    expect(
+      await run(["quest", "declare", "--session", "sub", "--parent", "s1", "--done", quest.id]),
+    ).toBe(1);
+  });
+
   test("quest declare --done is mutually exclusive with --quest, --new and --plan", async () => {
     const { run, database } = harness();
     await run(["hero", "init", "S"]);
