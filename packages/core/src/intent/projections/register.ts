@@ -1,5 +1,5 @@
-import { activityProjection } from "./activity";
-import { goalProjection } from "./goal";
+import { stintProjection } from "./activity";
+import { sagaProjection } from "./goal";
 import { heroProjection } from "./hero";
 import { registerProjection } from "./index";
 import { partyProjection } from "./party";
@@ -12,9 +12,9 @@ export function registerAllProjections(): void {
   if (registered) return;
   registerProjection(heroProjection);
   registerProjection(partyProjection);
-  registerProjection(goalProjection);
+  registerProjection(sagaProjection);
   registerProjection(questProjection);
-  registerProjection(activityProjection);
+  registerProjection(stintProjection);
   registerProjection(windowProjection);
   registered = true;
 }

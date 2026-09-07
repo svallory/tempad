@@ -36,9 +36,9 @@ class FakeClassifier implements Classifier {
           guess: null,
           matchedQuest: null,
           proposedQuest: null,
-          matchedActivity: null,
-          continuesActivity: null,
-          newActivityReason: "first work of the window",
+          matchedStint: null,
+          continuesStint: null,
+          newStintReason: "first work of the window",
           isSwitch: false,
           trigger: null,
           confidence: 0.9,
@@ -126,7 +126,7 @@ describe("w5 eval", () => {
     });
 
     expect(metrics.traces).toBe(1);
-    expect(metrics.activities).toBe(1);
+    expect(metrics.stints).toBe(1);
     expect(metrics.ratio).toBe(1);
     expect(metrics.continuesLinks).toBe(0);
     expect(metrics.doubts).toBe(0);
@@ -161,9 +161,9 @@ describe("w5 eval", () => {
     });
 
     expect(metrics.traces).toBe(0);
-    expect(metrics.activities).toBe(0);
+    expect(metrics.stints).toBe(0);
     expect(metrics.ratio).toBe(0);
-    expect(metrics.medianActivityDurationMinutes).toBe(0);
+    expect(metrics.medianStintDurationMinutes).toBe(0);
     expect(metrics.sample.length).toBe(0);
 
     const sourceBytesAfter = await Bun.file(sourcePath).arrayBuffer();
@@ -257,7 +257,7 @@ describe("w5 eval", () => {
     database.close();
 
     expect(metrics.traces).toBe(1);
-    expect(metrics.activities).toBe(1);
+    expect(metrics.stints).toBe(1);
   });
 
   test("reports a real quest conflict count from the run summary", async () => {
@@ -323,10 +323,10 @@ describe("w5 eval", () => {
                 belongs: true,
                 guess: null,
                 matchedQuest: null,
-                proposedQuest: { title: "Q1", objective: "ship it", commitment: "personal" },
-                matchedActivity: null,
-                continuesActivity: null,
-                newActivityReason: "first work of the window",
+                proposedQuest: { title: "Q1", aim: "ship it", commitment: "personal" },
+                matchedStint: null,
+                continuesStint: null,
+                newStintReason: "first work of the window",
                 isSwitch: false,
                 trigger: null,
                 confidence: 0.9,
@@ -337,7 +337,7 @@ describe("w5 eval", () => {
           };
         }
 
-        const open = window.sessionOpenActivities.at(-1);
+        const open = window.sessionOpenStints.at(-1);
         return {
           segments: [
             {
@@ -349,9 +349,9 @@ describe("w5 eval", () => {
               guess: null,
               matchedQuest: "Q-OTHER",
               proposedQuest: null,
-              matchedActivity: open?.activityId ?? null,
-              continuesActivity: null,
-              newActivityReason: open ? null : "nothing open to reuse",
+              matchedStint: open?.stintId ?? null,
+              continuesStint: null,
+              newStintReason: open ? null : "nothing open to reuse",
               isSwitch: false,
               trigger: null,
               confidence: 0.9,
@@ -428,10 +428,10 @@ describe("w5 eval", () => {
                 belongs: true,
                 guess: null,
                 matchedQuest: null,
-                proposedQuest: { title: "Q1", objective: "ship it", commitment: "personal" },
-                matchedActivity: null,
-                continuesActivity: null,
-                newActivityReason: "first work of the window",
+                proposedQuest: { title: "Q1", aim: "ship it", commitment: "personal" },
+                matchedStint: null,
+                continuesStint: null,
+                newStintReason: "first work of the window",
                 isSwitch: false,
                 trigger: null,
                 confidence: 0.9,
@@ -442,7 +442,7 @@ describe("w5 eval", () => {
           };
         }
 
-        const open = window.sessionOpenActivities.at(-1);
+        const open = window.sessionOpenStints.at(-1);
         return {
           segments: [
             {
@@ -454,9 +454,9 @@ describe("w5 eval", () => {
               guess: null,
               matchedQuest: null,
               proposedQuest: null,
-              matchedActivity: open?.activityId ?? null,
-              continuesActivity: null,
-              newActivityReason: open ? null : "nothing open to reuse",
+              matchedStint: open?.stintId ?? null,
+              continuesStint: null,
+              newStintReason: open ? null : "nothing open to reuse",
               isSwitch: false,
               trigger: null,
               confidence: 0.9,
@@ -580,7 +580,7 @@ describe("w5 eval", () => {
         payload: {
           owner: { kind: "hero", id: "H1" },
           title: "old in-range quest",
-          objective: "obj",
+          aim: "obj",
           commitment: "focused",
           confirmed: false,
         },
@@ -592,7 +592,7 @@ describe("w5 eval", () => {
         actor: "hook",
         kind: "activity.opened",
         subject: "A_IN",
-        payload: { objective: "old in-range work", quest: "Q_IN" },
+        payload: { aim: "old in-range work", quest: "Q_IN" },
         at: "2026-09-01T09:00:00.000Z",
       }),
     );
@@ -604,7 +604,7 @@ describe("w5 eval", () => {
         subject: "T_IN",
         sessionId: "s1",
         payload: {
-          activity: "A_IN",
+          stint: "A_IN",
           tool: "claude-code",
           place: "p",
           source: "session",
@@ -629,7 +629,7 @@ describe("w5 eval", () => {
         payload: {
           owner: { kind: "hero", id: "H1" },
           title: "old out-of-range quest",
-          objective: "obj",
+          aim: "obj",
           commitment: "focused",
           confirmed: false,
         },
@@ -641,7 +641,7 @@ describe("w5 eval", () => {
         actor: "hook",
         kind: "activity.opened",
         subject: "A_OUT",
-        payload: { objective: "old out-of-range work", quest: "Q_OUT" },
+        payload: { aim: "old out-of-range work", quest: "Q_OUT" },
         at: "2026-08-01T09:00:00.000Z",
       }),
     );
@@ -653,7 +653,7 @@ describe("w5 eval", () => {
         subject: "T_OUT",
         sessionId: "s2",
         payload: {
-          activity: "A_OUT",
+          stint: "A_OUT",
           tool: "claude-code",
           place: "p",
           source: "session",
@@ -719,7 +719,7 @@ describe("w5 eval", () => {
     expect(Buffer.from(sourceBytesAfter).equals(Buffer.from(sourceBytesBefore))).toBe(true);
 
     expect(metrics.resetTraces).toBe(1);
-    expect(metrics.resetActivities).toBe(1);
+    expect(metrics.resetStints).toBe(1);
     expect(metrics.resetQuests).toBe(1);
 
     const copied = openDatabase(metrics.copiedDbPath);
@@ -768,7 +768,7 @@ describe("w5 eval", () => {
 
     // Only the rerun's rows count toward the metrics, not the reset old cohort.
     expect(metrics.traces).toBe(1);
-    expect(metrics.activities).toBe(1);
+    expect(metrics.stints).toBe(1);
   });
 
   test("a bare --to date includes the whole to day, not just its start", async () => {
@@ -797,7 +797,7 @@ describe("w5 eval", () => {
         actor: "hook",
         kind: "activity.opened",
         subject: "A_LATE",
-        payload: { objective: "old late-in-day work" },
+        payload: { aim: "old late-in-day work" },
         at: "2026-09-02T09:00:00.000Z",
       }),
     );
@@ -809,7 +809,7 @@ describe("w5 eval", () => {
         subject: "T_LATE",
         sessionId: "s1",
         payload: {
-          activity: "A_LATE",
+          stint: "A_LATE",
           tool: "claude-code",
           place: "p",
           source: "session",
@@ -851,9 +851,9 @@ describe("w5 eval", () => {
 
     // The late-in-day old cohort was reset and its trace's window reclassified.
     expect(metrics.resetTraces).toBe(1);
-    expect(metrics.resetActivities).toBe(1);
+    expect(metrics.resetStints).toBe(1);
     expect(metrics.traces).toBe(1);
-    expect(metrics.activities).toBe(1);
+    expect(metrics.stints).toBe(1);
 
     const copied = openDatabase(metrics.copiedDbPath);
     const oldTrace = copied.query("SELECT retracted_at FROM traces WHERE id = 'T_LATE'").get() as {
@@ -874,7 +874,7 @@ describe("w5 eval", () => {
         {
           session_id: "s1",
           at: "2026-09-01T09:00:00.000Z",
-          new: { title: "Ship p", objective: "ship it", commitment: "personal" },
+          new: { title: "Ship p", aim: "ship it", commitment: "personal" },
         },
       ]),
     );
@@ -1048,7 +1048,7 @@ describe("w5 eval", () => {
         {
           session_id: "does-not-exist",
           at: "2026-09-01T09:00:00.000Z",
-          new: { title: "Ship p", objective: "ship it", commitment: "personal" },
+          new: { title: "Ship p", aim: "ship it", commitment: "personal" },
         },
       ]),
     );
@@ -1107,12 +1107,12 @@ describe("w5 eval", () => {
         {
           session_id: "s-early",
           at: "2026-09-01T09:00:00.000Z",
-          new: { title: "Early quest", objective: "early", commitment: "personal" },
+          new: { title: "Early quest", aim: "early", commitment: "personal" },
         },
         {
           session_id: "s-late",
           at: "2026-09-01T10:00:00.000Z",
-          new: { title: "Late quest", objective: "late", commitment: "personal" },
+          new: { title: "Late quest", aim: "late", commitment: "personal" },
         },
       ]),
     );
@@ -1163,7 +1163,7 @@ describe("w5 eval", () => {
         {
           session_id: "s1",
           at: "2026-09-01T09:00:00.000Z",
-          new: { title: "Ship p", objective: "ship it", commitment: "personal" },
+          new: { title: "Ship p", aim: "ship it", commitment: "personal" },
           new_ref: "main-quest",
         },
         {
@@ -1265,7 +1265,7 @@ describe("w5 eval", () => {
           session_id: "s1",
           at: "2026-09-01T09:00:00.000Z",
           quest: "some-quest-id",
-          new: { title: "Ship p", objective: "ship it", commitment: "personal" },
+          new: { title: "Ship p", aim: "ship it", commitment: "personal" },
         },
       ]),
     );

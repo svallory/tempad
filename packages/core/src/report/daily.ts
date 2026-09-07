@@ -1,9 +1,9 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
 import {
-  type ActivityRow,
+  type StintRow,
   attributeNonClaudeEvidence,
-  queryActivities,
+  queryStints,
   queryOpenQuestions,
   querySideQuests,
   resolveIntentDatabase,
@@ -69,7 +69,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
       project: options.project,
       client: options.client,
     };
-    const dayActivities = queryActivities(intentDatabase, dayRangeOptions);
+    const dayStints = queryStints(intentDatabase, dayRangeOptions);
     const daySideQuests = querySideQuests(intentDatabase, dayRangeOptions);
     const dayAttribution = new Map(
       attributeNonClaudeEvidence(intentDatabase, dayRangeOptions).map((row) => [row.id, row]),
@@ -80,7 +80,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
       daySessions.length > 0 ||
       dayMondayItems.length > 0 ||
       dayPullRequests.length > 0 ||
-      dayActivities.length > 0 ||
+      dayStints.length > 0 ||
       daySideQuests.length > 0;
 
     if (!hasEvidence && isWeekend(day, timeZone)) continue;
@@ -99,7 +99,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
       daySessions,
       dayMondayItems,
       dayPullRequests,
-      dayActivities,
+      dayStints,
       daySideQuests,
     );
 
@@ -150,19 +150,19 @@ function render(database: Database, config: Config, options: ReportOptions): str
         lines.push(`- #${pr.number} ${pr.title}, ${action}`);
       }
 
-      const keyActivities = dayActivities.filter((row) => matchesKey(row, key));
-      if (keyActivities.length > 0) {
+      const keyStints = dayStints.filter((row) => matchesKey(row, key));
+      if (keyStints.length > 0) {
         lines.push(heading(4, "Quests"));
-        for (const [questTitle, questActivities] of groupByQuest(keyActivities)) {
-          const unconfirmed = questActivities[0]?.questConfirmed === false ? " [unconfirmed]" : "";
+        for (const [questTitle, questStints] of groupByQuest(keyStints)) {
+          const unconfirmed = questStints[0]?.questConfirmed === false ? " [unconfirmed]" : "";
           const inferred =
-            questActivities[0]?.questOriginKind && questActivities[0].questOriginKind !== "declared"
+            questStints[0]?.questOriginKind && questStints[0].questOriginKind !== "declared"
               ? " (inferred)"
               : "";
-          const objectives = questActivities.map((activity) => activity.objective).join("; ");
-          const minutes = questActivities.reduce((sum, activity) => sum + activity.minutes, 0);
+          const aims = questStints.map((stint) => stint.aim).join("; ");
+          const minutes = questStints.reduce((sum, stint) => sum + stint.minutes, 0);
           lines.push(
-            `- ${questTitle}${unconfirmed}${inferred}: ${objectives} (${minutesLabel(minutes)})`,
+            `- ${questTitle}${unconfirmed}${inferred}: ${aims} (${minutesLabel(minutes)})`,
           );
         }
       }
@@ -176,7 +176,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
             ? `back ${localTime(sideQuest.returnedAt, timeZone)}`
             : "not returned";
           lines.push(
-            `- ${sideQuest.title}, branched ${branchTime} from "${sideQuest.fromActivityObjective ?? "unknown"}", trigger: "${sideQuest.trigger ?? "unknown"}", ${returned} (${minutesLabel(sideQuest.minutes)})`,
+            `- ${sideQuest.title}, branched ${branchTime} from "${sideQuest.fromStintAim ?? "unknown"}", trigger: "${sideQuest.trigger ?? "unknown"}", ${returned} (${minutesLabel(sideQuest.minutes)})`,
           );
         }
       }
@@ -235,7 +235,7 @@ function collectProjectKeys(
   sessions: SessionRow[],
   mondayItems: MondayItemRow[],
   pullRequests: PullRequestRow[],
-  activities: ActivityRow[],
+  stints: StintRow[],
   sideQuests: SideQuestRow[],
 ): ProjectKey[] {
   const keys = new Map<string, ProjectKey>();
@@ -243,7 +243,7 @@ function collectProjectKeys(
     const key = { org: row.org, project: row.project };
     keys.set(projectKeyString(key), key);
   }
-  for (const row of [...activities, ...sideQuests]) {
+  for (const row of [...stints, ...sideQuests]) {
     if (!row.org || !row.project) continue;
     const key = { org: row.org, project: row.project };
     keys.set(projectKeyString(key), key);
@@ -259,12 +259,12 @@ function minutesLabel(totalMinutes: number): string {
 }
 
 /** Activities grouped by their quest title, in first-seen order. */
-function groupByQuest(activities: ActivityRow[]): [string, ActivityRow[]][] {
-  const groups = new Map<string, ActivityRow[]>();
-  for (const activity of activities) {
-    const title = activity.questTitle ?? "(no quest)";
+function groupByQuest(stints: StintRow[]): [string, StintRow[]][] {
+  const groups = new Map<string, StintRow[]>();
+  for (const stint of stints) {
+    const title = stint.questTitle ?? "(no quest)";
     const list = groups.get(title) ?? [];
-    list.push(activity);
+    list.push(stint);
     groups.set(title, list);
   }
   return [...groups.entries()];

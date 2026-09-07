@@ -324,7 +324,7 @@ describe("w5 context", () => {
     );
     declareQuest(store, database, {
       sessionId: "s1",
-      newQuest: { title: "Ship X", objective: "ship it", commitment: "personal" },
+      newQuest: { title: "Ship X", aim: "ship it", commitment: "personal" },
       plan: [],
       scope: "session",
       declaredBy: "agent",

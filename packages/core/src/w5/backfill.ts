@@ -8,7 +8,7 @@ import { EventStore } from "../intent/store";
 import { applyResult } from "./apply";
 import type { Classifier } from "./classifier";
 import { writeSessionNote } from "./jobs";
-import { closeIdleActivities } from "./lifecycle";
+import { closeIdleStints } from "./lifecycle";
 import { buildWindow } from "./window";
 
 registerAllProjections();
@@ -37,7 +37,7 @@ export interface BackfillResult {
   windowsFailed: number;
   windowsSkipped: number;
   doubts: number;
-  unknownActivityIds: number;
+  unknownStintIds: number;
   overlapDropped: number;
   questProposedOnMatched: number;
   selectorDefaulted: number;
@@ -138,7 +138,7 @@ export async function backfill(
   let windowsFailed = 0;
   let windowsSkipped = 0;
   let doubts = 0;
-  let unknownActivityIds = 0;
+  let unknownStintIds = 0;
   let overlapDropped = 0;
   let questProposedOnMatched = 0;
   let selectorDefaulted = 0;
@@ -195,7 +195,7 @@ export async function backfill(
       sinceTs: null,
       maxMessages: 5000,
       memoryHours: intentConfig.memoryHours,
-      memoryActivities: intentConfig.memoryActivities,
+      memoryStints: intentConfig.memoryStints,
       overlapMessages: intentConfig.overlapMessages,
       // Only the message list is used from this window; the slice is rebuilt per
       // chunk below with that chunk's own end as the bound.
@@ -252,10 +252,10 @@ export async function backfill(
   }
 
   for (const { session, chunk, index, startedAt, endedAt, previousChunkEnd } of pending) {
-    closeIdleActivities(store, database, {
+    closeIdleStints(store, database, {
       sessionId: session.id,
       windowStartedAt: startedAt,
-      idleMinutes: intentConfig.activityIdleMinutes,
+      idleMinutes: intentConfig.stintIdleMinutes,
     });
 
     // The slice is rebuilt per chunk, after the previous chunk's applyResult and
@@ -272,7 +272,7 @@ export async function backfill(
         sinceTs: previousChunkEnd,
         maxMessages: 5000,
         memoryHours: intentConfig.memoryHours,
-        memoryActivities: intentConfig.memoryActivities,
+        memoryStints: intentConfig.memoryStints,
         overlapMessages: intentConfig.overlapMessages,
         windowEnd: endedAt,
       }),
@@ -294,7 +294,7 @@ export async function backfill(
         mode: modeFor(session.id),
       });
       doubts += applied.doubts;
-      unknownActivityIds += applied.unknownActivityIds;
+      unknownStintIds += applied.unknownStintIds;
       overlapDropped += applied.overlapDropped;
       questProposedOnMatched += applied.questProposedOnMatched;
       selectorDefaulted += result.selectorDefaulted ?? 0;
@@ -340,7 +340,7 @@ export async function backfill(
     windowsFailed,
     windowsSkipped,
     doubts,
-    unknownActivityIds,
+    unknownStintIds,
     overlapDropped,
     questProposedOnMatched,
     selectorDefaulted,

@@ -18,7 +18,7 @@ export interface BuildWindowInput {
   sinceTs: string | null;
   maxMessages: number;
   memoryHours: number;
-  memoryActivities: number;
+  memoryStints: number;
   overlapMessages: number;
   /**
    * The last message timestamp of the window being classified. Candidate
@@ -38,8 +38,8 @@ export interface BuildWindowInput {
   mode?: "declared" | "inferred";
 }
 
-interface ActivityRow {
-  activityId: string;
+interface StintRow {
+  stintId: string;
   what: string;
   why: string;
   questId: string | null;
@@ -99,7 +99,7 @@ function latestDeclaredParentSessionId(
 
 function toSlice(declared: DeclaredQuest | null): DeclaredQuestSlice | null {
   if (declared === null) return null;
-  return { title: declared.title, objective: declared.objective, plan: declared.plan };
+  return { title: declared.title, aim: declared.aim, plan: declared.plan };
 }
 
 export function buildWindow(database: Database, input: BuildWindowInput): ClassifierWindow {
@@ -162,8 +162,8 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
           .all(session.org) as {
           id: string;
           title: string;
-          objective: string | null;
-          lastActivityAt: string | null;
+          aim: string | null;
+          lastStintAt: string | null;
         }[])
       : undefined;
 
@@ -171,7 +171,7 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
   // happened, so it is never a candidate -- see `windowEnd` on `BuildWindowInput`.
   const windowEnd = input.windowEnd ?? new Date().toISOString();
 
-  const sessionOpenActivities = database
+  const sessionOpenStints = database
     .query(
       `${ACTIVITY_SLICE_SELECT}
          AND activities.closed_at IS NULL
@@ -179,7 +179,7 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
          AND latest.session_id = ?
        ORDER BY activities.opened_at ASC`,
     )
-    .all(windowEnd, input.sessionId) as (ActivityRow & {
+    .all(windowEnd, input.sessionId) as (StintRow & {
     closedAt: string | null;
     closeReason: string | null;
   })[];
@@ -195,7 +195,7 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
   // closes an activity, and returning to it afterwards is exactly a `continues`
   // link. Still-open ones are already in `sessionOpenActivities`, so no activity
   // appears in both slices.
-  const recentActivities = database
+  const recentStints = database
     .query(
       `${ACTIVITY_SLICE_SELECT}
          AND activities.opened_at < ?
@@ -213,8 +213,8 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
       memoryCutoff,
       input.sessionId,
       `${session.org}/${session.project}`,
-      input.memoryActivities,
-    ) as (ActivityRow & { closedAt: string | null; closeReason: string | null })[];
+      input.memoryStints,
+    ) as (StintRow & { closedAt: string | null; closeReason: string | null })[];
 
   const recentSideQuests =
     mode === "inferred"
@@ -289,8 +289,8 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
     }
   }
 
-  const openSlice = sessionOpenActivities.map(
-    ({ closedAt: _closedAt, closeReason: _closeReason, ...activity }) => activity,
+  const openSlice = sessionOpenStints.map(
+    ({ closedAt: _closedAt, closeReason: _closeReason, ...stint }) => stint,
   );
 
   // Aliases are assigned over both slices in the order they are listed, so the
@@ -299,23 +299,23 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
   // Inference mode is the pre-verifier path end to end: `apply.ts` looks activity
   // ids up directly there, so the slice must keep carrying real ids. Aliasing is
   // declared mode's scheme alone.
-  const activityAliases: Record<string, string> = {};
+  const stintAliases: Record<string, string> = {};
   let aliasNumber = 0;
   const aliasFor = (realId: string): string => {
     if (mode !== "declared") return realId;
     aliasNumber += 1;
     const alias = `A${aliasNumber}`;
-    activityAliases[alias] = realId;
+    stintAliases[alias] = realId;
     return alias;
   };
 
-  const aliasedOpen = openSlice.map((activity) => ({
-    ...activity,
-    activityId: aliasFor(activity.activityId),
+  const aliasedOpen = openSlice.map((stint) => ({
+    ...stint,
+    stintId: aliasFor(stint.stintId),
   }));
-  const aliasedRecent = recentActivities.map((activity) => ({
-    ...activity,
-    activityId: aliasFor(activity.activityId),
+  const aliasedRecent = recentStints.map((stint) => ({
+    ...stint,
+    stintId: aliasFor(stint.stintId),
   }));
 
   return {
@@ -329,10 +329,10 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
     mode,
     declaredQuest: toSlice(declaredQuest),
     parentDeclaredQuest: toSlice(parentDeclaredQuest),
-    activityAliases,
+    stintAliases,
     ...(openQuests === undefined ? {} : { openQuests }),
-    sessionOpenActivities: aliasedOpen,
-    recentActivities: aliasedRecent,
+    sessionOpenStints: aliasedOpen,
+    recentStints: aliasedRecent,
     ...(recentSideQuests === undefined ? {} : { recentSideQuests }),
     overlapMessages,
     previousSessionNote: runRow?.session_note ?? null,

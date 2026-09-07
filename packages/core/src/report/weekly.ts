@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
 import {
-  queryActivities,
+  queryStints,
   queryDoubtRows,
   queryQuests,
   querySideQuests,
@@ -27,7 +27,7 @@ function minutesLabel(totalMinutes: number): string {
 }
 
 interface DayProjectStats {
-  activities: number;
+  stints: number;
   questsTouched: number;
   shipped: number;
   abandoned: number;
@@ -39,7 +39,7 @@ interface DayProjectStats {
 
 function emptyStats(): DayProjectStats {
   return {
-    activities: 0,
+    stints: 0,
     questsTouched: 0,
     shipped: 0,
     abandoned: 0,
@@ -52,7 +52,7 @@ function emptyStats(): DayProjectStats {
 
 function addStats(a: DayProjectStats, b: DayProjectStats): DayProjectStats {
   return {
-    activities: a.activities + b.activities,
+    stints: a.stints + b.stints,
     questsTouched: a.questsTouched + b.questsTouched,
     shipped: a.shipped + b.shipped,
     abandoned: a.abandoned + b.abandoned,
@@ -66,7 +66,7 @@ function addStats(a: DayProjectStats, b: DayProjectStats): DayProjectStats {
 function statsRow(label: string, stats: DayProjectStats): string[] {
   return [
     label,
-    String(stats.activities),
+    String(stats.stints),
     String(stats.questsTouched),
     String(stats.shipped),
     String(stats.abandoned),
@@ -109,16 +109,16 @@ function render(database: Database, config: Config, options: ReportOptions): str
       project: options.project,
       client: options.client,
     };
-    const activities = queryActivities(intentDatabase, dayRangeOptions);
+    const stints = queryStints(intentDatabase, dayRangeOptions);
     const quests = queryQuests(intentDatabase, dayRangeOptions);
     const sideQuests = querySideQuests(intentDatabase, dayRangeOptions);
     const doubtRows = queryDoubtRows(intentDatabase, dayRangeOptions);
 
-    const hasEvidence = activities.length > 0 || quests.length > 0 || sideQuests.length > 0;
+    const hasEvidence = stints.length > 0 || quests.length > 0 || sideQuests.length > 0;
     if (!hasEvidence && isWeekend(day, timeZone)) continue;
 
     const keys = new Map<string, ProjectKey>();
-    for (const row of [...activities, ...quests, ...sideQuests]) {
+    for (const row of [...stints, ...quests, ...sideQuests]) {
       if (!row.org || !row.project) continue;
       keys.set(projectKeyString({ org: row.org, project: row.project }), {
         org: row.org,
@@ -144,7 +144,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
 
     for (const key of sortedKeys) {
       const stats: DayProjectStats = {
-        activities: activities.filter((row) => row.org === key.org && row.project === key.project)
+        stints: stints.filter((row) => row.org === key.org && row.project === key.project)
           .length,
         questsTouched: quests.filter((row) => row.org === key.org && row.project === key.project)
           .length,

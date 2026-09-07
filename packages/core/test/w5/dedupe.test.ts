@@ -13,7 +13,7 @@ function recordTrace(
   database: ReturnType<typeof openDatabase>,
   input: {
     id: string;
-    activityId: string;
+    stintId: string;
     sessionId: string;
     startedAt: string;
     endedAt: string;
@@ -27,7 +27,7 @@ function recordTrace(
       subject: input.id,
       sessionId: input.sessionId,
       payload: {
-        activity: input.activityId,
+        stint: input.stintId,
         tool: "claude-code",
         place: "p",
         source: "session",
@@ -45,7 +45,7 @@ function recordTrace(
   );
 }
 
-function openActivity(
+function openStint(
   store: EventStore,
   database: ReturnType<typeof openDatabase>,
   id: string,
@@ -58,7 +58,7 @@ function openActivity(
       actor: "hook",
       kind: "activity.opened",
       subject: id,
-      payload: { objective: "work", quest },
+      payload: { aim: "work", quest },
       at,
     }),
   );
@@ -80,7 +80,7 @@ function createQuest(
       payload: {
         owner: { kind: "hero", id: heroId },
         title: "Ship",
-        objective: "obj",
+        aim: "obj",
         commitment: "focused",
         confirmed,
       },
@@ -104,24 +104,24 @@ describe("w5 dedupe", () => {
     const store = new EventStore(database);
     const heroId = seedHero(database, store);
     createQuest(store, database, "Q1", heroId, false);
-    openActivity(store, database, "A1", "Q1", "2026-08-31T14:00:00.000Z");
+    openStint(store, database, "A1", "Q1", "2026-08-31T14:00:00.000Z");
     recordTrace(store, database, {
       id: "T1",
-      activityId: "A1",
+      stintId: "A1",
       sessionId: "s1",
       startedAt: "2026-08-31T14:00:00.000Z",
       endedAt: "2026-08-31T14:30:00.000Z",
     });
     recordTrace(store, database, {
       id: "T2",
-      activityId: "A1",
+      stintId: "A1",
       sessionId: "s1",
       startedAt: "2026-08-31T14:00:00.000Z",
       endedAt: "2026-08-31T14:30:00.000Z",
     });
 
     const result = dedupe(database, { dryRun: true });
-    expect(result).toEqual({ traces: 1, activities: 0, quests: 0 });
+    expect(result).toEqual({ traces: 1, stints: 0, quests: 0 });
 
     const liveTraces = database
       .query("SELECT COUNT(*) as n FROM traces WHERE retracted_at IS NULL")
@@ -138,25 +138,25 @@ describe("w5 dedupe", () => {
     // incident's shape, per the brief's Facts section.
     createQuest(store, database, "Q1", heroId, false);
     createQuest(store, database, "Q2", heroId, false);
-    openActivity(store, database, "A1", "Q1", "2026-08-31T14:00:00.000Z");
-    openActivity(store, database, "A2", "Q2", "2026-08-31T14:00:05.000Z");
+    openStint(store, database, "A1", "Q1", "2026-08-31T14:00:00.000Z");
+    openStint(store, database, "A2", "Q2", "2026-08-31T14:00:05.000Z");
     recordTrace(store, database, {
       id: "T1",
-      activityId: "A1",
+      stintId: "A1",
       sessionId: "s1",
       startedAt: "2026-08-31T14:00:00.000Z",
       endedAt: "2026-08-31T14:30:00.000Z",
     });
     recordTrace(store, database, {
       id: "T2",
-      activityId: "A2",
+      stintId: "A2",
       sessionId: "s1",
       startedAt: "2026-08-31T14:00:00.000Z",
       endedAt: "2026-08-31T14:30:00.000Z",
     });
 
     const result = dedupe(database, { dryRun: false });
-    expect(result).toEqual({ traces: 1, activities: 1, quests: 1 });
+    expect(result).toEqual({ traces: 1, stints: 1, quests: 1 });
 
     const trace1 = database.query("SELECT retracted_at FROM traces WHERE id = 'T1'").get() as {
       retracted_at: string | null;
@@ -190,7 +190,7 @@ describe("w5 dedupe", () => {
 
     // Idempotent: running again finds nothing left to dedupe.
     const second = dedupe(database, { dryRun: false });
-    expect(second).toEqual({ traces: 0, activities: 0, quests: 0 });
+    expect(second).toEqual({ traces: 0, stints: 0, quests: 0 });
   });
 
   test("an activity with a surviving live trace is not retracted", () => {
@@ -198,17 +198,17 @@ describe("w5 dedupe", () => {
     const store = new EventStore(database);
     const heroId = seedHero(database, store);
     createQuest(store, database, "Q1", heroId, false);
-    openActivity(store, database, "A1", "Q1", "2026-08-31T14:00:00.000Z");
+    openStint(store, database, "A1", "Q1", "2026-08-31T14:00:00.000Z");
     recordTrace(store, database, {
       id: "T1",
-      activityId: "A1",
+      stintId: "A1",
       sessionId: "s1",
       startedAt: "2026-08-31T14:00:00.000Z",
       endedAt: "2026-08-31T14:30:00.000Z",
     });
     recordTrace(store, database, {
       id: "T2",
-      activityId: "A1",
+      stintId: "A1",
       sessionId: "s1",
       startedAt: "2026-08-31T14:00:00.000Z",
       endedAt: "2026-08-31T14:30:00.000Z",
@@ -217,19 +217,19 @@ describe("w5 dedupe", () => {
     // the activity (and its quest) alive after the duplicate is retracted.
     recordTrace(store, database, {
       id: "T3",
-      activityId: "A1",
+      stintId: "A1",
       sessionId: "s1",
       startedAt: "2026-08-31T15:00:00.000Z",
       endedAt: "2026-08-31T15:30:00.000Z",
     });
 
     const result = dedupe(database, { dryRun: false });
-    expect(result).toEqual({ traces: 1, activities: 0, quests: 0 });
+    expect(result).toEqual({ traces: 1, stints: 0, quests: 0 });
 
-    const activity = database
+    const stint = database
       .query("SELECT retracted_at FROM activities WHERE id = 'A1'")
       .get() as { retracted_at: string | null };
-    expect(activity.retracted_at).toBeNull();
+    expect(stint.retracted_at).toBeNull();
   });
 
   test("a confirmed quest is not retracted even if its only activity is orphaned", () => {
@@ -241,25 +241,25 @@ describe("w5 dedupe", () => {
     // the kept trace T1.
     createQuest(store, database, "Q1", heroId, true);
     createQuest(store, database, "Q2", heroId, false);
-    openActivity(store, database, "A2", "Q2", "2026-08-31T14:00:00.000Z");
-    openActivity(store, database, "A1", "Q1", "2026-08-31T14:00:05.000Z");
+    openStint(store, database, "A2", "Q2", "2026-08-31T14:00:00.000Z");
+    openStint(store, database, "A1", "Q1", "2026-08-31T14:00:05.000Z");
     recordTrace(store, database, {
       id: "T1",
-      activityId: "A2",
+      stintId: "A2",
       sessionId: "s1",
       startedAt: "2026-08-31T14:00:00.000Z",
       endedAt: "2026-08-31T14:30:00.000Z",
     });
     recordTrace(store, database, {
       id: "T2",
-      activityId: "A1",
+      stintId: "A1",
       sessionId: "s1",
       startedAt: "2026-08-31T14:00:00.000Z",
       endedAt: "2026-08-31T14:30:00.000Z",
     });
 
     const result = dedupe(database, { dryRun: false });
-    expect(result).toEqual({ traces: 1, activities: 1, quests: 0 });
+    expect(result).toEqual({ traces: 1, stints: 1, quests: 0 });
 
     const activity1 = database
       .query("SELECT retracted_at FROM activities WHERE id = 'A1'")

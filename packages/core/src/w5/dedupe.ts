@@ -7,7 +7,7 @@ registerAllProjections();
 
 export interface DedupeResult {
   traces: number;
-  activities: number;
+  stints: number;
   quests: number;
 }
 
@@ -70,26 +70,26 @@ export function dedupe(database: Database, options: { dryRun: boolean }): Dedupe
 
   const tracesToRetract = groups.flatMap((group) => group.slice(1));
 
-  const affectedActivityIds = new Set(tracesToRetract.map((trace) => trace.activity_id));
+  const affectedStintIds = new Set(tracesToRetract.map((trace) => trace.activity_id));
 
-  const activitiesToRetract: string[] = [];
-  for (const activityId of affectedActivityIds) {
+  const stintsToRetract: string[] = [];
+  for (const stintId of affectedStintIds) {
     const retractedTraceIds = new Set(
-      tracesToRetract.filter((trace) => trace.activity_id === activityId).map((trace) => trace.id),
+      tracesToRetract.filter((trace) => trace.activity_id === stintId).map((trace) => trace.id),
     );
     const liveTraces = database
       .query("SELECT id FROM traces WHERE activity_id = ? AND retracted_at IS NULL")
-      .all(activityId) as { id: string }[];
+      .all(stintId) as { id: string }[];
     const hasLiveTrace = liveTraces.some((trace) => !retractedTraceIds.has(trace.id));
-    if (!hasLiveTrace) activitiesToRetract.push(activityId);
+    if (!hasLiveTrace) stintsToRetract.push(stintId);
   }
 
   const affectedQuestIds = new Set(
-    activitiesToRetract
+    stintsToRetract
       .map(
-        (activityId) =>
+        (stintId) =>
           (
-            database.query("SELECT quest_id FROM activities WHERE id = ?").get(activityId) as {
+            database.query("SELECT quest_id FROM activities WHERE id = ?").get(stintId) as {
               quest_id: string | null;
             } | null
           )?.quest_id ?? null,
@@ -104,19 +104,19 @@ export function dedupe(database: Database, options: { dryRun: boolean }): Dedupe
       .get(questId) as { confirmed: number } | null;
     if (!quest || quest.confirmed === 1) continue;
 
-    const retractedActivityIds = new Set(activitiesToRetract);
-    const liveActivities = database
+    const retractedStintIds = new Set(stintsToRetract);
+    const liveStints = database
       .query("SELECT id FROM activities WHERE quest_id = ? AND retracted_at IS NULL")
       .all(questId) as { id: string }[];
-    const hasLiveActivity = liveActivities.some(
-      (activity) => !retractedActivityIds.has(activity.id),
+    const hasLiveStint = liveStints.some(
+      (stint) => !retractedStintIds.has(stint.id),
     );
-    if (!hasLiveActivity) questsToRetract.push(questId);
+    if (!hasLiveStint) questsToRetract.push(questId);
   }
 
   const result: DedupeResult = {
     traces: tracesToRetract.length,
-    activities: activitiesToRetract.length,
+    stints: stintsToRetract.length,
     quests: questsToRetract.length,
   };
 
@@ -124,8 +124,8 @@ export function dedupe(database: Database, options: { dryRun: boolean }): Dedupe
 
   const run = database.transaction(() => {
     for (const trace of tracesToRetract) retract(store, database, trace.id, DUPLICATE_REASON);
-    for (const activityId of activitiesToRetract) {
-      retract(store, database, activityId, ORPHANED_REASON);
+    for (const stintId of stintsToRetract) {
+      retract(store, database, stintId, ORPHANED_REASON);
     }
     for (const questId of questsToRetract) retract(store, database, questId, ORPHANED_REASON);
   });

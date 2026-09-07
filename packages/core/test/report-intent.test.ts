@@ -9,7 +9,7 @@ import { applyIncremental } from "../src/intent/projections/index.ts";
 import { EventStore } from "../src/intent/store.ts";
 import {
   attributeNonClaudeEvidence,
-  queryActivities,
+  queryStints,
   queryOpenQuestions,
   queryQuests,
   querySideQuestDoubts,
@@ -38,8 +38,8 @@ describe("queryActivities", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     seedReportFixtures(database);
 
-    const activities = queryActivities(database, RANGE);
-    const main = activities.find((activity) => activity.id === "activity-1");
+    const stints = queryStints(database, RANGE);
+    const main = stints.find((stint) => stint.id === "activity-1");
 
     expect(main).toBeDefined();
     expect(main?.questTitle).toBe("Polish the report output");
@@ -56,8 +56,8 @@ describe("queryActivities", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     seedReportFixtures(database);
 
-    const activities = queryActivities(database, RANGE);
-    const side = activities.find((activity) => activity.id === "activity-2");
+    const stints = queryStints(database, RANGE);
+    const side = stints.find((stint) => stint.id === "activity-2");
 
     expect(side?.questConfirmed).toBe(false);
     expect(side?.minutes).toBe(20);
@@ -69,12 +69,12 @@ describe("queryActivities", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     seedReportFixtures(database);
 
-    const activities = queryActivities(database, {
+    const stints = queryStints(database, {
       ...RANGE,
       from: "2026-09-02",
       to: "2026-09-02",
     });
-    expect(activities).toHaveLength(0);
+    expect(stints).toHaveLength(0);
 
     database.close();
   });
@@ -91,7 +91,7 @@ describe("querySideQuests", () => {
 
     expect(sideQuest?.title).toBe("Investigate flaky commit grouping");
     expect(sideQuest?.trigger).toBe("noticed duplicate rebased commits during polish work");
-    expect(sideQuest?.fromActivityObjective).toBe("polish daily/hourly report output");
+    expect(sideQuest?.fromStintAim).toBe("polish daily/hourly report output");
     expect(sideQuest?.returnedAt).toBeNull();
     expect(sideQuest?.minutes).toBe(20);
 
@@ -256,7 +256,7 @@ describe("attributeNonClaudeEvidence", () => {
     );
     declareQuest(store, database, {
       sessionId: "session-1",
-      newQuest: { title: "Ship p", objective: "ship it", commitment: "personal" },
+      newQuest: { title: "Ship p", aim: "ship it", commitment: "personal" },
       plan: [],
       scope: "session",
       declaredBy: "agent",
@@ -335,7 +335,7 @@ describe("attributeNonClaudeEvidence", () => {
     );
     declareQuest(store, database, {
       sessionId: "session-1",
-      newQuest: { title: "Early quest", objective: "early", commitment: "personal" },
+      newQuest: { title: "Early quest", aim: "early", commitment: "personal" },
       plan: [],
       scope: "session",
       declaredBy: "agent",
@@ -344,7 +344,7 @@ describe("attributeNonClaudeEvidence", () => {
     });
     declareQuest(store, database, {
       sessionId: "session-later",
-      newQuest: { title: "Late quest", objective: "late", commitment: "personal" },
+      newQuest: { title: "Late quest", aim: "late", commitment: "personal" },
       plan: [],
       scope: "session",
       declaredBy: "agent",

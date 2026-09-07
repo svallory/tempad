@@ -16,16 +16,16 @@ const config: W5Config = {
   model: "m",
   throttleMinutes: 10,
   watchTurns: 3,
-  askMinActivityMinutes: 20,
+  askMinStintMinutes: 20,
   askBudgetMinutes: 30,
   askExpireTurns: 2,
   backfillDays: 15,
   backend: "claude-cli",
   claudeCommand: "claude",
   timeoutSeconds: 180,
-  activityIdleMinutes: 45,
+  stintIdleMinutes: 45,
   memoryHours: 8,
-  memoryActivities: 10,
+  memoryStints: 10,
   overlapMessages: 3,
   mode: "declared",
   inferenceFallback: true,
@@ -65,9 +65,9 @@ class FakeClassifier implements Classifier {
           guess: null,
           matchedQuest: null,
           proposedQuest: null,
-          matchedActivity: null,
-          continuesActivity: null,
-          newActivityReason: "first work of the window",
+          matchedStint: null,
+          continuesStint: null,
+          newStintReason: "first work of the window",
           isSwitch: false,
           trigger: null,
           confidence: 0.9,
@@ -173,9 +173,9 @@ describe("backfill", () => {
               guess: null,
               matchedQuest: null,
               proposedQuest: null,
-              matchedActivity: null,
-              continuesActivity: null,
-              newActivityReason: "first work of the window",
+              matchedStint: null,
+              continuesStint: null,
+              newStintReason: "first work of the window",
               isSwitch: false,
               trigger: null,
               confidence: 0.9,
@@ -190,9 +190,9 @@ describe("backfill", () => {
               guess: null,
               matchedQuest: null,
               proposedQuest: null,
-              matchedActivity: null,
-              continuesActivity: null,
-              newActivityReason: "first work of the window",
+              matchedStint: null,
+              continuesStint: null,
+              newStintReason: "first work of the window",
               isSwitch: false,
               trigger: null,
               confidence: 0.9,
@@ -254,7 +254,7 @@ describe("backfill", () => {
         actor: "hook",
         kind: "activity.opened",
         subject: "A1",
-        payload: { objective: "work" },
+        payload: { aim: "work" },
         at: "2026-09-04T15:05:00.000Z",
       }),
     );
@@ -266,7 +266,7 @@ describe("backfill", () => {
         subject: "T1",
         sessionId: "s1",
         payload: {
-          activity: "A1",
+          stint: "A1",
           tool: "claude-code",
           place: "p",
           source: "session",
@@ -337,9 +337,9 @@ describe("backfill", () => {
               guess: null,
               matchedQuest: null,
               proposedQuest: null,
-              matchedActivity: null,
-              continuesActivity: null,
-              newActivityReason: "first work of the window",
+              matchedStint: null,
+              continuesStint: null,
+              newStintReason: "first work of the window",
               isSwitch: false,
               trigger: null,
               confidence: 0.9,
@@ -428,20 +428,20 @@ describe("backfill", () => {
     /** Records the slice each chunk was handed, and reuses whatever it is offered. */
     class SliceRecordingClassifier implements Classifier {
       public seen: {
-        openActivities: string[];
-        recentActivities: string[];
+        openStints: string[];
+        recentStints: string[];
         previousSessionNote: string | null;
         aliases: Record<string, string>;
       }[] = [];
 
       async classify(window: ClassifierWindow): Promise<ClassifierResult> {
         this.seen.push({
-          openActivities: window.sessionOpenActivities.map((a) => a.activityId),
-          recentActivities: window.recentActivities.map((a) => a.activityId),
+          openStints: window.sessionOpenStints.map((a) => a.stintId),
+          recentStints: window.recentStints.map((a) => a.stintId),
           previousSessionNote: window.previousSessionNote,
-          aliases: window.activityAliases,
+          aliases: window.stintAliases,
         });
-        const open = window.sessionOpenActivities.at(-1) ?? null;
+        const open = window.sessionOpenStints.at(-1) ?? null;
         const first = window.messages[0]?.ts ?? "2026-09-04T15:00:00.000Z";
         const last = window.messages.at(-1)?.ts ?? first;
         return {
@@ -455,9 +455,9 @@ describe("backfill", () => {
               guess: null,
               matchedQuest: null,
               proposedQuest: null,
-              matchedActivity: open?.activityId ?? null,
-              continuesActivity: null,
-              newActivityReason: open === null ? "nothing open to reuse yet" : null,
+              matchedStint: open?.stintId ?? null,
+              continuesStint: null,
+              newStintReason: open === null ? "nothing open to reuse yet" : null,
               isSwitch: false,
               trigger: null,
               confidence: 0.9,
@@ -480,21 +480,21 @@ describe("backfill", () => {
     expect(classifier.seen).toHaveLength(2);
 
     // Chunk 1 starts cold; chunk 2 must see what chunk 1 actually produced.
-    expect(classifier.seen[0]?.openActivities).toEqual([]);
+    expect(classifier.seen[0]?.openStints).toEqual([]);
     expect(classifier.seen[0]?.previousSessionNote).toBeNull();
 
-    const activity = database.query("SELECT id FROM activities").get() as { id: string };
+    const stint = database.query("SELECT id FROM activities").get() as { id: string };
     // This session declares nothing, so backfill falls back to inference mode,
     // where the slice keeps real ids and no alias map is built.
-    expect(classifier.seen[1]?.openActivities).toEqual([activity.id]);
+    expect(classifier.seen[1]?.openStints).toEqual([stint.id]);
     expect(classifier.seen[1]?.aliases).toEqual({});
     expect(classifier.seen[1]?.previousSessionNote).toBe("note from chunk 1");
 
     // Chunk 2 reused chunk 1's activity rather than opening a second one.
-    const activityCount = database.query("SELECT COUNT(*) as count FROM activities").get() as {
+    const stintCount = database.query("SELECT COUNT(*) as count FROM activities").get() as {
       count: number;
     };
-    expect(activityCount.count).toBe(1);
+    expect(stintCount.count).toBe(1);
 
     // The last chunk's note is persisted for whatever runs next.
     const run = database
@@ -627,9 +627,9 @@ describe("chronological window order", () => {
               guess: null,
               matchedQuest: null,
               proposedQuest: null,
-              matchedActivity: null,
-              continuesActivity: null,
-              newActivityReason: "new work",
+              matchedStint: null,
+              continuesStint: null,
+              newStintReason: "new work",
               isSwitch: false,
               trigger: null,
               confidence: 0.9,
@@ -692,9 +692,9 @@ describe("chronological window order", () => {
               guess: null,
               matchedQuest: null,
               proposedQuest: null,
-              matchedActivity: null,
-              continuesActivity: null,
-              newActivityReason: "new work",
+              matchedStint: null,
+              continuesStint: null,
+              newStintReason: "new work",
               isSwitch: false,
               trigger: null,
               confidence: 0.9,
@@ -743,12 +743,12 @@ describe("backfill and declared quests", () => {
               matchedQuest: null,
               proposedQuest: {
                 title: "Inferred quest",
-                objective: "guessed from the transcript",
+                aim: "guessed from the transcript",
                 commitment: "exploratory",
               },
-              matchedActivity: null,
-              continuesActivity: null,
-              newActivityReason: "first work of the window",
+              matchedStint: null,
+              continuesStint: null,
+              newStintReason: "first work of the window",
               isSwitch: false,
               trigger: null,
               confidence: 0.9,
@@ -790,11 +790,11 @@ describe("backfill and declared quests", () => {
     expect(
       (database.query("SELECT COUNT(*) as count FROM quests").get() as { count: number }).count,
     ).toBe(0);
-    const activities = database.query("SELECT quest_id as questId FROM activities").all() as {
+    const stints = database.query("SELECT quest_id as questId FROM activities").all() as {
       questId: string | null;
     }[];
-    expect(activities.length).toBeGreaterThan(0);
-    expect(activities.every((activity) => activity.questId === null)).toBe(true);
+    expect(stints.length).toBeGreaterThan(0);
+    expect(stints.every((stint) => stint.questId === null)).toBe(true);
     expect(result.sessionsDeclared).toBe(1);
     expect(result.sessionsInferred).toBe(0);
   });
@@ -886,9 +886,9 @@ describe("backfill hands the classifier the prompt its mode needs", () => {
               why: "ship",
               matchedQuest: null,
               proposedQuest: null,
-              matchedActivity: null,
-              continuesActivity: null,
-              newActivityReason: "first work of the window",
+              matchedStint: null,
+              continuesStint: null,
+              newStintReason: "first work of the window",
               isSwitch: false,
               trigger: null,
               confidence: 0.9,

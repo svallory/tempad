@@ -464,31 +464,31 @@ async function runEvalCommand(args: string[], context: W5Context): Promise<numbe
 
   context.stdout(`copied_db=${metrics.copiedDbPath}`);
   context.stdout(
-    `retracted_before_rerun traces=${metrics.resetTraces} activities=${metrics.resetActivities} quests=${metrics.resetQuests}`,
+    `retracted_before_rerun traces=${metrics.resetTraces} activities=${metrics.resetStints} quests=${metrics.resetQuests}`,
   );
   context.stdout(`traces=${metrics.traces}`);
-  context.stdout(`activities=${metrics.activities}`);
+  context.stdout(`activities=${metrics.stints}`);
   context.stdout(`ratio=${metrics.ratio.toFixed(3)}`);
   context.stdout(
-    `median_activity_duration_minutes=${metrics.medianActivityDurationMinutes.toFixed(1)}`,
+    `median_activity_duration_minutes=${metrics.medianStintDurationMinutes.toFixed(1)}`,
   );
   context.stdout(`continues_links=${metrics.continuesLinks}`);
   context.stdout(`doubts=${metrics.doubts}`);
   context.stdout(`doubts_answered=${metrics.doubtsAnswered}`);
   context.stdout(`traces_unattributed=${metrics.tracesUnattributed}`);
   context.stdout(`declarations_skipped=${metrics.declarationsSkipped}`);
-  context.stdout(`unknown_activity_ids=${metrics.unknownActivityIds}`);
+  context.stdout(`unknown_activity_ids=${metrics.unknownStintIds}`);
   context.stdout(`overlap_dropped=${metrics.overlapDropped}`);
   context.stdout(`quest_proposed_on_matched=${metrics.questProposedOnMatched}`);
   context.stdout(`selector_defaulted=${metrics.selectorDefaulted}`);
   context.stdout(`selector_ambiguous=${metrics.selectorAmbiguous}`);
   context.stdout(`sessions_declared=${metrics.sessionsDeclared}`);
   context.stdout(`sessions_inferred=${metrics.sessionsInferred}`);
-  for (const activity of metrics.sample) {
+  for (const stint of metrics.sample) {
     context.stdout(
-      `sample: what=${JSON.stringify(activity.what)} why=${JSON.stringify(activity.why)} quest=${
-        activity.questTitle ?? "-"
-      } duration_minutes=${activity.durationMinutes ?? "-"} session=${activity.sessionTitle ?? "-"}`,
+      `sample: what=${JSON.stringify(stint.what)} why=${JSON.stringify(stint.why)} quest=${
+        stint.questTitle ?? "-"
+      } duration_minutes=${stint.durationMinutes ?? "-"} session=${stint.sessionTitle ?? "-"}`,
     );
   }
 
@@ -503,7 +503,7 @@ function runDedupe(args: string[], context: W5Context): number {
   });
 
   const result = dedupe(context.database, { dryRun: values["dry-run"] === true });
-  context.stdout(`traces=${result.traces} activities=${result.activities} quests=${result.quests}`);
+  context.stdout(`traces=${result.traces} activities=${result.stints} quests=${result.quests}`);
   return 0;
 }
 

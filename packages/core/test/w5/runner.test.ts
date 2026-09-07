@@ -37,16 +37,16 @@ const config: W5Config = {
   model: "m",
   throttleMinutes: 10,
   watchTurns: 3,
-  askMinActivityMinutes: 20,
+  askMinStintMinutes: 20,
   askBudgetMinutes: 30,
   askExpireTurns: 2,
   backfillDays: 15,
   backend: "claude-cli",
   claudeCommand: "claude",
   timeoutSeconds: 180,
-  activityIdleMinutes: 45,
+  stintIdleMinutes: 45,
   memoryHours: 8,
-  memoryActivities: 10,
+  memoryStints: 10,
   overlapMessages: 3,
   mode: "declared",
   inferenceFallback: true,
@@ -63,9 +63,9 @@ const good: ClassifierResult = {
       guess: null,
       matchedQuest: null,
       proposedQuest: null,
-      matchedActivity: null,
-      continuesActivity: null,
-      newActivityReason: "first work of the session",
+      matchedStint: null,
+      continuesStint: null,
+      newStintReason: "first work of the session",
       isSwitch: false,
       trigger: null,
       confidence: 0.9,
@@ -259,9 +259,9 @@ describe("runOnce", () => {
             guess: null,
             matchedQuest: null,
             proposedQuest: null,
-            matchedActivity: null,
-            continuesActivity: null,
-            newActivityReason: "first work of the window",
+            matchedStint: null,
+            continuesStint: null,
+            newStintReason: "first work of the window",
             isSwitch: false,
             trigger: null,
             confidence: 0.6,
@@ -271,7 +271,7 @@ describe("runOnce", () => {
         sessionNote: null,
       };
       const classifier = new FakeClassifier(withQuestion);
-      const lowWatchConfig: W5Config = { ...config, watchTurns: 2, askMinActivityMinutes: 20 };
+      const lowWatchConfig: W5Config = { ...config, watchTurns: 2, askMinStintMinutes: 20 };
 
       await runOnce(database, makeConfig(dir), lowWatchConfig, classifier, {
         now: "2026-09-04T15:21:00.000Z",
@@ -394,9 +394,9 @@ describe("runOnce", () => {
       class MemoryClassifier implements Classifier {
         public sawOpenCandidates: number[] = [];
         async classify(window: ClassifierWindow): Promise<ClassifierResult> {
-          this.sawOpenCandidates.push(window.sessionOpenActivities.length);
-          const open = window.sessionOpenActivities.at(-1) ?? null;
-          const closed = window.recentActivities.find((a) => a.closedAt !== null) ?? null;
+          this.sawOpenCandidates.push(window.sessionOpenStints.length);
+          const open = window.sessionOpenStints.at(-1) ?? null;
+          const closed = window.recentStints.find((a) => a.closedAt !== null) ?? null;
           const first = window.messages[0]?.ts ?? "2026-09-04T15:00:00.000Z";
           const last = window.messages.at(-1)?.ts ?? first;
           return {
@@ -410,9 +410,9 @@ describe("runOnce", () => {
                 guess: null,
                 matchedQuest: open?.questId ?? closed?.questId ?? null,
                 proposedQuest: null,
-                matchedActivity: open?.activityId ?? null,
-                continuesActivity: open === null ? (closed?.activityId ?? null) : null,
-                newActivityReason:
+                matchedStint: open?.stintId ?? null,
+                continuesStint: open === null ? (closed?.stintId ?? null) : null,
+                newStintReason:
                   open === null && closed === null ? "nothing open to reuse yet" : null,
                 isSwitch: false,
                 trigger: null,
@@ -436,15 +436,15 @@ describe("runOnce", () => {
       await runAt("2026-09-04T15:31:00.000Z", 4);
       await runAt("2026-09-04T17:41:00.000Z", 6);
 
-      const activities = database
+      const stints = database
         .query("SELECT id, continues, close_reason FROM activities ORDER BY opened_at")
         .all() as { id: string; continues: string | null; close_reason: string | null }[];
 
       // Window 1 opened one activity; window 2 reused it; the idle gap closed it and
       // window 3 opened exactly one more that points back at it.
-      expect(activities).toHaveLength(2);
-      expect(activities[0]?.close_reason).toBe("idle");
-      expect(activities[1]?.continues).toBe(activities[0]?.id);
+      expect(stints).toHaveLength(2);
+      expect(stints[0]?.close_reason).toBe("idle");
+      expect(stints[1]?.continues).toBe(stints[0]?.id);
 
       // Window 2 saw window 1's activity still open; window 3 saw none open (idle-closed).
       expect(classifier.sawOpenCandidates).toEqual([0, 1, 0]);
@@ -514,10 +514,10 @@ describe("runOnce in declared mode", () => {
       expect(
         (database.query("SELECT COUNT(*) as count FROM quests").get() as { count: number }).count,
       ).toBe(0);
-      const activity = database.query("SELECT quest_id as questId FROM activities").get() as {
+      const stint = database.query("SELECT quest_id as questId FROM activities").get() as {
         questId: string | null;
       };
-      expect(activity.questId).toBeNull();
+      expect(stint.questId).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -567,7 +567,7 @@ describe("runOnce drives a belongs question to the user", () => {
         database,
         makeConfig(dir),
         // watchTurns 1 so the two seeded user turns promote it in this same run.
-        { ...config, watchTurns: 1, askMinActivityMinutes: 0 },
+        { ...config, watchTurns: 1, askMinStintMinutes: 0 },
         new FakeClassifier(doubting),
         { now: "2026-09-04T15:21:00.000Z", log: () => {} },
       );

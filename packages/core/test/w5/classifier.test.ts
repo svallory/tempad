@@ -25,14 +25,14 @@ const window: ClassifierWindow = {
   mode: "declared",
   declaredQuest: {
     title: "Ship marko-ui",
-    objective: "86 components",
+    aim: "86 components",
     plan: ["walk order", "docs"],
   },
   parentDeclaredQuest: null,
-  activityAliases: { A1: "01HREALACTIVITYIDONE00000A", A0: "01HREALACTIVITYIDZERO0000B" },
-  sessionOpenActivities: [
+  stintAliases: { A1: "01HREALACTIVITYIDONE00000A", A0: "01HREALACTIVITYIDZERO0000B" },
+  sessionOpenStints: [
     {
-      activityId: "A1",
+      stintId: "A1",
       what: "fixing walk order",
       why: "ship marko-ui",
       questId: "Q1",
@@ -41,9 +41,9 @@ const window: ClassifierWindow = {
       lastTraceEndedAt: "2026-09-04T14:30:00.000Z",
     },
   ],
-  recentActivities: [
+  recentStints: [
     {
-      activityId: "A0",
+      stintId: "A0",
       what: "renaming the walk helpers",
       why: "ship marko-ui",
       questId: "Q1",
@@ -69,9 +69,9 @@ const good = {
       why: "ship marko-ui",
       belongs: true,
       guess: null,
-      matchedActivity: "A1",
-      continuesActivity: null,
-      newActivityReason: null,
+      matchedStint: "A1",
+      continuesStint: null,
+      newStintReason: null,
       isSwitch: false,
       trigger: null,
       confidence: 0.9,
@@ -83,9 +83,9 @@ const good = {
       why: "unknown",
       belongs: false,
       guess: "a competitor comparison, not the marko-ui work",
-      matchedActivity: null,
-      continuesActivity: null,
-      newActivityReason: "a fresh comparison unrelated to any open activity",
+      matchedStint: null,
+      continuesStint: null,
+      newStintReason: "a fresh comparison unrelated to any open activity",
       isSwitch: true,
       trigger: "what does Astryx do for agents?",
       confidence: 0.6,
@@ -150,28 +150,28 @@ describe("classifier", () => {
       segments: [
         {
           ...good.segments[0],
-          matchedActivity: null,
-          continuesActivity: null,
-          newActivityReason: null,
+          matchedStint: null,
+          continuesStint: null,
+          newStintReason: null,
         },
       ],
     });
 
-    expect(result.segments[0]?.newActivityReason).toBe(DEFAULT_NEW_ACTIVITY_REASON);
-    expect(result.segments[0]?.matchedActivity).toBeNull();
-    expect(result.segments[0]?.continuesActivity).toBeNull();
+    expect(result.segments[0]?.newStintReason).toBe(DEFAULT_NEW_ACTIVITY_REASON);
+    expect(result.segments[0]?.matchedStint).toBeNull();
+    expect(result.segments[0]?.continuesStint).toBeNull();
     expect(result.selectorDefaulted).toBe(1);
     expect(result.selectorAmbiguous).toBe(0);
   });
 
   test("validateResult narrows two selectors to matchedActivity by precedence", () => {
     const result = validateResult({
-      segments: [{ ...good.segments[0], matchedActivity: "A1", continuesActivity: "A0" }],
+      segments: [{ ...good.segments[0], matchedStint: "A1", continuesStint: "A0" }],
     });
 
-    expect(result.segments[0]?.matchedActivity).toBe("A1");
-    expect(result.segments[0]?.continuesActivity).toBeNull();
-    expect(result.segments[0]?.newActivityReason).toBeNull();
+    expect(result.segments[0]?.matchedStint).toBe("A1");
+    expect(result.segments[0]?.continuesStint).toBeNull();
+    expect(result.segments[0]?.newStintReason).toBeNull();
     expect(result.selectorAmbiguous).toBe(1);
     expect(result.selectorDefaulted).toBe(0);
   });
@@ -181,22 +181,22 @@ describe("classifier", () => {
       segments: [
         {
           ...good.segments[0],
-          matchedActivity: null,
-          continuesActivity: "A0",
-          newActivityReason: "nothing fit",
+          matchedStint: null,
+          continuesStint: "A0",
+          newStintReason: "nothing fit",
         },
       ],
     });
 
-    expect(result.segments[0]?.continuesActivity).toBe("A0");
-    expect(result.segments[0]?.newActivityReason).toBeNull();
+    expect(result.segments[0]?.continuesStint).toBe("A0");
+    expect(result.segments[0]?.newStintReason).toBeNull();
     expect(result.selectorAmbiguous).toBe(1);
   });
 
   test("validateResult treats omitted optional fields as null instead of failing", () => {
     const {
-      matchedActivity: _matchedActivity,
-      continuesActivity: _continuesActivity,
+      matchedActivity: _matchedStint,
+      continuesActivity: _continuesStint,
       trigger: _trigger,
       ...withoutOptionals
     } = good.segments[0] as Record<string, unknown>;
@@ -204,33 +204,33 @@ describe("classifier", () => {
     // A selector is still present, so nothing is defaulted: this isolates the
     // absent-means-null normalization from the selector repair.
     const result = validateResult({
-      segments: [{ ...withoutOptionals, newActivityReason: "new thread of work" }],
+      segments: [{ ...withoutOptionals, newStintReason: "new thread of work" }],
     });
 
-    expect(result.segments[0]?.matchedActivity).toBeNull();
-    expect(result.segments[0]?.continuesActivity).toBeNull();
+    expect(result.segments[0]?.matchedStint).toBeNull();
+    expect(result.segments[0]?.continuesStint).toBeNull();
     expect(result.segments[0]?.trigger).toBeNull();
     expect(result.selectorDefaulted).toBe(0);
   });
 
   test("validateResult defaults a segment with every selector omitted", () => {
     const {
-      matchedActivity: _matchedActivity,
-      continuesActivity: _continuesActivity,
-      newActivityReason: _newActivityReason,
+      matchedActivity: _matchedStint,
+      continuesActivity: _continuesStint,
+      newActivityReason: _newStintReason,
       ...withoutSelectors
     } = good.segments[0] as Record<string, unknown>;
 
     const result = validateResult({ segments: [withoutSelectors] });
 
-    expect(result.segments[0]?.newActivityReason).toBe(DEFAULT_NEW_ACTIVITY_REASON);
+    expect(result.segments[0]?.newStintReason).toBe(DEFAULT_NEW_ACTIVITY_REASON);
     expect(result.selectorDefaulted).toBe(1);
   });
 
   test("validateResult still rejects a selector of the wrong type", () => {
     expect(() =>
       validateResult({
-        segments: [{ ...good.segments[0], matchedActivity: null, continuesActivity: 7 }],
+        segments: [{ ...good.segments[0], matchedStint: null, continuesStint: 7 }],
       }),
     ).toThrow(/continuesActivity/);
   });
@@ -266,24 +266,24 @@ describe("classifier", () => {
 
   test("validateResult treats an alias outside activityAliases as no selector at all", () => {
     const result = validateResult(
-      { segments: [{ ...good.segments[0], matchedActivity: "A9", continuesActivity: null }] },
+      { segments: [{ ...good.segments[0], matchedStint: "A9", continuesStint: null }] },
       window,
     );
 
     // "A9" is not a key of window.activityAliases, so it never counts as a
     // selector: the segment names none and is repaired the usual way.
-    expect(result.segments[0]?.matchedActivity).toBeNull();
-    expect(result.segments[0]?.newActivityReason).toBe(DEFAULT_NEW_ACTIVITY_REASON);
+    expect(result.segments[0]?.matchedStint).toBeNull();
+    expect(result.segments[0]?.newStintReason).toBe(DEFAULT_NEW_ACTIVITY_REASON);
     expect(result.selectorDefaulted).toBe(1);
   });
 
   test("validateResult keeps an alias that is present in activityAliases", () => {
     const result = validateResult(
-      { segments: [{ ...good.segments[0], matchedActivity: "A1" }] },
+      { segments: [{ ...good.segments[0], matchedStint: "A1" }] },
       window,
     );
 
-    expect(result.segments[0]?.matchedActivity).toBe("A1");
+    expect(result.segments[0]?.matchedStint).toBe("A1");
     expect(result.selectorDefaulted).toBe(0);
   });
 
@@ -388,9 +388,9 @@ describe("a classifier that returns a bad alias", () => {
               why: "ship",
               belongs: true,
               guess: null,
-              matchedActivity: "A42",
-              continuesActivity: null,
-              newActivityReason: null,
+              matchedStint: "A42",
+              continuesStint: null,
+              newStintReason: null,
               isSwitch: false,
               trigger: null,
               confidence: 0.9,
@@ -406,8 +406,8 @@ describe("a classifier that returns a bad alias", () => {
   test("the bad alias is dropped and the segment is repaired into a new activity", async () => {
     const result = await new BadAliasClassifier().classify(window);
 
-    expect(result.segments[0]?.matchedActivity).toBeNull();
-    expect(result.segments[0]?.newActivityReason).toBe(DEFAULT_NEW_ACTIVITY_REASON);
+    expect(result.segments[0]?.matchedStint).toBeNull();
+    expect(result.segments[0]?.newStintReason).toBe(DEFAULT_NEW_ACTIVITY_REASON);
     expect(result.selectorDefaulted).toBe(1);
   });
 });
@@ -428,13 +428,13 @@ describe("prompt rendering per mode", () => {
     mode: "inferred",
     declaredQuest: null,
     parentDeclaredQuest: null,
-    activityAliases: {},
+    stintAliases: {},
     openQuests: [
       {
         id: "01HQUESTIDONE0000000000000",
         title: "Ship marko-ui",
-        objective: "86 components",
-        lastActivityAt: "2026-09-04T14:00:00.000Z",
+        aim: "86 components",
+        lastStintAt: "2026-09-04T14:00:00.000Z",
       },
     ],
     recentSideQuests: [
@@ -510,12 +510,12 @@ describe("prompt rendering per mode", () => {
             matchedQuest: null,
             proposedQuest: {
               title: "Compare Astryx",
-              objective: "see what they claim",
+              aim: "see what they claim",
               commitment: "exploratory",
             },
-            matchedActivity: null,
-            continuesActivity: null,
-            newActivityReason: "a fresh thread of work",
+            matchedStint: null,
+            continuesStint: null,
+            newStintReason: "a fresh thread of work",
             isSwitch: false,
             trigger: null,
             confidence: 0.9,
@@ -541,9 +541,9 @@ describe("prompt rendering per mode", () => {
             endedAt: "2026-09-04T15:20:00.000Z",
             what: "work",
             why: "ship",
-            matchedActivity: "01HACTIVITYIDREAL000000000",
-            continuesActivity: null,
-            newActivityReason: null,
+            matchedStint: "01HACTIVITYIDREAL000000000",
+            continuesStint: null,
+            newStintReason: null,
             isSwitch: false,
             trigger: null,
             confidence: 0.9,
@@ -554,7 +554,7 @@ describe("prompt rendering per mode", () => {
       inferredWindow,
     );
 
-    expect(result.segments[0]?.matchedActivity).toBe("01HACTIVITYIDREAL000000000");
+    expect(result.segments[0]?.matchedStint).toBe("01HACTIVITYIDREAL000000000");
     expect(result.selectorDefaulted).toBe(0);
   });
 });

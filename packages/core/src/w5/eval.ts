@@ -94,7 +94,7 @@ interface DeclareFileEntry {
   quest_ref?: string;
   new?: {
     title: string;
-    objective: string;
+    aim: string;
     commitment: "promised" | "personal" | "exploratory";
     project?: string;
   };
@@ -212,7 +212,7 @@ async function applyDeclareFile(
       newQuest: entry.new
         ? {
             title: entry.new.title,
-            objective: entry.new.objective,
+            aim: entry.new.aim,
             commitment: entry.new.commitment,
             project: entry.new.project,
           }
@@ -237,7 +237,7 @@ async function applyDeclareFile(
   return { declarationsSkipped };
 }
 
-export interface EvalSampleActivity {
+export interface EvalSampleStint {
   what: string;
   why: string;
   questTitle: string | null;
@@ -248,30 +248,30 @@ export interface EvalSampleActivity {
 export interface EvalMetrics {
   copiedDbPath: string;
   resetTraces: number;
-  resetActivities: number;
+  resetStints: number;
   resetQuests: number;
   traces: number;
-  activities: number;
+  stints: number;
   ratio: number;
-  medianActivityDurationMinutes: number;
+  medianStintDurationMinutes: number;
   continuesLinks: number;
   doubts: number;
   doubtsAnswered: number;
   tracesUnattributed: number;
   declarationsSkipped: number;
-  unknownActivityIds: number;
+  unknownStintIds: number;
   overlapDropped: number;
   questProposedOnMatched: number;
   selectorDefaulted: number;
   selectorAmbiguous: number;
   sessionsDeclared: number;
   sessionsInferred: number;
-  sample: EvalSampleActivity[];
+  sample: EvalSampleStint[];
 }
 
 export interface EvalResetResult {
   traces: number;
-  activities: number;
+  stints: number;
   quests: number;
 }
 
@@ -301,10 +301,10 @@ function resetRange(database: Database, from: string, to: string): EvalResetResu
     traceRows.map((row) => row.session_id).filter((id): id is string => id !== null),
   );
 
-  const affectedActivityIds = new Set(traceRows.map((row) => row.activity_id));
+  const affectedStintIds = new Set(traceRows.map((row) => row.activity_id));
   const retractedTraceIds = new Set(traceRows.map((row) => row.id));
 
-  const result = { traces: 0, activities: 0, quests: 0 };
+  const result = { traces: 0, stints: 0, quests: 0 };
 
   const run = database.transaction(() => {
     for (const trace of traceRows) {
@@ -320,53 +320,53 @@ function resetRange(database: Database, from: string, to: string): EvalResetResu
     }
     result.traces = traceRows.length;
 
-    const activitiesToRetract: string[] = [];
-    for (const activityId of affectedActivityIds) {
+    const stintsToRetract: string[] = [];
+    for (const stintId of affectedStintIds) {
       const liveTraces = database
         .query("SELECT id FROM traces WHERE activity_id = ? AND retracted_at IS NULL")
-        .all(activityId) as { id: string }[];
+        .all(stintId) as { id: string }[];
       const hasLiveTrace = liveTraces.some((trace) => !retractedTraceIds.has(trace.id));
-      if (!hasLiveTrace) activitiesToRetract.push(activityId);
+      if (!hasLiveTrace) stintsToRetract.push(stintId);
     }
-    for (const activityId of activitiesToRetract) {
+    for (const stintId of stintsToRetract) {
       applyIncremental(
         database,
         store.append({
           actor: "backfill",
           kind: "retracted",
-          subject: activityId,
-          payload: { retracts: activityId, reason: RESET_REASON },
+          subject: stintId,
+          payload: { retracts: stintId, reason: RESET_REASON },
         }),
       );
     }
-    result.activities = activitiesToRetract.length;
+    result.stints = stintsToRetract.length;
 
     const affectedQuestIds = new Set(
-      activitiesToRetract
+      stintsToRetract
         .map(
-          (activityId) =>
+          (stintId) =>
             (
-              database.query("SELECT quest_id FROM activities WHERE id = ?").get(activityId) as {
+              database.query("SELECT quest_id FROM activities WHERE id = ?").get(stintId) as {
                 quest_id: string | null;
               } | null
             )?.quest_id ?? null,
         )
         .filter((id): id is string => id !== null),
     );
-    const retractedActivityIds = new Set(activitiesToRetract);
+    const retractedStintIds = new Set(stintsToRetract);
     const questsToRetract: string[] = [];
     for (const questId of affectedQuestIds) {
       const quest = database
         .query("SELECT confirmed FROM quests WHERE id = ? AND retracted_at IS NULL")
         .get(questId) as { confirmed: number } | null;
       if (!quest || quest.confirmed === 1) continue;
-      const liveActivities = database
+      const liveStints = database
         .query("SELECT id FROM activities WHERE quest_id = ? AND retracted_at IS NULL")
         .all(questId) as { id: string }[];
-      const hasLiveActivity = liveActivities.some(
-        (activity) => !retractedActivityIds.has(activity.id),
+      const hasLiveStint = liveStints.some(
+        (stint) => !retractedStintIds.has(stint.id),
       );
-      if (!hasLiveActivity) questsToRetract.push(questId);
+      if (!hasLiveStint) questsToRetract.push(questId);
     }
     for (const questId of questsToRetract) {
       applyIncremental(
@@ -390,7 +390,7 @@ function resetRange(database: Database, from: string, to: string): EvalResetResu
 
   return {
     traces: result.traces,
-    activities: result.activities,
+    stints: result.stints,
     quests: result.quests,
   };
 }
@@ -442,7 +442,7 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
 
   const resetResult = resetRange(database, range.from, range.to);
   options.log(
-    `eval: reset traces=${resetResult.traces} activities=${resetResult.activities} quests=${resetResult.quests}`,
+    `eval: reset traces=${resetResult.traces} activities=${resetResult.stints} quests=${resetResult.quests}`,
   );
 
   const backfillResult = await backfill(
@@ -465,7 +465,7 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
       "SELECT COUNT(*) as count FROM traces WHERE retracted_at IS NULL AND started_at >= ? AND started_at < ?",
     )
     .get(range.from, range.to) as { count: number };
-  const activityCount = database
+  const stintCount = database
     .query(
       "SELECT COUNT(*) as count FROM activities WHERE retracted_at IS NULL AND opened_at >= ? AND opened_at < ?",
     )
@@ -523,7 +523,7 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
         ORDER BY RANDOM() LIMIT 20`,
     )
     .all(range.from, range.to) as {
-    objective: string;
+    aim: string;
     questTitle: string | null;
     openedAt: string;
     closedAt: string | null;
@@ -532,8 +532,8 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
     sessionTitle: string | null;
   }[];
 
-  const sample: EvalSampleActivity[] = sampleRows.map((row) => ({
-    what: row.what ?? row.objective,
+  const sample: EvalSampleStint[] = sampleRows.map((row) => ({
+    what: row.what ?? row.aim,
     why: row.why ?? "",
     questTitle: row.questTitle,
     durationMinutes: row.closedAt
@@ -547,18 +547,18 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
   return {
     copiedDbPath,
     resetTraces: resetResult.traces,
-    resetActivities: resetResult.activities,
+    resetStints: resetResult.stints,
     resetQuests: resetResult.quests,
     traces: traceCount.count,
-    activities: activityCount.count,
-    ratio: traceCount.count === 0 ? 0 : activityCount.count / traceCount.count,
-    medianActivityDurationMinutes: median(durationsMinutes),
+    stints: stintCount.count,
+    ratio: traceCount.count === 0 ? 0 : stintCount.count / traceCount.count,
+    medianStintDurationMinutes: median(durationsMinutes),
     continuesLinks: continuesCount.count,
     doubts: backfillResult.doubts,
     doubtsAnswered: doubtsAnsweredCount.count,
     tracesUnattributed: tracesUnattributedCount.count,
     declarationsSkipped,
-    unknownActivityIds: backfillResult.unknownActivityIds,
+    unknownStintIds: backfillResult.unknownStintIds,
     overlapDropped: backfillResult.overlapDropped,
     questProposedOnMatched: backfillResult.questProposedOnMatched,
     selectorDefaulted: backfillResult.selectorDefaulted,

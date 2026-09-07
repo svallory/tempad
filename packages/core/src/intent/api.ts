@@ -11,17 +11,17 @@ import type { EventStore } from "./store";
 // no-op projections. registerAllProjections() is idempotent.
 registerAllProjections();
 
-export interface OpenActivityInput {
+export interface OpenStintInput {
   quest?: string;
-  objective: string;
+  aim: string;
   at?: string;
   actor: Actor;
 }
 
-export function openActivity(
+export function openStint(
   store: EventStore,
   database: Database,
-  input: OpenActivityInput,
+  input: OpenStintInput,
 ): string {
   const id = newUlid();
   applyIncremental(
@@ -30,17 +30,17 @@ export function openActivity(
       actor: input.actor,
       kind: "activity.opened",
       subject: id,
-      payload: { quest: input.quest, objective: input.objective },
+      payload: { quest: input.quest, aim: input.aim },
       at: input.at,
     }),
   );
   return id;
 }
 
-export function assignActivity(
+export function assignStint(
   store: EventStore,
   database: Database,
-  activityId: string,
+  stintId: string,
   questId: string,
   actor: Actor,
 ): void {
@@ -49,14 +49,14 @@ export function assignActivity(
     store.append({
       actor,
       kind: "activity.assigned",
-      subject: activityId,
+      subject: stintId,
       payload: { quest: questId },
     }),
   );
 }
 
 export interface TraceInput {
-  activity: string;
+  stint: string;
   tool: string;
   place: string;
   source: string;
@@ -84,7 +84,7 @@ export function recordTrace(store: EventStore, database: Database, input: TraceI
       subject: id,
       sessionId: input.sessionId,
       payload: {
-        activity: input.activity,
+        stint: input.stint,
         tool: input.tool,
         place: input.place,
         source: input.source,
@@ -108,7 +108,7 @@ export function relinkTrace(
   store: EventStore,
   database: Database,
   traceId: string,
-  activityId: string,
+  stintId: string,
   reason: string,
   actor: Actor,
 ): void {
@@ -118,7 +118,7 @@ export function relinkTrace(
       actor,
       kind: "trace.relinked",
       subject: traceId,
-      payload: { activity: activityId, reason },
+      payload: { stint: stintId, reason },
     }),
   );
 }

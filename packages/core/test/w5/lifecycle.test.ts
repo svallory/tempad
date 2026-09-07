@@ -5,28 +5,28 @@ import { ensureTables } from "../../src/intent/projections";
 import { registerAllProjections } from "../../src/intent/projections/register";
 import { EventStore } from "../../src/intent/store";
 import {
-  closeIdleActivities,
-  closeSessionActivities,
-  openActivityContinuing,
+  closeIdleStints,
+  closeSessionStints,
+  openStintContinuing,
 } from "../../src/w5/lifecycle";
 
 registerAllProjections();
 
-function seedActivityWithTrace(
+function seedStintWithTrace(
   database: ReturnType<typeof openDatabase>,
-  input: { activityId: string; sessionId: string; endedAt: string },
+  input: { stintId: string; sessionId: string; endedAt: string },
 ) {
   database
     .query(
       "INSERT INTO activities (id, quest_id, objective, opened_at, revision) VALUES (?, NULL, 'work', '2026-09-06T09:00:00.000Z', 1)",
     )
-    .run(input.activityId);
+    .run(input.stintId);
   database
     .query(
       `INSERT INTO traces (id, activity_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
        VALUES (?, ?, 'claude-code', 'p', 'session', '2026-09-06T09:00:00.000Z', ?, 'hero', 'work', 'ship', 'org/p', 'claude-code', 0.9, 'assistant', ?, '2026-09-06T09:00:00.000Z')`,
     )
-    .run(newUlid(), input.activityId, input.endedAt, input.sessionId);
+    .run(newUlid(), input.stintId, input.endedAt, input.sessionId);
 }
 
 describe("lifecycle", () => {
@@ -34,18 +34,18 @@ describe("lifecycle", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     const store = new EventStore(database);
-    seedActivityWithTrace(database, {
-      activityId: "A-old",
+    seedStintWithTrace(database, {
+      stintId: "A-old",
       sessionId: "s1",
       endedAt: "2026-09-06T09:10:00.000Z",
     });
-    seedActivityWithTrace(database, {
-      activityId: "A-recent",
+    seedStintWithTrace(database, {
+      stintId: "A-recent",
       sessionId: "s1",
       endedAt: "2026-09-06T09:55:00.000Z",
     });
 
-    const result = closeIdleActivities(store, database, {
+    const result = closeIdleStints(store, database, {
       sessionId: "s1",
       windowStartedAt: "2026-09-06T10:00:00.000Z",
       idleMinutes: 45,
@@ -67,13 +67,13 @@ describe("lifecycle", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     const store = new EventStore(database);
-    seedActivityWithTrace(database, {
-      activityId: "A1",
+    seedStintWithTrace(database, {
+      stintId: "A1",
       sessionId: "s1",
       endedAt: "2026-09-06T09:10:00.000Z",
     });
-    seedActivityWithTrace(database, {
-      activityId: "A2",
+    seedStintWithTrace(database, {
+      stintId: "A2",
       sessionId: "s1",
       endedAt: "2026-09-06T09:20:00.000Z",
     });
@@ -83,7 +83,7 @@ describe("lifecycle", () => {
       )
       .run();
 
-    const result = closeSessionActivities(store, database, {
+    const result = closeSessionStints(store, database, {
       sessionId: "s1",
       now: "2026-09-06T09:30:00.000Z",
     });
@@ -106,8 +106,8 @@ describe("lifecycle", () => {
     ensureTables(database);
     const store = new EventStore(database);
 
-    const id = openActivityContinuing(store, database, {
-      objective: "back to walk order",
+    const id = openStintContinuing(store, database, {
+      aim: "back to walk order",
       at: "2026-09-06T12:00:00.000Z",
       actor: "hook",
       continues: "A-old",

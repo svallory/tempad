@@ -8,7 +8,7 @@ import { buildWindow, findSessionFile } from "../../src/w5/window";
 
 registerAllProjections();
 
-const memoryInput = { maxMessages: 50, memoryHours: 8, memoryActivities: 10, overlapMessages: 3 };
+const memoryInput = { maxMessages: 50, memoryHours: 8, memoryStints: 10, overlapMessages: 3 };
 
 function seedSession(database: ReturnType<typeof openDatabase>) {
   database
@@ -56,7 +56,7 @@ function seedEarlierSession(database: ReturnType<typeof openDatabase>) {
     .run();
 }
 
-function seedOpenActivity(database: ReturnType<typeof openDatabase>) {
+function seedOpenStint(database: ReturnType<typeof openDatabase>) {
   database
     .query(
       "INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at) VALUES ('Q1', 'hero', 'H1', 'Ship marko-ui', '86 components', 1, 1, 'started', '2026-09-01T00:00:00.000Z')",
@@ -88,7 +88,7 @@ describe("window builder", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
-    seedOpenActivity(database);
+    seedOpenStint(database);
 
     const windowSinceCut = buildWindow(database, {
       sessionId: "s1",
@@ -114,8 +114,8 @@ describe("window builder", () => {
       {
         id: "Q1",
         title: "Ship marko-ui",
-        objective: "86 components",
-        lastActivityAt: "2026-09-04T14:00:00.000Z",
+        aim: "86 components",
+        lastStintAt: "2026-09-04T14:00:00.000Z",
       },
     ]);
 
@@ -135,7 +135,7 @@ describe("window builder", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
-    seedOpenActivity(database);
+    seedOpenStint(database);
 
     const window = buildWindow(database, {
       sessionId: "s1",
@@ -144,10 +144,10 @@ describe("window builder", () => {
     });
 
     // The row carries the alias; the real id lives only in activityAliases.
-    expect(window.activityAliases).toEqual({ A1: "A1" });
-    expect(window.sessionOpenActivities).toEqual([
+    expect(window.stintAliases).toEqual({ A1: "A1" });
+    expect(window.sessionOpenStints).toEqual([
       {
-        activityId: "A1",
+        stintId: "A1",
         what: "fixing walk order",
         why: "ship",
         questId: "Q1",
@@ -162,7 +162,7 @@ describe("window builder", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
-    seedOpenActivity(database);
+    seedOpenStint(database);
     seedEarlierSession(database);
 
     const window = buildWindow(database, {
@@ -171,10 +171,10 @@ describe("window builder", () => {
       ...memoryInput,
     });
 
-    expect(window.activityAliases.A2).toBe("A0");
-    expect(window.recentActivities).toEqual([
+    expect(window.stintAliases.A2).toBe("A0");
+    expect(window.recentStints).toEqual([
       {
-        activityId: "A2",
+        stintId: "A2",
         what: "fixing walk order",
         why: "ship it",
         questId: "Q1",
@@ -191,7 +191,7 @@ describe("window builder", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
-    seedOpenActivity(database);
+    seedOpenStint(database);
     seedEarlierSession(database);
 
     const stale = buildWindow(database, {
@@ -200,22 +200,22 @@ describe("window builder", () => {
       ...memoryInput,
       memoryHours: 1,
     });
-    expect(stale.recentActivities).toEqual([]);
+    expect(stale.recentStints).toEqual([]);
 
     const capped = buildWindow(database, {
       sessionId: "s1",
       sinceTs: "2026-09-04T14:30:00.000Z",
       ...memoryInput,
-      memoryActivities: 0,
+      memoryStints: 0,
     });
-    expect(capped.recentActivities).toEqual([]);
+    expect(capped.recentStints).toEqual([]);
   });
 
   test("recentSideQuests carries branched quests with their trigger (inference fallback only)", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
-    seedOpenActivity(database);
+    seedOpenStint(database);
     database
       .query(
         `INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at, origin_activity_id, branched_at, trigger)
@@ -239,7 +239,7 @@ describe("window builder", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
-    seedOpenActivity(database);
+    seedOpenStint(database);
 
     const window = buildWindow(database, {
       sessionId: "s1",
@@ -256,7 +256,7 @@ describe("window builder", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
-    seedOpenActivity(database);
+    seedOpenStint(database);
 
     const before = buildWindow(database, {
       sessionId: "s1",
@@ -286,7 +286,7 @@ describe("candidate time bounds", () => {
    * history, so when the window under classification is an earlier one this
    * activity has not happened yet from that window's point of view.
    */
-  function seedFutureActivity(database: ReturnType<typeof openDatabase>) {
+  function seedFutureStint(database: ReturnType<typeof openDatabase>) {
     database
       .query(
         `INSERT INTO claude_sessions
@@ -314,9 +314,9 @@ describe("candidate time bounds", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
-    seedOpenActivity(database);
+    seedOpenStint(database);
     seedEarlierSession(database);
-    seedFutureActivity(database);
+    seedFutureStint(database);
 
     const window = buildWindow(database, {
       sessionId: "s1",
@@ -327,8 +327,8 @@ describe("candidate time bounds", () => {
     });
 
     // Rows carry aliases now, so the real ids are read back through the map.
-    const offered = window.recentActivities.map(
-      (activity) => window.activityAliases[activity.activityId],
+    const offered = window.recentStints.map(
+      (stint) => window.stintAliases[stint.stintId],
     );
     expect(offered).not.toContain("A9");
     // The genuinely earlier activity is still offered, so the bound is not just
@@ -340,8 +340,8 @@ describe("candidate time bounds", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
-    seedOpenActivity(database);
-    seedFutureActivity(database);
+    seedOpenStint(database);
+    seedFutureStint(database);
 
     // `windowEnd` defaults to now, which is after the seeded 2026 timestamps only
     // if the clock says so; pass an explicit bound past the future activity to
@@ -355,7 +355,7 @@ describe("candidate time bounds", () => {
     });
 
     expect(
-      window.recentActivities.map((activity) => window.activityAliases[activity.activityId]),
+      window.recentStints.map((stint) => window.stintAliases[stint.stintId]),
     ).toContain("A9");
   });
 
@@ -363,7 +363,7 @@ describe("candidate time bounds", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
-    seedOpenActivity(database);
+    seedOpenStint(database);
 
     const window = buildWindow(database, {
       sessionId: "s1",
@@ -373,14 +373,14 @@ describe("candidate time bounds", () => {
       windowEnd: "2026-09-04T13:55:00.000Z",
     });
 
-    expect(window.sessionOpenActivities).toEqual([]);
+    expect(window.sessionOpenStints).toEqual([]);
   });
 
   test("a closed activity older than memory_hours is still excluded", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
-    seedOpenActivity(database);
+    seedOpenStint(database);
     seedEarlierSession(database);
 
     const window = buildWindow(database, {
@@ -393,7 +393,7 @@ describe("candidate time bounds", () => {
     });
 
     expect(
-      window.recentActivities.map((activity) => window.activityAliases[activity.activityId]),
+      window.recentStints.map((stint) => window.stintAliases[stint.stintId]),
     ).not.toContain("A0");
   });
 });
@@ -440,7 +440,7 @@ describe("declared quests in the window", () => {
 
     expect(window.declaredQuest).toEqual({
       title: "Ship marko-ui",
-      objective: "86 components",
+      aim: "86 components",
       plan: ["walk order", "docs"],
     });
     expect(window.parentDeclaredQuest).toBeNull();
@@ -528,7 +528,7 @@ describe("declared quests in the window", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
-    seedOpenActivity(database);
+    seedOpenStint(database);
     seedEarlierSession(database);
 
     const window = buildWindow(database, {
@@ -538,9 +538,9 @@ describe("declared quests in the window", () => {
     });
 
     // Session activities first, then recent: A1 is the open one, A2 the closed one.
-    expect(window.sessionOpenActivities.map((activity) => activity.activityId)).toEqual(["A1"]);
-    expect(window.recentActivities.map((activity) => activity.activityId)).toEqual(["A2"]);
-    expect(window.activityAliases).toEqual({ A1: "A1", A2: "A0" });
-    expect(Object.keys(window.activityAliases).every((alias) => /^A\d+$/.test(alias))).toBe(true);
+    expect(window.sessionOpenStints.map((stint) => stint.stintId)).toEqual(["A1"]);
+    expect(window.recentStints.map((stint) => stint.stintId)).toEqual(["A2"]);
+    expect(window.stintAliases).toEqual({ A1: "A1", A2: "A0" });
+    expect(Object.keys(window.stintAliases).every((alias) => /^A\d+$/.test(alias))).toBe(true);
   });
 });

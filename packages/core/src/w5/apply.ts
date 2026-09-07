@@ -1,16 +1,16 @@
 import type { Database } from "bun:sqlite";
-import { askQuestion, assignActivity, recordTrace } from "../intent/api";
+import { askQuestion, assignStint, recordTrace } from "../intent/api";
 import { currentDeclaredQuest, currentDeclaredQuestForSubagent } from "../intent/declarations";
 import type { Actor } from "../intent/events";
 import { newUlid } from "../intent/ids";
 import { applyIncremental } from "../intent/projections";
 import type { EventStore } from "../intent/store";
 import type { ClassifierResult, ClassifierSegment, ClassifierWindow } from "./classifier";
-import { openActivityContinuing } from "./lifecycle";
+import { openStintContinuing } from "./lifecycle";
 
 export interface AppliedSummary {
   traces: number;
-  activitiesOpened: number;
+  stintsOpened: number;
   questsProposed: number;
   branches: number;
   questionsWatching: number;
@@ -21,7 +21,7 @@ export interface AppliedSummary {
    */
   doubts: number;
   overlapDropped: number;
-  unknownActivityIds: number;
+  unknownStintIds: number;
   /**
    * A matched activity that had no quest, for which the classifier proposed one.
    */
@@ -63,7 +63,7 @@ function createQuest(
   input: {
     heroId: string;
     title: string;
-    objective: string;
+    aim: string;
     commitment: string;
     confirmed: boolean;
   },
@@ -78,7 +78,7 @@ function createQuest(
       payload: {
         owner: { kind: "hero", id: input.heroId },
         title: input.title,
-        objective: input.objective,
+        aim: input.aim,
         commitment: input.commitment,
         confirmed: input.confirmed,
       },
@@ -90,7 +90,7 @@ function createQuest(
 function branchQuest(
   store: EventStore,
   database: Database,
-  input: { questId: string; fromActivityId: string; trigger: string; at: string },
+  input: { questId: string; fromStintId: string; trigger: string; at: string },
 ): void {
   applyIncremental(
     database,
@@ -100,7 +100,7 @@ function branchQuest(
       subject: input.questId,
       at: input.at,
       payload: {
-        from_activity: input.fromActivityId,
+        from_activity: input.fromStintId,
         trigger: input.trigger,
         kind: classifyTrigger(input.trigger),
       },
@@ -108,17 +108,17 @@ function branchQuest(
   );
 }
 
-interface ResolvedActivity {
-  activityId: string;
+interface ResolvedStint {
+  stintId: string;
   questId: string | null;
-  activityOpened: boolean;
+  stintOpened: boolean;
   questCreated: boolean;
   questConflict: boolean;
-  unknownActivityId: boolean;
+  unknownStintId: boolean;
   questProposedOnMatched: boolean;
 }
 
-interface ActivityState {
+interface StintState {
   questId: string | null;
   isOpen: boolean;
 }
@@ -129,12 +129,12 @@ interface ActivityState {
  * retracted since the slice was built, so every id it hands back is looked up
  * before it is trusted.
  */
-function readActivity(database: Database, activityId: string): ActivityState | null {
+function readStint(database: Database, stintId: string): StintState | null {
   const row = database
     .query(
       "SELECT quest_id as questId, closed_at as closedAt FROM activities WHERE id = ? AND retracted_at IS NULL",
     )
-    .get(activityId) as { questId: string | null; closedAt: string | null } | null;
+    .get(stintId) as { questId: string | null; closedAt: string | null } | null;
   if (!row) return null;
   return { questId: row.questId, isOpen: row.closedAt === null };
 }
@@ -153,7 +153,7 @@ function resolveQuest(
     questId: createQuest(store, database, {
       heroId,
       title: proposedQuest.title,
-      objective: proposedQuest.objective,
+      aim: proposedQuest.aim,
       commitment: proposedQuest.commitment,
       confirmed: false,
     }),
@@ -176,14 +176,14 @@ function resolveQuest(
  *   where something is missing rather than contested, so the quest is created and
  *   attached through the ordinary `activity.assigned` path.
  */
-function reuseActivity(
+function reuseStint(
   store: EventStore,
   database: Database,
   heroId: string,
   segment: ClassifierSegment,
-  activityId: string,
+  stintId: string,
   existingQuestId: string | null,
-): ResolvedActivity {
+): ResolvedStint {
   const matchedQuest = segment.matchedQuest ?? null;
   const proposedQuest = segment.proposedQuest ?? null;
   const questConflict = matchedQuest !== null && matchedQuest !== (existingQuestId ?? null);
@@ -192,57 +192,57 @@ function reuseActivity(
     const questId = createQuest(store, database, {
       heroId,
       title: proposedQuest.title,
-      objective: proposedQuest.objective,
+      aim: proposedQuest.aim,
       commitment: proposedQuest.commitment,
       confirmed: false,
     });
-    assignActivity(store, database, activityId, questId, "hook");
+    assignStint(store, database, stintId, questId, "hook");
     return {
-      activityId,
+      stintId,
       questId,
-      activityOpened: false,
+      stintOpened: false,
       questCreated: true,
       questConflict: false,
-      unknownActivityId: false,
+      unknownStintId: false,
       questProposedOnMatched: true,
     };
   }
 
   return {
-    activityId,
+    stintId,
     questId: existingQuestId,
-    activityOpened: false,
+    stintOpened: false,
     questCreated: false,
     questConflict,
-    unknownActivityId: false,
+    unknownStintId: false,
     questProposedOnMatched: false,
   };
 }
 
-function resolveActivityForSegment(
+function resolveStintForSegment(
   store: EventStore,
   database: Database,
   heroId: string,
   segment: ClassifierSegment,
   openedAt: string,
-): ResolvedActivity {
-  let unknownActivityId = false;
+): ResolvedStint {
+  let unknownStintId = false;
 
   // `matchedActivity` means "this stretch of attention is still going", so it is
   // only honoured for an activity that is actually still open.
-  if (segment.matchedActivity !== null) {
-    const matched = readActivity(database, segment.matchedActivity);
+  if (segment.matchedStint !== null) {
+    const matched = readStint(database, segment.matchedStint);
     if (matched?.isOpen) {
-      return reuseActivity(
+      return reuseStint(
         store,
         database,
         heroId,
         segment,
-        segment.matchedActivity,
+        segment.matchedStint,
         matched.questId,
       );
     }
-    unknownActivityId = true;
+    unknownStintId = true;
   }
 
   // `continuesActivity` means "the same objective, resumed after a gap", so it is
@@ -250,21 +250,21 @@ function resolveActivityForSegment(
   // still-open activity says the attention never stopped: that is a plain reuse,
   // and opening a second row would leave two open activities for one objective.
   let continues: string | null = null;
-  if (segment.continuesActivity !== null) {
-    const referenced = readActivity(database, segment.continuesActivity);
+  if (segment.continuesStint !== null) {
+    const referenced = readStint(database, segment.continuesStint);
     if (referenced === null) {
-      unknownActivityId = true;
+      unknownStintId = true;
     } else if (referenced.isOpen) {
-      return reuseActivity(
+      return reuseStint(
         store,
         database,
         heroId,
         segment,
-        segment.continuesActivity,
+        segment.continuesStint,
         referenced.questId,
       );
     } else {
-      continues = segment.continuesActivity;
+      continues = segment.continuesStint;
     }
   }
 
@@ -272,24 +272,24 @@ function resolveActivityForSegment(
 
   if (continues !== null && questId === null) {
     // Returning to a closed activity keeps its quest unless the classifier named another.
-    questId = readActivity(database, continues)?.questId ?? null;
+    questId = readStint(database, continues)?.questId ?? null;
   }
 
-  const activityId = openActivityContinuing(store, database, {
+  const stintId = openStintContinuing(store, database, {
     quest: questId ?? undefined,
-    objective: segment.what,
+    aim: segment.what,
     at: openedAt,
     actor: "hook",
     continues: continues ?? undefined,
   });
 
   return {
-    activityId,
+    stintId,
     questId,
-    activityOpened: true,
+    stintOpened: true,
     questCreated,
     questConflict: false,
-    unknownActivityId,
+    unknownStintId,
     questProposedOnMatched: false,
   };
 }
@@ -303,67 +303,67 @@ function resolveActivityForSegment(
  * Selectors arrive as aliases (`"A1"`). An alias the window never offered resolves
  * to nothing and opens a new activity, exactly as a fabricated id did before.
  */
-function resolveActivityForSegmentDeclared(
+function resolveStintForSegmentDeclared(
   store: EventStore,
   database: Database,
   segment: ClassifierSegment,
   openedAt: string,
   declaredQuestId: string | null,
   aliases: Record<string, string>,
-): ResolvedActivity {
-  let unknownActivityId = false;
+): ResolvedStint {
+  let unknownStintId = false;
   const resolveAlias = (alias: string | null): string | null => {
     if (alias === null) return null;
     return aliases[alias] ?? null;
   };
 
-  const matchedId = resolveAlias(segment.matchedActivity);
-  if (segment.matchedActivity !== null) {
+  const matchedId = resolveAlias(segment.matchedStint);
+  if (segment.matchedStint !== null) {
     if (matchedId === null) {
-      unknownActivityId = true;
+      unknownStintId = true;
     } else {
-      const matched = readActivity(database, matchedId);
+      const matched = readStint(database, matchedId);
       if (matched?.isOpen) {
         // A matched activity keeps its own row; the declared quest is attached only
         // when it has none, since reassignment is exactly what the verifier must
         // never do.
         if (matched.questId === null && declaredQuestId !== null) {
-          assignActivity(store, database, matchedId, declaredQuestId, "hook");
+          assignStint(store, database, matchedId, declaredQuestId, "hook");
         }
         return {
-          activityId: matchedId,
+          stintId: matchedId,
           questId: matched.questId ?? declaredQuestId,
-          activityOpened: false,
+          stintOpened: false,
           questCreated: false,
           questConflict: false,
-          unknownActivityId: false,
+          unknownStintId: false,
           questProposedOnMatched: false,
         };
       }
-      unknownActivityId = true;
+      unknownStintId = true;
     }
   }
 
   let continues: string | null = null;
-  if (segment.continuesActivity !== null) {
-    const continuesId = resolveAlias(segment.continuesActivity);
+  if (segment.continuesStint !== null) {
+    const continuesId = resolveAlias(segment.continuesStint);
     if (continuesId === null) {
-      unknownActivityId = true;
+      unknownStintId = true;
     } else {
-      const referenced = readActivity(database, continuesId);
+      const referenced = readStint(database, continuesId);
       if (referenced === null) {
-        unknownActivityId = true;
+        unknownStintId = true;
       } else if (referenced.isOpen) {
         if (referenced.questId === null && declaredQuestId !== null) {
-          assignActivity(store, database, continuesId, declaredQuestId, "hook");
+          assignStint(store, database, continuesId, declaredQuestId, "hook");
         }
         return {
-          activityId: continuesId,
+          stintId: continuesId,
           questId: referenced.questId ?? declaredQuestId,
-          activityOpened: false,
+          stintOpened: false,
           questCreated: false,
           questConflict: false,
-          unknownActivityId: false,
+          unknownStintId: false,
           questProposedOnMatched: false,
         };
       } else {
@@ -372,21 +372,21 @@ function resolveActivityForSegmentDeclared(
     }
   }
 
-  const activityId = openActivityContinuing(store, database, {
+  const stintId = openStintContinuing(store, database, {
     quest: declaredQuestId ?? undefined,
-    objective: segment.what,
+    aim: segment.what,
     at: openedAt,
     actor: "hook",
     continues: continues ?? undefined,
   });
 
   return {
-    activityId,
+    stintId,
     questId: declaredQuestId,
-    activityOpened: true,
+    stintOpened: true,
     questCreated: false,
     questConflict: false,
-    unknownActivityId,
+    unknownStintId,
     questProposedOnMatched: false,
   };
 }
@@ -426,13 +426,13 @@ export function applyResult(
   const declaredMode = (options.mode ?? "declared") === "declared";
   const summary: AppliedSummary = {
     traces: 0,
-    activitiesOpened: 0,
+    stintsOpened: 0,
     questsProposed: 0,
     branches: 0,
     questionsWatching: 0,
     doubts: 0,
     overlapDropped: 0,
-    unknownActivityIds: 0,
+    unknownStintIds: 0,
     questProposedOnMatched: 0,
   };
 
@@ -472,9 +472,9 @@ export function applyResult(
   const overlapStart = window.overlapMessages[0]?.ts ?? null;
   const overlapEnd = window.overlapMessages.at(-1)?.ts ?? null;
 
-  const mostRecentOpen = window.sessionOpenActivities.at(-1);
-  let previous: { activityId: string; questId: string | null } | null = mostRecentOpen
-    ? { activityId: mostRecentOpen.activityId, questId: mostRecentOpen.questId }
+  const mostRecentOpen = window.sessionOpenStints.at(-1);
+  let previous: { stintId: string; questId: string | null } | null = mostRecentOpen
+    ? { stintId: mostRecentOpen.stintId, questId: mostRecentOpen.questId }
     : null;
 
   // The session may legitimately hold several activities open at once (a lead
@@ -484,8 +484,8 @@ export function applyResult(
   // not already open in this session: returning to a quest already in flight
   // is not a nexus event, just attention moving back to something ongoing.
   const openSessionQuestIds = new Set(
-    window.sessionOpenActivities
-      .map((activity) => activity.questId)
+    window.sessionOpenStints
+      .map((stint) => stint.questId)
       .filter((questId): questId is string => questId !== null),
   );
 
@@ -508,42 +508,42 @@ export function applyResult(
     // activity days after the traces it owns, which is what made measured
     // durations negative and left `opened_at < windowEnd` unable to hold.
     const {
-      activityId,
+      stintId,
       questId,
-      activityOpened,
+      stintOpened,
       questCreated,
       questConflict,
-      unknownActivityId,
+      unknownStintId,
       questProposedOnMatched,
     } = declaredMode
-      ? resolveActivityForSegmentDeclared(
+      ? resolveStintForSegmentDeclared(
           store,
           database,
           segment,
           segment.startedAt,
           declaredQuestId,
-          window.activityAliases ?? {},
+          window.stintAliases ?? {},
         )
-      : resolveActivityForSegment(store, database, heroId, segment, segment.startedAt);
+      : resolveStintForSegment(store, database, heroId, segment, segment.startedAt);
 
-    if (activityOpened) summary.activitiesOpened += 1;
+    if (stintOpened) summary.stintsOpened += 1;
     if (questCreated) summary.questsProposed += 1;
-    if (unknownActivityId) {
-      summary.unknownActivityIds += 1;
+    if (unknownStintId) {
+      summary.unknownStintIds += 1;
       options.log(
-        `w5 unknown activity id: classifier named ${segment.matchedActivity ?? segment.continuesActivity ?? "none"}, which is not an open activity in the window; opened ${activityId} instead`,
+        `w5 unknown activity id: classifier named ${segment.matchedStint ?? segment.continuesStint ?? "none"}, which is not an open activity in the window; opened ${stintId} instead`,
       );
     }
     if (questProposedOnMatched) {
       summary.questProposedOnMatched += 1;
       options.log(
-        `w5 quest proposed on matched activity: activity ${activityId} had no quest, attached newly proposed ${questId ?? "none"}`,
+        `w5 quest proposed on matched activity: activity ${stintId} had no quest, attached newly proposed ${questId ?? "none"}`,
       );
     }
     if (questConflict) {
       summary.doubts += 1;
       options.log(
-        `w5 quest conflict: activity ${activityId} keeps quest ${questId ?? "none"}, classifier said ${segment.matchedQuest ?? "none"}`,
+        `w5 quest conflict: activity ${stintId} keeps quest ${questId ?? "none"}, classifier said ${segment.matchedQuest ?? "none"}`,
       );
     }
 
@@ -557,7 +557,7 @@ export function applyResult(
     ) {
       branchQuest(store, database, {
         questId,
-        fromActivityId: previous.activityId,
+        fromStintId: previous.stintId,
         trigger: segment.trigger ?? "unknown",
         at: segment.startedAt,
       });
@@ -565,10 +565,10 @@ export function applyResult(
     }
 
     if (questId !== null) openSessionQuestIds.add(questId);
-    previous = { activityId, questId };
+    previous = { stintId, questId };
 
     const traceId = recordTrace(store, database, {
-      activity: activityId,
+      stint: stintId,
       tool: "claude-code",
       place: `${window.org}/${window.project}`,
       source: "session",
