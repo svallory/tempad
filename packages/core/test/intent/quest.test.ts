@@ -371,4 +371,56 @@ describe("quests", () => {
     ]);
     expect(exitCode).toBe(2);
   });
+
+  test("quest declare --quest rejects an unknown quest id, exit 1", async () => {
+    const { run, lines } = harness();
+    await run(["hero", "init", "S"]);
+    lines.length = 0;
+    const exitCode = await run(["quest", "declare", "--session", "s1", "--quest", "nope"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("quest declare --quest rejects a retracted quest id, exit 1", async () => {
+    const { run, database } = harness();
+    await run(["hero", "init", "S"]);
+    await run(["quest", "add", "--owner", "hero", "Retract me"]);
+    const quest = database.query("SELECT id FROM quests").get() as { id: string };
+
+    const { EventStore } = await import("../../src/intent/store");
+    const { applyIncremental } = await import("../../src/intent/projections");
+    const store = new EventStore(database);
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "retracted",
+        subject: quest.id,
+        payload: { retracts: quest.id, reason: "test" },
+      }),
+    );
+
+    const exitCode = await run(["quest", "declare", "--session", "s1", "--quest", quest.id]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("quest declare --quest with a valid quest id succeeds", async () => {
+    const { run, database, lines } = harness();
+    await run(["hero", "init", "S"]);
+    await run(["quest", "add", "--owner", "hero", "Existing"]);
+    const quest = database.query("SELECT id FROM quests").get() as { id: string };
+    lines.length = 0;
+    const exitCode = await run(["quest", "declare", "--session", "s1", "--quest", quest.id]);
+    expect(exitCode).toBe(0);
+    expect(lines.at(-1)).toBe(`declared ${quest.id}`);
+  });
+
+  test("tempad quest add sets origin_kind 'declared' on the created quest", async () => {
+    const { run, database } = harness();
+    await run(["hero", "init", "S"]);
+    await run(["quest", "add", "--owner", "hero", "Hand-added"]);
+    const quest = database.query("SELECT origin_kind FROM quests").get() as {
+      origin_kind: string;
+    };
+    expect(quest.origin_kind).toBe("declared");
+  });
 });

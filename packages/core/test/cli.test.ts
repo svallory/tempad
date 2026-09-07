@@ -257,4 +257,14 @@ describe("tempad skill install", () => {
       rmSync(projectDir, { recursive: true, force: true });
     }
   });
+
+  test("--scope user throws a clear error when HOME is unset, never defaults to '/'", () => {
+    const previousHome = process.env.HOME;
+    delete process.env.HOME;
+    try {
+      expect(() => runSkillCommand(["install", "--scope", "user"])).toThrow(/HOME is not set/);
+    } finally {
+      process.env.HOME = previousHome;
+    }
+  });
 });
