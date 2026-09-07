@@ -308,6 +308,38 @@ describe("classifier", () => {
     expect(result.selectorDefaulted).toBe(0);
   });
 
+  test("a subagent with no own declaration and exactly one parent quest gets the sole-quest default", () => {
+    // The subagent has declared nothing itself -- activeQuests/activeQuestAliases
+    // are empty, exactly as buildWindow renders it -- so the parent's one quest
+    // is the *only* active quest across the pair, and a missing/unrecognized
+    // `quest` should silently resolve to it rather than becoming a doubt.
+    const subagentOnlyWindow: ClassifierWindow = {
+      ...window,
+      activeQuests: [],
+      activeQuestAliases: {},
+      parentActiveQuests: [
+        { alias: "PQ1", title: "Ship marko-ui", outcome: "86 components", plan: [] },
+      ],
+      parentActiveQuestAliases: { PQ1: "01HREALQUESTIDPARENT000000" },
+    };
+
+    const missing = validateResult(
+      { segments: [{ ...good.segments[0], quest: null }] },
+      subagentOnlyWindow,
+    );
+    expect(missing.segments[0]?.belongs).toBe(true);
+    expect(missing.segments[0]?.quest).toBe("PQ1");
+    expect(missing.selectorDefaulted).toBe(0);
+
+    const unrecognized = validateResult(
+      { segments: [{ ...good.segments[0], quest: "Q9" }] },
+      subagentOnlyWindow,
+    );
+    expect(unrecognized.segments[0]?.belongs).toBe(true);
+    expect(unrecognized.segments[0]?.quest).toBe("PQ1");
+    expect(unrecognized.selectorDefaulted).toBe(0);
+  });
+
   test("validateResult accepts each stint selector shape", () => {
     const planWindow: ClassifierWindow = { ...window, planAliases: { "P1.1": "walk order" } };
 

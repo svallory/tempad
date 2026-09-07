@@ -363,10 +363,26 @@ describe("w5 context", () => {
   });
 });
 
+function insertStint(
+  database: ReturnType<typeof openDatabase>,
+  options: { id: string; outcome?: string; dismissed?: boolean },
+): void {
+  database
+    .query(
+      "INSERT INTO stints (id, outcome, opened_at, revision, dismissed_at) VALUES (?, ?, '2026-09-01T00:00:00.000Z', 1, ?)",
+    )
+    .run(
+      options.id,
+      options.outcome ?? "work",
+      options.dismissed ? "2026-09-01T01:00:00.000Z" : null,
+    );
+}
+
 describe("tempad review", () => {
   test("lists a trace with a recorded doubt even though no question was ever asked", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
+    insertStint(database, { id: "A1" });
     database
       .query(
         `INSERT INTO traces
@@ -389,9 +405,34 @@ describe("tempad review", () => {
     ).toBe(true);
   });
 
+  test("excludes a doubt whose stint has been dismissed", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    insertStint(database, { id: "A1", dismissed: true });
+    database
+      .query(
+        `INSERT INTO traces
+          (id, stint_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at, doubt)
+          VALUES ('T3', 'A1', 'claude-code', 'p', 'session', ?, ?, 'hero', 'a side errand', 'y', 'p', 'claude-code', 0.9, 'assistant', 's1', ?, 'unrecognized quest alias')`,
+      )
+      .run(new Date().toISOString(), new Date().toISOString(), new Date().toISOString());
+
+    const lines: string[] = [];
+    const code = runReviewCommand([], {
+      database,
+      config: makeConfig(mkdtempSync(join(tmpdir(), "tempad-cli-test-"))),
+      intentConfig: defaultIntentConfig(),
+      stdout: (line) => lines.push(line),
+    });
+
+    expect(code).toBe(0);
+    expect(lines.some((line) => line.includes("T3"))).toBe(false);
+  });
+
   test("omits a doubt older than the review window", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
+    insertStint(database, { id: "A1" });
     const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     database
       .query(

@@ -1351,6 +1351,48 @@ describe("applyResult in declared mode", () => {
     expect(stint.continues).toBeNull();
   });
 
+  test("new: reuse matching is trim/whitespace/case-insensitive on both sides", () => {
+    const database = openDatabase(":memory:");
+    const { store, questId } = seedDeclared(database);
+
+    const opened = applyResult(
+      store,
+      database,
+      declaredWindow,
+      {
+        segments: [segment({ stint: "new: Capture   3  admin   screenshots" })],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+    expect(opened.stintsOpened).toBe(1);
+    const firstStint = database.query("SELECT id FROM stints WHERE id != 'A1'").get() as {
+      id: string;
+    };
+
+    // Same outcome, different case and internal whitespace -- plausible
+    // model variance across windows, not a new outcome.
+    const again = applyResult(
+      store,
+      database,
+      declaredWindow,
+      {
+        segments: [segment({ stint: "new: capture 3 ADMIN screenshots" })],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+    expect(again.stintsOpened).toBe(0);
+
+    const stints = database.query("SELECT id, quest_id as questId FROM stints").all() as {
+      id: string;
+      questId: string | null;
+    }[];
+    expect(stints).toHaveLength(2);
+    const reused = stints.find((stint) => stint.id === firstStint.id);
+    expect(reused?.questId).toBe(questId);
+  });
+
   test("an alias is mapped back to the real stint id it stands for", () => {
     const database = openDatabase(":memory:");
     const { store } = seedDeclared(database);
