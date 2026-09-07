@@ -842,6 +842,40 @@ describe("applyResult", () => {
     expect(reused.count).toBe(0);
   });
 
+  test("matchedStint naming a dismissed stint is not reused", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seed(database);
+    database
+      .query(
+        `INSERT INTO stints (id, quest_id, outcome, opened_at, revision, dismissed_at)
+         VALUES ('A-dismissed', 'Q1', 'too short', '2026-09-04T13:00:00.000Z', 1, '2026-09-04T13:02:00.000Z')`,
+      )
+      .run();
+
+    const summary = applyResult(
+      store,
+      database,
+      window,
+      {
+        segments: [{ ...baseMatched, matchedStint: "A-dismissed", matchedQuest: "Q1" }],
+        sessionNote: null,
+      },
+      {
+        actor: "hook",
+        askingEnabled: false,
+        now: "2026-09-04T15:21:00.000Z",
+        log: () => {},
+        stintMinMinutes: 5,
+      },
+    );
+
+    expect(summary.unknownStintIds).toBe(1);
+    const reused = database
+      .query("SELECT COUNT(*) as count FROM traces WHERE stint_id = 'A-dismissed'")
+      .get() as { count: number };
+    expect(reused.count).toBe(0);
+  });
+
   test("continuesStint pointing at a still-open stint reuses it instead of opening a second", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);
