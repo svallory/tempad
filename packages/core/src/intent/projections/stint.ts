@@ -74,9 +74,12 @@ export const stintProjection: Projection = {
             payload.quest ? String(payload.quest) : null,
             String(payload.outcome),
             event.at,
-            payload.continues ? String(payload.continues) : null,
-            payload.plan_index ? String(payload.plan_index) : null,
-            payload.plan_item ? String(payload.plan_item) : null,
+            // Nullish, not truthy: only an absent field means "no value". An
+            // empty string is a value, and silently storing NULL for one would
+            // lose it.
+            payload.continues == null ? null : String(payload.continues),
+            payload.plan_index == null ? null : String(payload.plan_index),
+            payload.plan_item == null ? null : String(payload.plan_item),
           );
         return;
       case "stint.reworded":

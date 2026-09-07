@@ -318,6 +318,7 @@ function resolveStintForSegmentDeclared(
   segment: ClassifierSegment,
   openedAt: string,
   questId: string | null,
+  sessionId: string,
   openStintAliases: Record<string, string>,
   planAliases: Record<string, string>,
   planStints: Map<string, string>,
@@ -389,25 +390,35 @@ function resolveStintForSegmentDeclared(
       return { ...open(segment.what), unknownStintId: true };
     }
 
-    // One plan item is at most one stint per session. Reuse is keyed on the
-    // plan line's *text*, not on its alias: a plan can be amended between
-    // windows, which shifts what `P2.1` names, and a stint opened for the old
-    // item must not absorb the new one's traces.
-    const key = `${questId ?? "none"}:${selector}:${planItem}`;
+    // One plan item is at most one stint per session, identified by
+    // `(session, quest, plan line text)` alone. The alias is deliberately not
+    // part of the key: `P<n>.<m>` is renumbered from scratch every window, so
+    // inserting a line ahead of an unfinished item moves it from `P1.1` to
+    // `P1.2` while naming the same outcome -- keying on the alias would open a
+    // second stint for work already in flight and split its traces. The text
+    // changing is the real amendment, and that correctly finds nothing here.
+    const key = `${questId ?? "none"}:${planItem}`;
     const known = planStints.get(key);
     if (known !== undefined) {
       const referenced = readStint(database, known);
       if (referenced?.isOpen) return reuse(known, referenced.questId);
     }
 
+    // `stints` has no session column -- a stint belongs to the session its
+    // traces do, which is how `buildWindow` scopes its own candidate slice.
     const existing = database
       .query(
-        `SELECT id, closed_at as closedAt FROM stints
-          WHERE plan_index = ? AND plan_item = ? AND retracted_at IS NULL AND dismissed_at IS NULL
-            AND (quest_id IS ? OR quest_id = ?)
-          ORDER BY opened_at DESC LIMIT 1`,
+        `SELECT stints.id as id, stints.closed_at as closedAt FROM stints
+          WHERE stints.plan_item = ? AND stints.retracted_at IS NULL
+            AND stints.dismissed_at IS NULL
+            AND (stints.quest_id IS ? OR stints.quest_id = ?)
+            AND EXISTS (
+              SELECT 1 FROM traces
+               WHERE traces.stint_id = stints.id AND traces.retracted_at IS NULL
+                 AND traces.session_id = ?)
+          ORDER BY stints.opened_at DESC LIMIT 1`,
       )
-      .get(selector, planItem, questId, questId) as { id: string; closedAt: string | null } | null;
+      .get(planItem, questId, questId, sessionId) as { id: string; closedAt: string | null } | null;
 
     if (existing !== null && existing.closedAt === null) {
       planStints.set(key, existing.id);
@@ -571,6 +582,7 @@ export function applyResult(
           segment.quest === null || segment.quest === undefined
             ? null
             : (questAliases[segment.quest] ?? null),
+          window.sessionId,
           window.openStintAliases ?? {},
           window.planAliases ?? {},
           planStints,
