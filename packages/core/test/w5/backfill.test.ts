@@ -8,6 +8,7 @@ import { registerAllProjections } from "../../src/intent/projections/register";
 import { EventStore } from "../../src/intent/store";
 import { backfill } from "../../src/w5/backfill";
 import type { Classifier, ClassifierResult, ClassifierWindow } from "../../src/w5/classifier";
+import { buildSystemPrompt, buildUserPrompt } from "../../src/w5/prompt";
 
 registerAllProjections();
 
@@ -850,5 +851,68 @@ describe("backfill and declared quests", () => {
 
     expect(result.doubts).toBe(0);
     expect("questConflicts" in result).toBe(false);
+  });
+});
+
+describe("backfill hands the classifier the prompt its mode needs", () => {
+  test("a never-declaring session's window is classified with the inference prompt", async () => {
+    const database = openDatabase(":memory:");
+    seedHero(database);
+    seedSession(database, { id: "s1", endedAt: "2026-09-04T15:20:00.000Z" });
+
+    /**
+     * Renders the real prompts from the window it is handed, instead of
+     * hand-returning a result. Every other classifier in this file bypasses
+     * `buildSystemPrompt`/`buildUserPrompt` entirely, which is exactly how a
+     * verifier-only prompt reached the inference path unnoticed.
+     */
+    class PromptRecordingClassifier implements Classifier {
+      public systemPrompts: string[] = [];
+      public userPrompts: string[] = [];
+      async classify(window: ClassifierWindow): Promise<ClassifierResult> {
+        this.systemPrompts.push(buildSystemPrompt(window.mode));
+        this.userPrompts.push(buildUserPrompt(window));
+        const first = window.messages[0]?.ts ?? "2026-09-04T15:00:00.000Z";
+        return {
+          segments: [
+            {
+              startedAt: first,
+              endedAt: window.messages.at(-1)?.ts ?? first,
+              what: "work",
+              why: "ship",
+              matchedQuest: null,
+              proposedQuest: null,
+              matchedActivity: null,
+              continuesActivity: null,
+              newActivityReason: "first work of the window",
+              isSwitch: false,
+              trigger: null,
+              confidence: 0.9,
+              questions: [],
+            },
+          ],
+          sessionNote: null,
+        };
+      }
+    }
+
+    const classifier = new PromptRecordingClassifier();
+    await backfill(database, makeConfig(), config, classifier, {
+      days: 15,
+      now: "2026-09-04T17:00:00.000Z",
+      log: () => {},
+    });
+
+    expect(classifier.systemPrompts.length).toBeGreaterThan(0);
+    for (const prompt of classifier.systemPrompts) {
+      // The fallback's apply path reads these, so the model must be asked for them.
+      expect(prompt).toContain('"matchedQuest"');
+      expect(prompt).toContain('"proposedQuest"');
+      expect(prompt).not.toContain('"belongs"');
+    }
+    for (const prompt of classifier.userPrompts) {
+      expect(prompt).toContain("open quests:");
+      expect(prompt).not.toContain("your declared quest");
+    }
   });
 });

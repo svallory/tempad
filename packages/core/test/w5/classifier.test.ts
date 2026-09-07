@@ -22,6 +22,7 @@ const window: ClassifierWindow = {
       text: "wait, what does Astryx do for agents? compare it with ours",
     },
   ],
+  mode: "declared",
   declaredQuest: {
     title: "Ship marko-ui",
     objective: "86 components",
@@ -408,5 +409,152 @@ describe("a classifier that returns a bad alias", () => {
     expect(result.segments[0]?.matchedActivity).toBeNull();
     expect(result.segments[0]?.newActivityReason).toBe(DEFAULT_NEW_ACTIVITY_REASON);
     expect(result.selectorDefaulted).toBe(1);
+  });
+});
+
+describe("prompt rendering per mode", () => {
+  /**
+   * The regression these guard: the prompt was rewritten for verifier mode only,
+   * so an inference-mode run (`[w5].mode = "inferred"`, or backfill's fallback for
+   * a session that never declares) asked the model for the verifier's schema. A
+   * real model would then never emit `matchedQuest`/`proposedQuest`, and
+   * `apply.ts`'s inference path would resolve every quest to null -- silently
+   * defeating the fallback. Every backfill/apply test injects a fake classifier
+   * that hand-returns those fields, bypassing the prompt entirely, so only a test
+   * that reads the rendered text can catch it.
+   */
+  const inferredWindow: ClassifierWindow = {
+    ...window,
+    mode: "inferred",
+    declaredQuest: null,
+    parentDeclaredQuest: null,
+    activityAliases: {},
+    openQuests: [
+      {
+        id: "01HQUESTIDONE0000000000000",
+        title: "Ship marko-ui",
+        objective: "86 components",
+        lastActivityAt: "2026-09-04T14:00:00.000Z",
+      },
+    ],
+    recentSideQuests: [
+      {
+        id: "01HQUESTIDTWO0000000000000",
+        title: "Compare Astryx",
+        trigger: "what does Astryx do?",
+      },
+    ],
+  };
+
+  test("the inferred system prompt asks for the pre-verifier schema, not the verifier's", () => {
+    const text = buildSystemPrompt("inferred");
+
+    // Field names as the schema block spells them: the prose says "belongs to",
+    // so a bare substring check would be meaningless here.
+    expect(text).toContain('"matchedQuest"');
+    expect(text).toContain('"proposedQuest"');
+    expect(text).toContain('"questions"');
+    expect(text).toContain("which_quest");
+    expect(text).toContain('"trigger"');
+    expect(text).not.toContain('"belongs"');
+    expect(text).not.toContain('"guess"');
+    expect(text).not.toContain("declared quest");
+    expect(new TextEncoder().encode(text).length).toBeLessThan(2048);
+  });
+
+  test("the declared system prompt asks for belongs/guess, never matchedQuest", () => {
+    const text = buildSystemPrompt("declared");
+
+    expect(text).toContain('"belongs"');
+    expect(text).toContain('"guess"');
+    expect(text).toContain("declared its quest");
+    expect(text).not.toContain('"matchedQuest"');
+    expect(text).not.toContain('"proposedQuest"');
+    expect(text).not.toContain('"questions"');
+    expect(text).not.toContain("which_quest");
+    expect(new TextEncoder().encode(text).length).toBeLessThan(2048);
+  });
+
+  test("buildSystemPrompt defaults to the declared prompt", () => {
+    expect(buildSystemPrompt()).toBe(buildSystemPrompt("declared"));
+  });
+
+  test("the inferred user prompt renders the quest lists and no declared quest", () => {
+    const text = buildUserPrompt(inferredWindow);
+
+    expect(text).toContain("open quests:");
+    expect(text).toContain("01HQUESTIDONE0000000000000: Ship marko-ui");
+    expect(text).toContain("recent side quests:");
+    expect(text).toContain("Compare Astryx");
+    expect(text).not.toContain("your declared quest");
+  });
+
+  test("the declared user prompt renders the declared quest and no quest lists", () => {
+    const text = buildUserPrompt(window);
+
+    expect(text).toContain("your declared quest: Ship marko-ui");
+    expect(text).not.toContain("open quests:");
+    expect(text).not.toContain("recent side quests:");
+  });
+
+  test("validateResult accepts a pre-verifier segment for an inferred window", () => {
+    // No `belongs`/`guess` at all: exactly what the inferred prompt asks for.
+    const result = validateResult(
+      {
+        segments: [
+          {
+            startedAt: "2026-09-04T15:00:00.000Z",
+            endedAt: "2026-09-04T15:20:00.000Z",
+            what: "work",
+            why: "ship",
+            matchedQuest: null,
+            proposedQuest: {
+              title: "Compare Astryx",
+              objective: "see what they claim",
+              commitment: "exploratory",
+            },
+            matchedActivity: null,
+            continuesActivity: null,
+            newActivityReason: "a fresh thread of work",
+            isSwitch: false,
+            trigger: null,
+            confidence: 0.9,
+            questions: ["which_quest"],
+          },
+        ],
+        sessionNote: null,
+      },
+      inferredWindow,
+    );
+
+    expect(result.segments[0]?.proposedQuest?.title).toBe("Compare Astryx");
+    expect(result.segments[0]?.questions).toEqual(["which_quest"]);
+  });
+
+  test("an inferred window keeps real activity ids, so selectors are not alias-checked", () => {
+    // A real id is not a key of any alias map; it must survive untouched.
+    const result = validateResult(
+      {
+        segments: [
+          {
+            startedAt: "2026-09-04T15:00:00.000Z",
+            endedAt: "2026-09-04T15:20:00.000Z",
+            what: "work",
+            why: "ship",
+            matchedActivity: "01HACTIVITYIDREAL000000000",
+            continuesActivity: null,
+            newActivityReason: null,
+            isSwitch: false,
+            trigger: null,
+            confidence: 0.9,
+          },
+        ],
+        sessionNote: null,
+      },
+      inferredWindow,
+    );
+
+    expect(result.segments[0]?.matchedActivity).toBe("01HACTIVITYIDREAL000000000");
+    expect(result.selectorDefaulted).toBe(0);
   });
 });

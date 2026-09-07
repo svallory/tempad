@@ -55,6 +55,7 @@ const window: ClassifierWindow = {
   org: "personal",
   project: "marko-ui",
   messages: [],
+  mode: "declared",
   declaredQuest: null,
   parentDeclaredQuest: null,
   activityAliases: { A1: "A1" },

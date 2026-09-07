@@ -10,6 +10,14 @@ export interface ClassifierWindow {
   project: string;
   messages: { ts: string; role: string; text: string }[];
   /**
+   * Which prompt and apply path this window is for. `"inferred"` is the
+   * pre-verifier behavior, used by `[w5].mode = "inferred"` and by backfill's
+   * per-session fallback for a session that never declares anything; it is what
+   * decides which schema the model is asked to fill in, so it must travel with
+   * the window rather than being guessed from which optional fields are set.
+   */
+  mode: "declared" | "inferred";
+  /**
    * The quest this session declared (`tempad quest declare`), as of the window's
    * reference time. `null` means the session has not declared anything yet, which
    * the verifier reads as "ask to declare" rather than "infer one".
@@ -78,10 +86,17 @@ export interface ClassifierSegment {
   endedAt: string;
   what: string;
   why: string;
-  /** Does this segment belong to the declared quest (the parent's, for a subagent)? */
-  belongs: boolean;
-  /** Short string naming what it looks like instead; required when `belongs` is false. */
-  guess: string | null;
+  /**
+   * Does this segment belong to the declared quest (the parent's, for a
+   * subagent)? Declared mode requires it -- `validateSegment` rejects a segment
+   * without it -- and inference mode is never asked for it, hence optional here.
+   */
+  belongs?: boolean;
+  /**
+   * Short string naming what it looks like instead; required when `belongs` is
+   * false, forced to null when it is true. Declared mode only.
+   */
+  guess?: string | null;
   /** Alias (`"A1"`), never a real id, in declared mode. */
   matchedActivity: string | null;
   /** Alias (`"A1"`), never a real id, in declared mode. */
@@ -162,6 +177,7 @@ function validateSegment(
   bounds: { firstTs: string; lastTs: string } | null,
   counters: SelectorCounters,
   aliases: Set<string> | null,
+  mode: "declared" | "inferred",
 ): void {
   const where = `segments[${index}]`;
   if (typeof raw !== "object" || raw === null) {
@@ -198,7 +214,14 @@ function validateSegment(
     }
   }
 
-  if (typeof segment.belongs !== "boolean") {
+  // `belongs`/`guess` are the verifier's fields; an inference-mode window is never
+  // asked for them, so requiring them there would reject every window that path
+  // produces.
+  if (mode === "inferred") {
+    if (segment.belongs !== undefined && typeof segment.belongs !== "boolean") {
+      problems.push(`${where}.belongs: expected boolean`);
+    }
+  } else if (typeof segment.belongs !== "boolean") {
     problems.push(`${where}.belongs: expected boolean`);
   } else if (segment.belongs === false) {
     // A doubt with nothing to say is useless to the human answering it, so this
@@ -321,15 +344,18 @@ export function validateResult(raw: unknown, window?: ClassifierWindow): Classif
         }
       : null;
 
+  const mode = window?.mode ?? "declared";
+  // Inference mode carries real ids in its slice, not aliases, so there is no
+  // closed set to validate a selector against.
   const aliases =
-    window !== undefined && window.activityAliases !== undefined
+    mode === "declared" && window !== undefined && window.activityAliases !== undefined
       ? new Set(Object.keys(window.activityAliases))
       : null;
 
   const counters: SelectorCounters = { selectorDefaulted: 0, selectorAmbiguous: 0 };
   const segments = (raw as { segments: unknown[] }).segments;
   for (const [index, segment] of segments.entries()) {
-    validateSegment(segment, index, problems, bounds, counters, aliases);
+    validateSegment(segment, index, problems, bounds, counters, aliases, mode);
   }
 
   const sessionNote = (raw as { sessionNote?: unknown }).sessionNote;
@@ -381,7 +407,8 @@ export class AnthropicClassifier implements Classifier {
   }
 
   async classify(window: ClassifierWindow): Promise<ClassifierResult> {
-    const systemPrompt = buildSystemPrompt();
+    // The window's mode decides which schema the model is asked to fill in.
+    const systemPrompt = buildSystemPrompt(window.mode);
     const userPrompt = buildUserPrompt(window);
     return classifyWithRetry(window, userPrompt, (prompt) => this.request(systemPrompt, prompt));
   }
