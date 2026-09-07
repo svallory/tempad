@@ -9,7 +9,7 @@ import { backfill } from "./backfill";
 import { AnthropicClassifier, type Classifier } from "./classifier";
 import { ClaudeCliClassifier } from "./classifier-cli";
 import { dedupe } from "./dedupe";
-import { InvalidEvalRangeError, runEval, validateEvalRange } from "./eval";
+import { InvalidDeclareFileError, InvalidEvalRangeError, runEval, validateEvalRange } from "./eval";
 import {
   buildAdditionalContext,
   buildBelongsHandback,
@@ -438,19 +438,28 @@ async function runEvalCommand(args: string[], context: W5Context): Promise<numbe
   const scratchDir = join(context.config.home, "scratch");
   mkdirSync(scratchDir, { recursive: true });
 
-  const metrics = await runEval({
-    from: values.from,
-    to: values.to,
-    sourceDbPath,
-    scratchDir,
-    now: new Date().toISOString(),
-    classifier,
-    log: (line) => {
-      log(context.config, line);
-      context.stdout(line);
-    },
-    declareFile: values.declare,
-  });
+  let metrics: Awaited<ReturnType<typeof runEval>>;
+  try {
+    metrics = await runEval({
+      from: values.from,
+      to: values.to,
+      sourceDbPath,
+      scratchDir,
+      now: new Date().toISOString(),
+      classifier,
+      log: (line) => {
+        log(context.config, line);
+        context.stdout(line);
+      },
+      declareFile: values.declare,
+    });
+  } catch (error) {
+    if (error instanceof InvalidDeclareFileError) {
+      context.stdout(error.message);
+      return 1;
+    }
+    throw error;
+  }
 
   context.stdout(`copied_db=${metrics.copiedDbPath}`);
   context.stdout(
@@ -466,6 +475,7 @@ async function runEvalCommand(args: string[], context: W5Context): Promise<numbe
   context.stdout(`doubts=${metrics.doubts}`);
   context.stdout(`doubts_answered=${metrics.doubtsAnswered}`);
   context.stdout(`traces_unattributed=${metrics.tracesUnattributed}`);
+  context.stdout(`declarations_skipped=${metrics.declarationsSkipped}`);
   context.stdout(`unknown_activity_ids=${metrics.unknownActivityIds}`);
   context.stdout(`overlap_dropped=${metrics.overlapDropped}`);
   context.stdout(`quest_proposed_on_matched=${metrics.questProposedOnMatched}`);

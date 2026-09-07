@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
 import {
+  attributeNonClaudeEvidence,
+  type NonClaudeEvidenceRow,
   queryActivities,
   queryQuests,
   querySideQuests,
@@ -72,6 +74,9 @@ function render(database: Database, config: Config, options: ReportOptions): str
   const quests = queryQuests(intentDatabase, range);
   const sideQuests = querySideQuests(intentDatabase, range);
   const activities = queryActivities(intentDatabase, range);
+  const attribution = new Map(
+    attributeNonClaudeEvidence(intentDatabase, range).map((row) => [row.id, row]),
+  );
 
   const keys = new Map<string, ProjectKey>();
   for (const row of [...commits, ...sessions, ...mondayItems]) {
@@ -136,8 +141,10 @@ function render(database: Database, config: Config, options: ReportOptions): str
             const last = item.timelineEnd ?? item.updatedAt;
             const itemCommits = projectCommits.length;
             const itemSessions = projectSessions.length;
+            const quest = attribution.get(String(item.id))?.questTitle;
+            const name = quest ? `${item.name} — ${quest}` : item.name;
             return [
-              item.name,
+              name,
               localDateTime(first, range.timeZone),
               localDateTime(last, range.timeZone),
               elapsedLabel(first, last),
@@ -150,6 +157,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
             projectSessions,
             queryPullRequestsByRepo(database, key.org, key.project),
             range.timeZone,
+            attribution,
           )
     ).map((row) => [...row, "-", "-"]);
 
@@ -214,6 +222,7 @@ function branchRows(
   sessions: SessionRow[],
   pullRequests: PullRequestRow[],
   timeZone: string,
+  attribution: Map<string, NonClaudeEvidenceRow>,
 ): string[][] {
   const pullRequestsByNumber = new Map(pullRequests.map((pr) => [pr.number, pr]));
 
@@ -233,8 +242,12 @@ function branchRows(
     const branchSessions = sessions.filter((session) => session.gitBranch === branch);
     const first = branchCommits[0]?.authoredAt ?? "";
     const last = branchCommits[branchCommits.length - 1]?.authoredAt ?? "";
+    const quest = branchCommits
+      .map((commit) => attribution.get(commit.sha)?.questTitle)
+      .find((title): title is string => Boolean(title));
+    const label = branchLabel(branch, pullRequestsByNumber);
     return [
-      branchLabel(branch, pullRequestsByNumber),
+      quest ? `${label} — ${quest}` : label,
       localDateTime(first, timeZone),
       localDateTime(last, timeZone),
       elapsedLabel(first, last),

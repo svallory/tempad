@@ -12,7 +12,7 @@ import {
   type ClassifierWindow,
   validateResult,
 } from "../../src/w5/classifier";
-import { InvalidEvalRangeError, runEval } from "../../src/w5/eval";
+import { InvalidDeclareFileError, InvalidEvalRangeError, runEval } from "../../src/w5/eval";
 
 registerAllProjections();
 
@@ -882,5 +882,254 @@ describe("w5 eval", () => {
     });
 
     expect(metrics.tracesUnattributed).toBeGreaterThan(0);
+  });
+
+  test("a missing --declare file exits with InvalidDeclareFileError, not a raw crash", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-declare-missing-"));
+    const sourcePath = join(dir, "source.db");
+    seedSourceDb(sourcePath);
+
+    await expect(
+      runEval({
+        from: "2026-09-01",
+        to: "2026-09-02",
+        sourceDbPath: sourcePath,
+        scratchDir: dir,
+        now: "2026-09-02T00:00:00.000Z",
+        classifier: new FakeClassifier(),
+        log: () => {},
+        declareFile: join(dir, "does-not-exist.json"),
+      }),
+    ).rejects.toBeInstanceOf(InvalidDeclareFileError);
+  });
+
+  test("a malformed --declare file (bad JSON, or a non-array top level) exits with InvalidDeclareFileError", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-declare-malformed-"));
+    const sourcePath = join(dir, "source.db");
+    seedSourceDb(sourcePath);
+
+    const badJsonFile = join(dir, "bad.json");
+    writeFileSync(badJsonFile, "{ not valid json ]");
+
+    await expect(
+      runEval({
+        from: "2026-09-01",
+        to: "2026-09-02",
+        sourceDbPath: sourcePath,
+        scratchDir: dir,
+        now: "2026-09-02T00:00:00.000Z",
+        classifier: new FakeClassifier(),
+        log: () => {},
+        declareFile: badJsonFile,
+      }),
+    ).rejects.toBeInstanceOf(InvalidDeclareFileError);
+
+    const notArrayFile = join(dir, "not-array.json");
+    writeFileSync(notArrayFile, JSON.stringify({ session_id: "s1" }));
+
+    await expect(
+      runEval({
+        from: "2026-09-01",
+        to: "2026-09-02",
+        sourceDbPath: sourcePath,
+        scratchDir: dir,
+        now: "2026-09-02T00:00:01.000Z",
+        classifier: new FakeClassifier(),
+        log: () => {},
+        declareFile: notArrayFile,
+      }),
+    ).rejects.toBeInstanceOf(InvalidDeclareFileError);
+  });
+
+  test("a declaration for a session absent from the copy is logged and counted in declarationsSkipped", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-declare-unknown-session-"));
+    const sourcePath = join(dir, "source.db");
+    seedSourceDb(sourcePath);
+    const declareFile = join(dir, "declare.json");
+    writeFileSync(
+      declareFile,
+      JSON.stringify([
+        {
+          session_id: "does-not-exist",
+          at: "2026-09-01T09:00:00.000Z",
+          new: { title: "Ship p", objective: "ship it", commitment: "personal" },
+        },
+      ]),
+    );
+
+    const lines: string[] = [];
+    const metrics = await runEval({
+      from: "2026-09-01",
+      to: "2026-09-02",
+      sourceDbPath: sourcePath,
+      scratchDir: dir,
+      now: "2026-09-02T00:00:00.000Z",
+      classifier: new FakeClassifier(),
+      log: (line) => lines.push(line),
+      declareFile,
+    });
+
+    expect(metrics.declarationsSkipped).toBe(1);
+    expect(lines.some((line) => line.includes("does-not-exist"))).toBe(true);
+  });
+
+  test("attributeNonClaudeEvidence's tie rule ('latest declaration wins') applies through --declare when two sessions overlap", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-tie-"));
+    const sourcePath = join(dir, "source.db");
+    const database = openDatabase(sourcePath);
+    ensureTables(database);
+    const store = new EventStore(database);
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "hero.created",
+        subject: "H1",
+        payload: { name: "Saulo" },
+      }),
+    );
+    database
+      .query(
+        `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, title, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+         VALUES
+         ('s-early', '/c', 'p', '/c/p/s-early.jsonl', '/w/p', 'personal', 'p', 'early', 'main', '2026-09-01T09:00:00.000Z', '2026-09-01T12:00:00.000Z', 1, 0, '[]', 'host', '2026-09-01T12:00:00.000Z'),
+         ('s-late', '/c', 'p', '/c/p/s-late.jsonl', '/w/p', 'personal', 'p', 'late', 'main', '2026-09-01T10:00:00.000Z', '2026-09-01T12:00:00.000Z', 1, 0, '[]', 'host', '2026-09-01T12:00:00.000Z')`,
+      )
+      .run();
+    database
+      .query(
+        `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+         VALUES ('m1', 's-early', '2026-09-01T09:00:00.000Z', 'user', 0, 'do the thing')`,
+      )
+      .run();
+    database.close();
+
+    const declareFile = join(dir, "declare.json");
+    writeFileSync(
+      declareFile,
+      JSON.stringify([
+        {
+          session_id: "s-early",
+          at: "2026-09-01T09:00:00.000Z",
+          new: { title: "Early quest", objective: "early", commitment: "personal" },
+        },
+        {
+          session_id: "s-late",
+          at: "2026-09-01T10:00:00.000Z",
+          new: { title: "Late quest", objective: "late", commitment: "personal" },
+        },
+      ]),
+    );
+
+    const metrics = await runEval({
+      from: "2026-09-01",
+      to: "2026-09-02",
+      sourceDbPath: sourcePath,
+      scratchDir: dir,
+      now: "2026-09-02T00:00:00.000Z",
+      classifier: new FakeClassifier(),
+      log: () => {},
+      declareFile,
+    });
+
+    const { attributeNonClaudeEvidence } = await import("../../src/report/intent-queries");
+    const copied = openDatabase(metrics.copiedDbPath);
+    copied
+      .query(
+        `INSERT INTO gh_repos (full_name, org, is_personal, project) VALUES ('personal/p', 'personal', 1, 'p')`,
+      )
+      .run();
+    copied
+      .query(
+        `INSERT INTO gh_commits (sha, repo, branches, author_name, author_email, authored_at, committed_at, subject, files_changed, insertions, deletions)
+         VALUES ('cccccccc0000000000000000000000000000000', 'personal/p', '["main"]', 'A', 'a@example.com', '2026-09-01T11:00:00.000Z', '2026-09-01T11:00:00.000Z', 'tie test', 1, 1, 1)`,
+      )
+      .run();
+
+    const rows = attributeNonClaudeEvidence(copied, {
+      from: "2026-09-01",
+      to: "2026-09-02",
+      timeZone: "UTC",
+    });
+    const row = rows.find((r) => r.id === "cccccccc0000000000000000000000000000000");
+    expect(row?.questTitle).toBe("Late quest");
+    copied.close();
+  });
+
+  test("--declare passes through scope/parent_session_id/declared_by, and resolves new_ref/quest_ref across entries", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-refs-"));
+    const sourcePath = join(dir, "source.db");
+    seedSourceDb(sourcePath);
+    const declareFile = join(dir, "declare.json");
+    writeFileSync(
+      declareFile,
+      JSON.stringify([
+        {
+          session_id: "s1",
+          at: "2026-09-01T09:00:00.000Z",
+          new: { title: "Ship p", objective: "ship it", commitment: "personal" },
+          new_ref: "main-quest",
+        },
+        {
+          session_id: "s1-sub",
+          at: "2026-09-01T09:05:00.000Z",
+          quest_ref: "main-quest",
+          scope: "subagent",
+          parent_session_id: "s1",
+          declared_by: "agent",
+        },
+      ]),
+    );
+
+    const metrics = await runEval({
+      from: "2026-09-01",
+      to: "2026-09-02",
+      sourceDbPath: sourcePath,
+      scratchDir: dir,
+      now: "2026-09-02T00:00:00.000Z",
+      classifier: new FakeClassifier(),
+      log: () => {},
+      declareFile,
+    });
+
+    const { currentDeclaredQuestForSubagent } = await import("../../src/intent/declarations");
+    const copied = openDatabase(metrics.copiedDbPath);
+    const declared = currentDeclaredQuestForSubagent(copied, {
+      sessionId: "s1-sub",
+      parentSessionId: "s1",
+      at: "2026-09-01T09:10:00.000Z",
+    });
+    expect(declared?.title).toBe("Ship p");
+    copied.close();
+  });
+
+  test("--declare rejects an unknown quest_ref with InvalidDeclareFileError", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-refs-unknown-"));
+    const sourcePath = join(dir, "source.db");
+    seedSourceDb(sourcePath);
+    const declareFile = join(dir, "declare.json");
+    writeFileSync(
+      declareFile,
+      JSON.stringify([
+        {
+          session_id: "s1",
+          at: "2026-09-01T09:00:00.000Z",
+          quest_ref: "does-not-exist",
+        },
+      ]),
+    );
+
+    await expect(
+      runEval({
+        from: "2026-09-01",
+        to: "2026-09-02",
+        sourceDbPath: sourcePath,
+        scratchDir: dir,
+        now: "2026-09-02T00:00:00.000Z",
+        classifier: new FakeClassifier(),
+        log: () => {},
+        declareFile,
+      }),
+    ).rejects.toBeInstanceOf(InvalidDeclareFileError);
   });
 });

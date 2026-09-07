@@ -14,6 +14,7 @@ import type { Classifier } from "./classifier";
 registerAllProjections();
 
 export class InvalidEvalRangeError extends Error {}
+export class InvalidDeclareFileError extends Error {}
 
 const BARE_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -88,12 +89,21 @@ interface DeclareFileEntry {
   session_id: string;
   at: string;
   quest?: string;
+  quest_ref?: string;
   new?: {
     title: string;
     objective: string;
     commitment: "promised" | "personal" | "exploratory";
     project?: string;
   };
+  new_ref?: string;
+  scope?: "session" | "subagent";
+  parent_session_id?: string;
+  declared_by?: "agent" | "hero";
+}
+
+export interface DeclareFileResult {
+  declarationsSkipped: number;
 }
 
 /**
@@ -101,12 +111,41 @@ interface DeclareFileEntry {
  * each entry as a `quest.declared` (plus `quest.created` when `new` is
  * given) event against the copy -- so history can be evaluated in declared
  * mode without the source database ever holding hand-authored declarations.
+ *
+ * `new_ref`/`quest_ref` let one file create a quest in one entry and reuse
+ * it in a later entry, resolved in file order -- an unknown ref is a file
+ * error (`InvalidDeclareFileError`), same as a missing/malformed file.
+ *
+ * A `session_id` absent from the copy's `claude_sessions` still appends a
+ * `quest.declared` event (declarations are events, not FK-checked), but it
+ * can never resolve to any trace/window, so it is logged and counted in
+ * `declarationsSkipped` rather than silently accepted.
  */
-async function applyDeclareFile(database: Database, declareFilePath: string): Promise<void> {
-  const text = await Bun.file(declareFilePath).text();
-  const entries: DeclareFileEntry[] = declareFilePath.endsWith(".toml")
-    ? (Bun.TOML.parse(text) as DeclareFileEntry[])
-    : (JSON.parse(text) as DeclareFileEntry[]);
+async function applyDeclareFile(
+  database: Database,
+  declareFilePath: string,
+  log: (line: string) => void,
+): Promise<DeclareFileResult> {
+  let text: string;
+  try {
+    text = await Bun.file(declareFilePath).text();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new InvalidDeclareFileError(`--declare file could not be read: ${message}`);
+  }
+
+  let entries: DeclareFileEntry[];
+  try {
+    const parsed = declareFilePath.endsWith(".toml") ? Bun.TOML.parse(text) : JSON.parse(text);
+    if (!Array.isArray(parsed)) {
+      throw new InvalidDeclareFileError("--declare file must contain a JSON/TOML array");
+    }
+    entries = parsed as DeclareFileEntry[];
+  } catch (error) {
+    if (error instanceof InvalidDeclareFileError) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    throw new InvalidDeclareFileError(`--declare file is not valid JSON/TOML: ${message}`);
+  }
 
   const store = new EventStore(database);
 
@@ -125,10 +164,33 @@ async function applyDeclareFile(database: Database, declareFilePath: string): Pr
     hero = { id: heroId };
   }
 
+  const questIdByRef = new Map<string, string>();
+  let declarationsSkipped = 0;
+
   for (const entry of entries) {
-    declareQuest(store, database, {
+    let questId = entry.quest;
+    if (entry.quest_ref !== undefined) {
+      const resolved = questIdByRef.get(entry.quest_ref);
+      if (resolved === undefined) {
+        throw new InvalidDeclareFileError(`--declare file: unknown quest_ref "${entry.quest_ref}"`);
+      }
+      questId = resolved;
+    }
+
+    const session = database
+      .query("SELECT 1 FROM claude_sessions WHERE id = ?")
+      .get(entry.session_id);
+    if (!session) {
+      log(
+        `w5 eval: --declare entry for session "${entry.session_id}" has no matching session in the copy, declaration recorded but will not resolve to any trace`,
+      );
+      declarationsSkipped += 1;
+    }
+
+    const result = declareQuest(store, database, {
       sessionId: entry.session_id,
-      questId: entry.quest,
+      parentSessionId: entry.parent_session_id,
+      questId,
       newQuest: entry.new
         ? {
             title: entry.new.title,
@@ -138,12 +200,18 @@ async function applyDeclareFile(database: Database, declareFilePath: string): Pr
           }
         : undefined,
       plan: [],
-      scope: "session",
-      declaredBy: "hero",
+      scope: entry.scope ?? "session",
+      declaredBy: entry.declared_by ?? "hero",
       at: entry.at,
       heroId: hero.id,
     });
+
+    if (entry.new_ref !== undefined) {
+      questIdByRef.set(entry.new_ref, result.questId);
+    }
   }
+
+  return { declarationsSkipped };
 }
 
 export interface EvalSampleActivity {
@@ -167,6 +235,7 @@ export interface EvalMetrics {
   doubts: number;
   doubtsAnswered: number;
   tracesUnattributed: number;
+  declarationsSkipped: number;
   unknownActivityIds: number;
   overlapDropped: number;
   questProposedOnMatched: number;
@@ -340,8 +409,10 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
   const database = openDatabase(copiedDbPath);
   const intentConfig = defaultIntentConfig();
 
+  let declarationsSkipped = 0;
   if (options.declareFile) {
-    await applyDeclareFile(database, options.declareFile);
+    const declareResult = await applyDeclareFile(database, options.declareFile, options.log);
+    declarationsSkipped = declareResult.declarationsSkipped;
   }
 
   const resetResult = resetRange(database, range.from, range.to);
@@ -461,6 +532,7 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
     doubts: backfillResult.doubts,
     doubtsAnswered: doubtsAnsweredCount.count,
     tracesUnattributed: tracesUnattributedCount.count,
+    declarationsSkipped,
     unknownActivityIds: backfillResult.unknownActivityIds,
     overlapDropped: backfillResult.overlapDropped,
     questProposedOnMatched: backfillResult.questProposedOnMatched,

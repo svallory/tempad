@@ -2,8 +2,8 @@ import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
 import {
   queryActivities,
+  queryDoubtRows,
   queryQuests,
-  querySideQuestDoubts,
   querySideQuests,
   resolveIntentDatabase,
 } from "./intent-queries.ts";
@@ -112,6 +112,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
     const activities = queryActivities(intentDatabase, dayRangeOptions);
     const quests = queryQuests(intentDatabase, dayRangeOptions);
     const sideQuests = querySideQuests(intentDatabase, dayRangeOptions);
+    const doubtRows = queryDoubtRows(intentDatabase, dayRangeOptions);
 
     const hasEvidence = activities.length > 0 || quests.length > 0 || sideQuests.length > 0;
     if (!hasEvidence && isWeekend(day, timeZone)) continue;
@@ -161,11 +162,8 @@ function render(database: Database, config: Config, options: ReportOptions): str
         unconfirmedQuests: quests.filter(
           (row) => row.org === key.org && row.project === key.project && !row.confirmed,
         ).length,
-        doubts: querySideQuestDoubts(intentDatabase, {
-          ...dayRangeOptions,
-          org: key.org,
-          project: key.project,
-        }),
+        doubts: doubtRows.filter((row) => row.org === key.org && row.project === key.project)
+          .length,
       };
 
       rows.push(statsRow(projectKeyString(key), stats));
