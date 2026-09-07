@@ -453,4 +453,54 @@ describe("tempad review", () => {
     expect(code).toBe(0);
     expect(lines.some((line) => line.includes("T2"))).toBe(false);
   });
+
+  test("a custom --days widens or narrows the review window", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    insertStint(database, { id: "A1" });
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    database
+      .query(
+        `INSERT INTO traces
+          (id, stint_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at, doubt)
+          VALUES ('T4', 'A1', 'claude-code', 'p', 'session', ?, ?, 'hero', 'ten days ago', 'y', 'p', 'claude-code', 0.9, 'assistant', 's1', ?, 'a doubt')`,
+      )
+      .run(tenDaysAgo, tenDaysAgo, tenDaysAgo);
+
+    const defaultLines: string[] = [];
+    runReviewCommand([], {
+      database,
+      config: makeConfig(mkdtempSync(join(tmpdir(), "tempad-cli-test-"))),
+      intentConfig: defaultIntentConfig(),
+      stdout: (line) => defaultLines.push(line),
+    });
+    expect(defaultLines.some((line) => line.includes("T4"))).toBe(false);
+
+    const widerLines: string[] = [];
+    const code = runReviewCommand(["--days", "14"], {
+      database,
+      config: makeConfig(mkdtempSync(join(tmpdir(), "tempad-cli-test-"))),
+      intentConfig: defaultIntentConfig(),
+      stdout: (line) => widerLines.push(line),
+    });
+    expect(code).toBe(0);
+    expect(widerLines.some((line) => line.includes("T4"))).toBe(true);
+  });
+
+  test("rejects a non-positive-integer --days with a usage message and exit 2", () => {
+    for (const args of [["--days", "abc"], ["--days=-5"], ["--days", "0"], ["--days", "3.5"]]) {
+      const database = openDatabase(":memory:");
+      ensureTables(database);
+      const lines: string[] = [];
+      const code = runReviewCommand(args, {
+        database,
+        config: makeConfig(mkdtempSync(join(tmpdir(), "tempad-cli-test-"))),
+        intentConfig: defaultIntentConfig(),
+        stdout: (line) => lines.push(line),
+      });
+
+      expect(code).toBe(2);
+      expect(lines.some((line) => line.includes("usage"))).toBe(true);
+    }
+  });
 });

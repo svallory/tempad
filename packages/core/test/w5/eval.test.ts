@@ -1103,6 +1103,130 @@ describe("w5 eval", () => {
     expect(metrics.doubtsRecorded).toBe(metrics.doubts);
   });
 
+  test("doubts_recorded excludes a trace whose stint has since been dismissed, same filter as tempad review", async () => {
+    // Two messages far enough apart (> stintIdleMinutes, and > the 30-minute
+    // chunk window) that backfill classifies them as two separate windows of
+    // the same session: the first window's doubted segment is short (under
+    // stintMinMinutes), so by the time the second window starts,
+    // `closeIdleStints` closes and dismisses its stint below the minimum --
+    // exactly the "dismissed after carrying a doubt" scenario `tempad review`
+    // already excludes.
+    class DoubtThenDismissClassifier implements Classifier {
+      async classify(window: ClassifierWindow): Promise<ClassifierResult> {
+        const first = window.messages[0]?.ts ?? "2026-09-01T10:00:00.000Z";
+        const last = window.messages.at(-1)?.ts ?? first;
+        return {
+          segments: [
+            {
+              startedAt: first,
+              endedAt: last,
+              what: "work",
+              why: "ship",
+              belongs: false,
+              guess: "a side errand",
+              quest: null,
+              stint: "new: an unrelated errand",
+              isSwitch: false,
+              trigger: null,
+              confidence: 0.9,
+            },
+          ],
+          sessionNote: null,
+        };
+      }
+    }
+
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-doubts-dismissed-"));
+    const sourcePath = join(dir, "source.db");
+    const database = openDatabase(sourcePath);
+    ensureTables(database);
+    const store = new EventStore(database);
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "hero.created",
+        subject: "H1",
+        payload: { name: "Saulo" },
+      }),
+    );
+    database
+      .query(
+        `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, title, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+         VALUES ('s1', '/c', 'p', '/c/p/s1.jsonl', '/w/p', 'personal', 'p', 'p session', 'main', '2026-09-01T10:00:00.000Z', '2026-09-01T12:00:00.000Z', 2, 0, '[]', 'host', '2026-09-01T12:00:00.000Z')`,
+      )
+      .run();
+    database
+      .query(
+        `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+         VALUES ('m1', 's1', '2026-09-01T10:00:00.000Z', 'user', 0, 'do a short errand')`,
+      )
+      .run();
+    // One hour later: past both the 30-minute chunk window and the default
+    // 45-minute stint idle threshold, so this lands in a second window and
+    // `closeIdleStints` closes/dismisses the first window's short stint first.
+    database
+      .query(
+        `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+         VALUES ('m2', 's1', '2026-09-01T11:00:00.000Z', 'user', 0, 'a second unrelated errand')`,
+      )
+      .run();
+    database.close();
+
+    // Declared mode is what writes `belongs`/`guess` onto the trace at all
+    // (`traces.doubt` stays null in inference mode); a session that never
+    // declares falls back to inference during backfill.
+    const declareFile = join(dir, "declare.json");
+    writeFileSync(
+      declareFile,
+      JSON.stringify([
+        {
+          session_id: "s1",
+          at: "2026-09-01T09:00:00.000Z",
+          new: { title: "Ship p", outcome: "ship it", commitment: "personal" },
+        },
+      ]),
+    );
+
+    const metrics = await runEval({
+      from: "2026-09-01",
+      to: "2026-09-02",
+      sourceDbPath: sourcePath,
+      scratchDir: dir,
+      now: "2026-09-02T00:00:00.000Z",
+      classifier: new DoubtThenDismissClassifier(),
+      log: () => {},
+      declareFile,
+    });
+
+    const copied = openDatabase(metrics.copiedDbPath);
+    const dismissedDoubtedCount = (
+      copied
+        .query(
+          `SELECT COUNT(*) as count FROM traces t
+           JOIN stints s ON s.id = t.stint_id
+           WHERE t.doubt IS NOT NULL AND t.retracted_at IS NULL AND s.dismissed_at IS NOT NULL`,
+        )
+        .get() as { count: number }
+    ).count;
+    const liveDoubtedCount = (
+      copied
+        .query(
+          "SELECT COUNT(*) as count FROM traces WHERE doubt IS NOT NULL AND retracted_at IS NULL",
+        )
+        .get() as { count: number }
+    ).count;
+    copied.close();
+
+    // The scenario must actually produce a dismissed doubted trace, or this
+    // test would pass vacuously.
+    expect(dismissedDoubtedCount).toBeGreaterThan(0);
+    // doubts_recorded excludes it, exactly like tempad review's listing does:
+    // the count is strictly less than the raw (undismissed-blind) trace count.
+    expect(metrics.doubtsRecorded).toBe(liveDoubtedCount - dismissedDoubtedCount);
+    expect(metrics.doubtsRecorded).toBeLessThan(liveDoubtedCount);
+  });
+
   test("--declare leaves traces unattributed when the session never declares in that window", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tempad-eval-undeclared-"));
     const sourcePath = join(dir, "source.db");

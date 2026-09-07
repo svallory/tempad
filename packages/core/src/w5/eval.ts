@@ -494,8 +494,11 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
     .get(range.from, range.to) as { count: number };
   const doubtsRecordedCount = database
     .query(
-      `SELECT COUNT(*) as count FROM traces
-       WHERE doubt IS NOT NULL AND retracted_at IS NULL AND started_at >= ? AND started_at < ?`,
+      `SELECT COUNT(*) as count FROM traces t
+       JOIN stints s ON s.id = t.stint_id
+       WHERE t.doubt IS NOT NULL AND t.retracted_at IS NULL
+         AND s.dismissed_at IS NULL AND s.retracted_at IS NULL
+         AND t.started_at >= ? AND t.started_at < ?`,
     )
     .get(range.from, range.to) as { count: number };
   const tracesUnattributedCount = database
