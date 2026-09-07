@@ -26,7 +26,7 @@ export interface ClassifierWindow {
   /** Set only for a subagent session, from the parent's own declaration. */
   parentDeclaredQuest: DeclaredQuestSlice | null;
   /**
-   * alias -> real activity id, e.g. `{ A1: "01H..." }`. The model only ever sees
+   * alias -> real stint id, e.g. `{ A1: "01H..." }`. The model only ever sees
    * the alias, so there is no 26-character id for it to garble, and `apply.ts`
    * maps whatever it returns back through this map.
    */
@@ -38,7 +38,7 @@ export interface ClassifierWindow {
   openQuests?: {
     id: string;
     title: string;
-    aim: string | null;
+    outcome: string | null;
     lastStintAt: string | null;
   }[];
   sessionOpenStints: {
@@ -69,7 +69,7 @@ export interface ClassifierWindow {
 
 export interface DeclaredQuestSlice {
   title: string;
-  aim: string | null;
+  outcome: string | null;
   plan: string[];
 }
 
@@ -110,7 +110,7 @@ export interface ClassifierSegment {
    * absent in declared mode and only read on the fallback path.
    */
   matchedQuest?: string | null;
-  proposedQuest?: { title: string; aim: string; commitment: Commitment } | null;
+  proposedQuest?: { title: string; outcome: string; commitment: Commitment } | null;
   questions?: LegacyQuestionKind[];
 }
 
@@ -118,23 +118,23 @@ export interface ClassifierResult {
   segments: ClassifierSegment[];
   sessionNote: string | null;
   /**
-   * Segments that named none of the three activity selectors and were given a
-   * default `newActivityReason` instead of being rejected. Optional because a
+   * Segments that named none of the three stint selectors and were given a
+   * default `newStintReason` instead of being rejected. Optional because a
    * result built by hand (tests, a stub classifier) repaired nothing; only
    * `validateResult` ever sets it.
    */
   selectorDefaulted?: number;
   /**
    * Segments that named more than one selector and were narrowed to the first by
-   * precedence (matchedActivity > continuesActivity > newActivityReason).
+   * precedence (matchedStint > continuesStint > newStintReason).
    */
   selectorAmbiguous?: number;
 }
 
 export const MAX_SESSION_NOTE_LENGTH = 300;
 
-/** Stands in for a `newActivityReason` the classifier omitted entirely. */
-export const DEFAULT_NEW_ACTIVITY_REASON = "classifier gave no reason";
+/** Stands in for a `newStintReason` the classifier omitted entirely. */
+export const DEFAULT_NEW_STINT_REASON = "classifier gave no reason";
 
 /**
  * Optional fields a model routinely omits rather than sending as `null`. JSON has
@@ -147,9 +147,9 @@ const NULLABLE_SEGMENT_FIELDS = [
   "guess",
   "matchedQuest",
   "proposedQuest",
-  "matchedActivity",
-  "continuesActivity",
-  "newActivityReason",
+  "matchedStint",
+  "continuesStint",
+  "newStintReason",
   "trigger",
 ] as const;
 
@@ -242,14 +242,14 @@ function validateSegment(
   ) {
     problems.push(`${where}.matchedQuest: expected string or null`);
   }
-  if (segment.matchedActivity !== null && typeof segment.matchedActivity !== "string") {
-    problems.push(`${where}.matchedActivity: expected string or null`);
+  if (segment.matchedStint !== null && typeof segment.matchedStint !== "string") {
+    problems.push(`${where}.matchedStint: expected string or null`);
   }
-  if (segment.continuesActivity !== null && typeof segment.continuesActivity !== "string") {
-    problems.push(`${where}.continuesActivity: expected string or null`);
+  if (segment.continuesStint !== null && typeof segment.continuesStint !== "string") {
+    problems.push(`${where}.continuesStint: expected string or null`);
   }
-  if (segment.newActivityReason !== null && typeof segment.newActivityReason !== "string") {
-    problems.push(`${where}.newActivityReason: expected string or null`);
+  if (segment.newStintReason !== null && typeof segment.newStintReason !== "string") {
+    problems.push(`${where}.newStintReason: expected string or null`);
   }
 
   // An alias the window never offered resolves to nothing, exactly as a
@@ -257,11 +257,11 @@ function validateSegment(
   // existing selector repair below re-defaults the segment, rather than adding a
   // third counter for the same failure.
   if (aliases !== null) {
-    if (typeof segment.matchedActivity === "string" && !aliases.has(segment.matchedActivity)) {
-      segment.matchedActivity = null;
+    if (typeof segment.matchedStint === "string" && !aliases.has(segment.matchedStint)) {
+      segment.matchedStint = null;
     }
-    if (typeof segment.continuesActivity === "string" && !aliases.has(segment.continuesActivity)) {
-      segment.continuesActivity = null;
+    if (typeof segment.continuesStint === "string" && !aliases.has(segment.continuesStint)) {
+      segment.continuesStint = null;
     }
   }
 
@@ -269,20 +269,18 @@ function validateSegment(
   // several is repaired rather than rejected: failing the window loses a real
   // stretch of work over a formatting slip, and both repairs are counted so the
   // run summary shows how often the model is missing the rule.
-  const selectors = [
-    segment.matchedActivity,
-    segment.continuesActivity,
-    segment.newActivityReason,
-  ].filter((candidate) => candidate !== null);
+  const selectors = [segment.matchedStint, segment.continuesStint, segment.newStintReason].filter(
+    (candidate) => candidate !== null,
+  );
   if (selectors.length === 0) {
-    segment.newActivityReason = DEFAULT_NEW_ACTIVITY_REASON;
+    segment.newStintReason = DEFAULT_NEW_STINT_REASON;
     counters.selectorDefaulted += 1;
   } else if (selectors.length > 1) {
-    if (segment.matchedActivity !== null) {
-      segment.continuesActivity = null;
-      segment.newActivityReason = null;
+    if (segment.matchedStint !== null) {
+      segment.continuesStint = null;
+      segment.newStintReason = null;
     } else {
-      segment.newActivityReason = null;
+      segment.newStintReason = null;
     }
     counters.selectorAmbiguous += 1;
   }
@@ -299,7 +297,7 @@ function validateSegment(
     } else {
       const proposed = segment.proposedQuest as Record<string, unknown>;
       requireString(proposed.title, `${where}.proposedQuest.title`, problems);
-      requireString(proposed.objective, `${where}.proposedQuest.objective`, problems);
+      requireString(proposed.outcome, `${where}.proposedQuest.outcome`, problems);
       if (!COMMITMENTS.has(proposed.commitment as Commitment)) {
         problems.push(`${where}.proposedQuest.commitment: expected promised|personal|exploratory`);
       }

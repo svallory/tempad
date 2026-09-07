@@ -22,10 +22,10 @@ export interface BuildWindowInput {
   overlapMessages: number;
   /**
    * The last message timestamp of the window being classified. Candidate
-   * activities must have opened strictly before it: backfill walks history, so
-   * without this bound a window on Sept 1 is offered activities opened on Sept 3
+   * stints must have opened strictly before it: backfill walks history, so
+   * without this bound a window on Sept 1 is offered stints opened on Sept 3
    * by a session processed earlier, the classifier matches them, and the traces
-   * it records land before their activity's `opened_at` -- negative durations,
+   * it records land before their stint's `opened_at` -- negative durations,
    * and a `continues` link that can never fire. Omitted (or null) means "now",
    * which is what a live run wants: nothing in the database is in its future.
    */
@@ -49,26 +49,26 @@ interface StintRow {
 }
 
 /**
- * An activity plus the `what`/`why` of its latest live trace and its last trace's
- * `ended_at`. `traces.session_id` decides which session an activity belongs to.
+ * A stint plus the `what`/`why` of its latest live trace and its last trace's
+ * `ended_at`. `traces.session_id` decides which session a stint belongs to.
  */
 const ACTIVITY_SLICE_SELECT = `
-  SELECT activities.id as activityId,
+  SELECT stints.id as stintId,
          latest.what as what,
          latest.why as why,
-         activities.quest_id as questId,
+         stints.quest_id as questId,
          quests.title as questTitle,
-         activities.opened_at as openedAt,
+         stints.opened_at as openedAt,
          latest.ended_at as lastTraceEndedAt,
-         activities.closed_at as closedAt,
-         activities.close_reason as closeReason
-    FROM activities
+         stints.closed_at as closedAt,
+         stints.close_reason as closeReason
+    FROM stints
     JOIN traces latest ON latest.id = (
            SELECT traces.id FROM traces
-            WHERE traces.activity_id = activities.id AND traces.retracted_at IS NULL
+            WHERE traces.stint_id = stints.id AND traces.retracted_at IS NULL
             ORDER BY traces.ended_at DESC LIMIT 1)
-    LEFT JOIN quests ON quests.id = activities.quest_id
-   WHERE activities.retracted_at IS NULL`;
+    LEFT JOIN quests ON quests.id = stints.quest_id
+   WHERE stints.retracted_at IS NULL`;
 
 /**
  * The `parent_session_id` on the session's latest declaration at `at`, or null
@@ -99,7 +99,7 @@ function latestDeclaredParentSessionId(
 
 function toSlice(declared: DeclaredQuest | null): DeclaredQuestSlice | null {
   if (declared === null) return null;
-  return { title: declared.title, aim: declared.aim, plan: declared.plan };
+  return { title: declared.title, outcome: declared.outcome, plan: declared.plan };
 }
 
 export function buildWindow(database: Database, input: BuildWindowInput): ClassifierWindow {
@@ -147,10 +147,10 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
     mode === "inferred"
       ? (database
           .query(
-            `SELECT quests.id as id, quests.title as title, quests.objective as objective,
+            `SELECT quests.id as id, quests.title as title, quests.outcome as outcome,
               (SELECT MAX(traces.started_at) FROM traces
-                 JOIN activities ON activities.id = traces.activity_id
-                WHERE activities.quest_id = quests.id) as lastActivityAt
+                 JOIN stints ON stints.id = traces.stint_id
+                WHERE stints.quest_id = quests.id) as lastStintAt
          FROM quests
         WHERE quests.state IN ('started', 'resumed')
           AND quests.merged_into IS NULL
@@ -162,22 +162,22 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
           .all(session.org) as {
           id: string;
           title: string;
-          aim: string | null;
+          outcome: string | null;
           lastStintAt: string | null;
         }[])
       : undefined;
 
-  // An activity opened after this window ended did not exist yet when the window
+  // A stint opened after this window ended did not exist yet when the window
   // happened, so it is never a candidate -- see `windowEnd` on `BuildWindowInput`.
   const windowEnd = input.windowEnd ?? new Date().toISOString();
 
   const sessionOpenStints = database
     .query(
       `${ACTIVITY_SLICE_SELECT}
-         AND activities.closed_at IS NULL
-         AND activities.opened_at < ?
+         AND stints.closed_at IS NULL
+         AND stints.opened_at < ?
          AND latest.session_id = ?
-       ORDER BY activities.opened_at ASC`,
+       ORDER BY stints.opened_at ASC`,
     )
     .all(windowEnd, input.sessionId) as (StintRow & {
     closedAt: string | null;
@@ -191,19 +191,19 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
     Date.parse(referenceTime) - input.memoryHours * 60 * 60 * 1000,
   ).toISOString();
 
-  // Closed activities of *this* session belong here too: an idle gap mid-session
-  // closes an activity, and returning to it afterwards is exactly a `continues`
-  // link. Still-open ones are already in `sessionOpenActivities`, so no activity
+  // Closed stints of *this* session belong here too: an idle gap mid-session
+  // closes a stint, and returning to it afterwards is exactly a `continues`
+  // link. Still-open ones are already in `sessionOpenActivities`, so no stint
   // appears in both slices.
   const recentStints = database
     .query(
       `${ACTIVITY_SLICE_SELECT}
-         AND activities.opened_at < ?
-         AND (activities.closed_at IS NULL OR activities.closed_at >= ?)
-         AND (activities.opened_at >= ? OR activities.closed_at >= ?)
-         AND (latest.session_id != ? OR activities.closed_at IS NOT NULL)
+         AND stints.opened_at < ?
+         AND (stints.closed_at IS NULL OR stints.closed_at >= ?)
+         AND (stints.opened_at >= ? OR stints.closed_at >= ?)
+         AND (latest.session_id != ? OR stints.closed_at IS NOT NULL)
          AND latest.place = ?
-       ORDER BY COALESCE(activities.closed_at, activities.opened_at) DESC
+       ORDER BY COALESCE(stints.closed_at, stints.opened_at) DESC
        LIMIT ?`,
     )
     .all(
@@ -222,7 +222,7 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
           .query(
             `SELECT quests.id as id, quests.title as title, quests.trigger as trigger
          FROM quests
-        WHERE quests.origin_activity_id IS NOT NULL
+        WHERE quests.deviates_from_stint_id IS NOT NULL
           AND quests.trigger IS NOT NULL
           AND quests.retracted_at IS NULL
           AND (
@@ -295,8 +295,8 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
 
   // Aliases are assigned over both slices in the order they are listed, so the
   // prompt never carries a 26-character id for the model to garble; `apply.ts`
-  // maps whatever alias comes back through `activityAliases`.
-  // Inference mode is the pre-verifier path end to end: `apply.ts` looks activity
+  // maps whatever alias comes back through `stintAliases`.
+  // Inference mode is the pre-verifier path end to end: `apply.ts` looks stint
   // ids up directly there, so the slice must keep carrying real ids. Aliasing is
   // declared mode's scheme alone.
   const stintAliases: Record<string, string> = {};

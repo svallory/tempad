@@ -3,7 +3,7 @@
 ### acme/widgets
 Elapsed is an upper bound.
 
-| task | first evidence | last evidence | elapsed (upper bound) | commits | sessions | activities | side-quest minutes |
+| quest | first evidence | last evidence | elapsed (upper bound) | commits | sessions | stints | side-quest minutes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Polish the report output (inferred) | 2026-09-01 09:15 | 2026-09-01 10:45 | 1h 30m | - | - | 1 | 0h 20m |
 | Investigate flaky commit grouping [unconfirmed] (inferred) | 2026-09-01 09:40 | 2026-09-01 10:00 | 0h 20m | - | - | 1 | 0h 0m |
@@ -14,6 +14,6 @@ side quests: 1, 0h 20m (18% of project time)
 ### monday/beta-project
 Elapsed is an upper bound.
 
-| task | first evidence | last evidence | elapsed (upper bound) | commits | sessions | activities | side-quest minutes |
+| quest | first evidence | last evidence | elapsed (upper bound) | commits | sessions | stints | side-quest minutes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Ship report polish | 2026-09-01 | 2026-09-02 | 24h 0m | 0 | 0 | - | - |

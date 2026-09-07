@@ -70,8 +70,8 @@ export function seedReportFixtures(database: Database): void {
 
 /**
  * Intent-layer fixtures for report tests: one confirmed quest with one
- * activity, one unconfirmed side quest branched from that activity with its
- * own activity, three traces (two under the main activity, one under the
+ * stint, one unconfirmed side quest branched from that stint with its
+ * own stint, three traces (two under the main stint, one under the
  * side quest, all linked to session-1 so they resolve to acme/widgets), and
  * one expired question on the side quest's trace.
  *
@@ -84,39 +84,39 @@ function seedIntentFixtures(database: Database): void {
   ensureTables(database);
 
   database.exec(
-    `INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at)
+    `INSERT INTO quests (id, owner_kind, owner_id, title, outcome, confirmed, revision, state, created_at)
      VALUES ('quest-1', 'hero', 'hero-1', 'Polish the report output', 'make golden reports byte-exact', 1, 1, 'started', '2026-09-01T12:00:00.000Z')`,
   );
 
   database.exec(
-    `INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, origin_activity_id, branched_at, trigger, branch_kind, created_at)
-     VALUES ('quest-2', 'hero', 'hero-1', 'Investigate flaky commit grouping', 'commits with the same subject werent deduping', 0, 1, 'started', 'activity-1', '2026-09-01T12:40:00.000Z', 'noticed duplicate rebased commits during polish work', 'side', '2026-09-01T12:40:00.000Z')`,
+    `INSERT INTO quests (id, owner_kind, owner_id, title, outcome, confirmed, revision, state, deviates_from_stint_id, branched_at, trigger, branch_kind, created_at)
+     VALUES ('quest-2', 'hero', 'hero-1', 'Investigate flaky commit grouping', 'commits with the same subject werent deduping', 0, 1, 'started', 'stint-1', '2026-09-01T12:40:00.000Z', 'noticed duplicate rebased commits during polish work', 'side', '2026-09-01T12:40:00.000Z')`,
   );
 
   database.exec(
-    `INSERT INTO activities (id, quest_id, objective, opened_at, closed_at, outcome, revision)
-     VALUES ('activity-1', 'quest-1', 'polish daily/hourly report output', '2026-09-01T12:15:00.000Z', '2026-09-01T13:45:00.000Z', 'shipped', 1)`,
+    `INSERT INTO stints (id, quest_id, outcome, opened_at, closed_at, revision)
+     VALUES ('stint-1', 'quest-1', 'polish daily/hourly report output', '2026-09-01T12:15:00.000Z', '2026-09-01T13:45:00.000Z', 1)`,
   );
 
   database.exec(
-    `INSERT INTO activities (id, quest_id, objective, opened_at, closed_at, outcome, revision)
-     VALUES ('activity-2', 'quest-2', 'investigate rebased commit dedup', '2026-09-01T12:40:00.000Z', '2026-09-01T13:00:00.000Z', NULL, 1)`,
+    `INSERT INTO stints (id, quest_id, outcome, opened_at, closed_at, revision)
+     VALUES ('stint-2', 'quest-2', 'investigate rebased commit dedup', '2026-09-01T12:40:00.000Z', '2026-09-01T13:00:00.000Z', 1)`,
   );
 
   database.exec(
-    `INSERT INTO traces (id, activity_id, tool, place, source, source_ref, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+    `INSERT INTO traces (id, stint_id, tool, place, source, source_ref, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
      VALUES
-     ('trace-1', 'activity-1', 'edit', '/Users/octocat/work/acme/widgets', 'session', 'session-1', '2026-09-01T12:15:00.000Z', '2026-09-01T12:40:00.000Z', 'hero-1', 'edited queries.ts', 'polishing report output', '/Users/octocat/work/acme/widgets', 'assistant edit', 0.9, 'model', 'session-1', '2026-09-01T12:40:00.000Z'),
-     ('trace-2', 'activity-1', 'edit', '/Users/octocat/work/acme/widgets', 'session', 'session-1', '2026-09-01T13:00:00.000Z', '2026-09-01T13:45:00.000Z', 'hero-1', 'edited markdown.ts', 'polishing report output', '/Users/octocat/work/acme/widgets', 'assistant edit', 0.9, 'model', 'session-1', '2026-09-01T13:45:00.000Z'),
-     ('trace-3', 'activity-2', 'edit', '/Users/octocat/work/acme/widgets', 'session', 'session-1', '2026-09-01T12:40:00.000Z', '2026-09-01T13:00:00.000Z', 'hero-1', 'investigated commit grouping', 'unclear whether this needed its own quest', '/Users/octocat/work/acme/widgets', 'assistant edit', 0.4, 'model', 'session-1', '2026-09-01T13:00:00.000Z')`,
+     ('trace-1', 'stint-1', 'edit', '/Users/octocat/work/acme/widgets', 'session', 'session-1', '2026-09-01T12:15:00.000Z', '2026-09-01T12:40:00.000Z', 'hero-1', 'edited queries.ts', 'polishing report output', '/Users/octocat/work/acme/widgets', 'assistant edit', 0.9, 'model', 'session-1', '2026-09-01T12:40:00.000Z'),
+     ('trace-2', 'stint-1', 'edit', '/Users/octocat/work/acme/widgets', 'session', 'session-1', '2026-09-01T13:00:00.000Z', '2026-09-01T13:45:00.000Z', 'hero-1', 'edited markdown.ts', 'polishing report output', '/Users/octocat/work/acme/widgets', 'assistant edit', 0.9, 'model', 'session-1', '2026-09-01T13:45:00.000Z'),
+     ('trace-3', 'stint-2', 'edit', '/Users/octocat/work/acme/widgets', 'session', 'session-1', '2026-09-01T12:40:00.000Z', '2026-09-01T13:00:00.000Z', 'hero-1', 'investigated commit grouping', 'unclear whether this needed its own quest', '/Users/octocat/work/acme/widgets', 'assistant edit', 0.4, 'model', 'session-1', '2026-09-01T13:00:00.000Z')`,
   );
 
   database.exec(
-    `INSERT INTO trace_links (trace_id, activity_id, linked_at, superseded_at, reason)
+    `INSERT INTO trace_links (trace_id, stint_id, linked_at, superseded_at, reason)
      VALUES
-     ('trace-1', 'activity-1', '2026-09-01T12:40:00.000Z', NULL, NULL),
-     ('trace-2', 'activity-1', '2026-09-01T13:45:00.000Z', NULL, NULL),
-     ('trace-3', 'activity-2', '2026-09-01T13:00:00.000Z', NULL, NULL)`,
+     ('trace-1', 'stint-1', '2026-09-01T12:40:00.000Z', NULL, NULL),
+     ('trace-2', 'stint-1', '2026-09-01T13:45:00.000Z', NULL, NULL),
+     ('trace-3', 'stint-2', '2026-09-01T13:00:00.000Z', NULL, NULL)`,
   );
 
   database.exec(

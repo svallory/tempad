@@ -252,9 +252,9 @@ describe("backfill", () => {
       database,
       store.append({
         actor: "hook",
-        kind: "activity.opened",
+        kind: "stint.opened",
         subject: "A1",
-        payload: { aim: "work" },
+        payload: { outcome: "work" },
         at: "2026-09-04T15:05:00.000Z",
       }),
     );
@@ -413,11 +413,11 @@ describe("backfill", () => {
     expect(result.windowsClassified).toBe(0);
   });
 
-  test("each chunk gets a fresh slice: chunk 2 sees chunk 1's activity and chunk 1's session note", async () => {
+  test("each chunk gets a fresh slice: chunk 2 sees chunk 1's stint and chunk 1's session note", async () => {
     const database = openDatabase(":memory:");
     seedHero(database);
     // Two chunks: more than throttleMinutes * 3 = 30 minutes apart so chunkByWindow
-    // splits them, but less than activityIdleMinutes = 45 apart so chunk 1's activity
+    // splits them, but less than activityIdleMinutes = 45 apart so chunk 1's stint
     // is still open when chunk 2 is classified.
     seedSession(database, {
       id: "s1",
@@ -483,15 +483,15 @@ describe("backfill", () => {
     expect(classifier.seen[0]?.openStints).toEqual([]);
     expect(classifier.seen[0]?.previousSessionNote).toBeNull();
 
-    const stint = database.query("SELECT id FROM activities").get() as { id: string };
+    const stint = database.query("SELECT id FROM stints").get() as { id: string };
     // This session declares nothing, so backfill falls back to inference mode,
     // where the slice keeps real ids and no alias map is built.
     expect(classifier.seen[1]?.openStints).toEqual([stint.id]);
     expect(classifier.seen[1]?.aliases).toEqual({});
     expect(classifier.seen[1]?.previousSessionNote).toBe("note from chunk 1");
 
-    // Chunk 2 reused chunk 1's activity rather than opening a second one.
-    const stintCount = database.query("SELECT COUNT(*) as count FROM activities").get() as {
+    // Chunk 2 reused chunk 1's stint rather than opening a second one.
+    const stintCount = database.query("SELECT COUNT(*) as count FROM stints").get() as {
       count: number;
     };
     expect(stintCount.count).toBe(1);
@@ -743,7 +743,7 @@ describe("backfill and declared quests", () => {
               matchedQuest: null,
               proposedQuest: {
                 title: "Inferred quest",
-                aim: "guessed from the transcript",
+                outcome: "guessed from the transcript",
                 commitment: "exploratory",
               },
               matchedStint: null,
@@ -790,7 +790,7 @@ describe("backfill and declared quests", () => {
     expect(
       (database.query("SELECT COUNT(*) as count FROM quests").get() as { count: number }).count,
     ).toBe(0);
-    const stints = database.query("SELECT quest_id as questId FROM activities").all() as {
+    const stints = database.query("SELECT quest_id as questId FROM stints").all() as {
       questId: string | null;
     }[];
     expect(stints.length).toBeGreaterThan(0);
@@ -810,7 +810,7 @@ describe("backfill and declared quests", () => {
     const hero = database.query("SELECT id FROM heroes").get() as { id: string };
     database
       .query(
-        `INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at, origin_kind)
+        `INSERT INTO quests (id, owner_kind, owner_id, title, outcome, confirmed, revision, state, created_at, origin_kind)
          VALUES ('Q1', 'hero', ?, 'Declared quest', 'stated up front', 1, 1, 'started', '2026-09-01T00:00:00.000Z', 'declared')`,
       )
       .run(hero.id);

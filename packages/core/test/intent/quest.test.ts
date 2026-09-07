@@ -17,18 +17,18 @@ function harness() {
 }
 
 describe("quests", () => {
-  test("add with budget and goal, lifecycle events change state", async () => {
+  test("add with budget and saga, lifecycle events change state", async () => {
     const { run, database } = harness();
     await run(["hero", "init", "S"]);
-    await run(["goal", "add", "--owner", "hero", "G"]);
-    const saga = database.query("SELECT id FROM goals").get() as { id: string };
+    await run(["saga", "add", "--owner", "hero", "G"]);
+    const saga = database.query("SELECT id FROM sagas").get() as { id: string };
     expect(
       await run([
         "quest",
         "add",
         "--owner",
         "hero",
-        "--goal",
+        "--serves",
         saga.id,
         "Ship marko-ui",
         "--budget",
@@ -74,7 +74,7 @@ describe("quests", () => {
         "quest",
         "branch",
         side.id,
-        "--from-activity",
+        "--deviates-from",
         "01ARZ3NDEKTSV4RRFFQ69G5FAV",
         "--trigger",
         "what does Astryx do for agents?",
@@ -84,15 +84,15 @@ describe("quests", () => {
     ).toBe(0);
     const row = database
       .query(
-        "SELECT origin_activity_id, trigger, branch_kind, returned_at FROM quests WHERE id = ?",
+        "SELECT deviates_from_stint_id, trigger, branch_kind, returned_at FROM quests WHERE id = ?",
       )
       .get(side.id) as {
-      origin_activity_id: string;
+      deviates_from_stint_id: string;
       trigger: string;
       branch_kind: string;
       returned_at: string | null;
     };
-    expect(row.origin_activity_id).toBe("01ARZ3NDEKTSV4RRFFQ69G5FAV");
+    expect(row.deviates_from_stint_id).toBe("01ARZ3NDEKTSV4RRFFQ69G5FAV");
     expect(row.branch_kind).toBe("curiosity");
     expect(row.returned_at).toBeNull();
     expect(await run(["quest", "return", side.id, "--to", main.id])).toBe(0);
@@ -139,7 +139,7 @@ describe("quests", () => {
     expect(lines.some((line) => line.startsWith(`${b?.id}  `))).toBe(true);
   });
 
-  test("assigning an activity to a merged quest resolves through the merge", async () => {
+  test("assigning a stint to a merged quest resolves through the merge", async () => {
     const { run, database } = harness();
     await run(["hero", "init", "S"]);
     await run(["quest", "add", "--owner", "hero", "A"]);
@@ -150,7 +150,7 @@ describe("quests", () => {
     const { askQuestion, openStint, recordTrace } = await import("../../src/intent/api");
     const { EventStore } = await import("../../src/intent/store");
     const store = new EventStore(database);
-    const stint = openStint(store, database, { aim: "work", actor: "hook" });
+    const stint = openStint(store, database, { outcome: "work", actor: "hook" });
     const trace = recordTrace(store, database, {
       stint,
       tool: "claude-code",
@@ -175,23 +175,24 @@ describe("quests", () => {
       actor: "hook",
     });
     expect(await run(["answer", question, "--quest", b?.id ?? ""])).toBe(0);
-    const row = database.query("SELECT quest_id FROM activities WHERE id = ?").get(stint) as {
+    const row = database.query("SELECT quest_id FROM stints WHERE id = ?").get(stint) as {
       quest_id: string;
     };
     expect(row.quest_id).toBe(a?.id ?? "");
   });
 
-  test("reword without --objective keeps the existing objective (no NULL write)", async () => {
+  test("reword without --outcome keeps the existing outcome (no NULL write)", async () => {
     const { run, database } = harness();
     await run(["hero", "init", "S"]);
-    await run(["quest", "add", "--owner", "hero", "Q", "--objective", "Original objective"]);
+    await run(["quest", "add", "--owner", "hero", "Q", "--outcome", "Original outcome"]);
     const quest = database.query("SELECT id FROM quests").get() as { id: string };
     expect(await run(["quest", "reword", quest.id, "New title"])).toBe(0);
-    const row = database
-      .query("SELECT title, objective FROM quests WHERE id = ?")
-      .get(quest.id) as { title: string; aim: string | null };
+    const row = database.query("SELECT title, outcome FROM quests WHERE id = ?").get(quest.id) as {
+      title: string;
+      outcome: string | null;
+    };
     expect(row.title).toBe("New title");
-    expect(row.aim).toBe("Original objective");
+    expect(row.outcome).toBe("Original outcome");
   });
 
   test("unknown quest id: confirm/pause/resume/done/abandon/branch/return fail without appending events", async () => {
@@ -205,7 +206,7 @@ describe("quests", () => {
     expect(await run(["quest", "done", "nope"])).toBe(1);
     expect(await run(["quest", "abandon", "nope"])).toBe(1);
     expect(
-      await run(["quest", "branch", "nope", "--from-activity", "act1", "--trigger", "t"]),
+      await run(["quest", "branch", "nope", "--deviates-from", "act1", "--trigger", "t"]),
     ).toBe(1);
     expect(await run(["quest", "return", "nope", "--to", "alsonope"])).toBe(1);
 
@@ -263,7 +264,7 @@ describe("quests", () => {
     const { askQuestion, openStint, recordTrace } = await import("../../src/intent/api");
     const { EventStore } = await import("../../src/intent/store");
     const store = new EventStore(database);
-    const stint = openStint(store, database, { aim: "work", actor: "hook" });
+    const stint = openStint(store, database, { outcome: "work", actor: "hook" });
     const trace = recordTrace(store, database, {
       stint,
       tool: "claude-code",
@@ -303,9 +304,9 @@ describe("quests", () => {
     expect(payload.quest).toBe(newQuest.id);
     expect(payload.quest.startsWith("new:")).toBe(false);
 
-    const stintRow = database
-      .query("SELECT quest_id FROM activities WHERE id = ?")
-      .get(stint) as { quest_id: string };
+    const stintRow = database.query("SELECT quest_id FROM stints WHERE id = ?").get(stint) as {
+      quest_id: string;
+    };
     expect(stintRow.quest_id).toBe(newQuest.id);
   });
 
@@ -340,7 +341,7 @@ describe("quests", () => {
       "s1",
       "--new",
       "Ship the thing",
-      "--objective",
+      "--outcome",
       "get it out",
     ]);
     expect(exitCode).toBe(0);
@@ -364,7 +365,7 @@ describe("quests", () => {
       "s1",
       "--new",
       "Side thing",
-      "--objective",
+      "--outcome",
       "investigate",
       "--origin",
       "some-quest-id",

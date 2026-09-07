@@ -17,17 +17,17 @@ function seed(database: ReturnType<typeof openDatabase>) {
   );
   database
     .query(
-      "INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at) VALUES ('Q1', 'hero', ?, 'Ship', 'obj', 0, 1, 'started', '2026-09-01T00:00:00.000Z')",
+      "INSERT INTO quests (id, owner_kind, owner_id, title, outcome, confirmed, revision, state, created_at) VALUES ('Q1', 'hero', ?, 'Ship', 'obj', 0, 1, 'started', '2026-09-01T00:00:00.000Z')",
     )
     .run(heroId);
   database
     .query(
-      "INSERT INTO activities (id, quest_id, objective, opened_at, revision) VALUES ('A1', 'Q1', 'do work', '2026-09-04T14:00:00.000Z', 1)",
+      "INSERT INTO stints (id, quest_id, outcome, opened_at, revision) VALUES ('A1', 'Q1', 'do work', '2026-09-04T14:00:00.000Z', 1)",
     )
     .run();
   database
     .query(
-      `INSERT INTO traces (id, activity_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+      `INSERT INTO traces (id, stint_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
        VALUES ('T1', 'A1', 'claude-code', 'p', 'session', '2026-09-04T14:00:00.000Z', '2026-09-04T14:30:00.000Z', 'hero', 'work', 'ship', 'personal/p', 'claude-code', 0.9, 'assistant', 's1', '2026-09-04T14:30:00.000Z')`,
     )
     .run();
@@ -53,13 +53,13 @@ describe("retracted events", () => {
     };
     expect(trace.retracted_at).not.toBeNull();
 
-    const stint = database
-      .query("SELECT retracted_at FROM activities WHERE id = 'A1'")
-      .get() as { retracted_at: string | null };
+    const stint = database.query("SELECT retracted_at FROM stints WHERE id = 'A1'").get() as {
+      retracted_at: string | null;
+    };
     expect(stint.retracted_at).toBeNull();
   });
 
-  test("a retracted activity.opened marks the activity row retracted_at", () => {
+  test("a retracted stint.opened marks the stint row retracted_at", () => {
     const database = openDatabase(":memory:");
     const store = seed(database);
     applyIncremental(
@@ -72,9 +72,9 @@ describe("retracted events", () => {
       }),
     );
 
-    const stint = database
-      .query("SELECT retracted_at FROM activities WHERE id = 'A1'")
-      .get() as { retracted_at: string | null };
+    const stint = database.query("SELECT retracted_at FROM stints WHERE id = 'A1'").get() as {
+      retracted_at: string | null;
+    };
     expect(stint.retracted_at).not.toBeNull();
   });
 
@@ -115,9 +115,9 @@ describe("retracted events", () => {
       database,
       store.append({
         actor: "hook",
-        kind: "activity.opened",
+        kind: "stint.opened",
         subject: "A1",
-        payload: { aim: "do work" },
+        payload: { outcome: "do work" },
         at: "2026-09-04T14:00:00.000Z",
       }),
     );

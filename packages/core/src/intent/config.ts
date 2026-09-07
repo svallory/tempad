@@ -69,7 +69,47 @@ function requireString(record: Record<string, unknown>, key: string, where: stri
   return value;
 }
 
-export function loadIntentConfig(tomlPath: string): IntentConfig {
+/**
+ * Old `[w5]` key -> current key, for configs written before the 2026-09-07
+ * vocabulary rename. Unlike events, a TOML file is hand-edited and lives
+ * outside the repository, so it is read through this alias rather than
+ * migrated: an operator's existing `tempad.toml` keeps working, and the
+ * warning tells them what to rename it to.
+ */
+const LEGACY_W5_KEYS: Readonly<Record<string, string>> = {
+  ask_min_activity_minutes: "ask_min_stint_minutes",
+  activity_idle_minutes: "stint_idle_minutes",
+  memory_activities: "memory_stints",
+};
+
+/**
+ * Rewrites legacy `[w5]` keys to their current names, warning once per key.
+ * The current name wins when both are present, so a half-migrated file
+ * behaves the way its author most recently intended.
+ */
+function resolveLegacyW5Keys(
+  w5: Record<string, unknown>,
+  warn: (message: string) => void,
+): Record<string, unknown> {
+  const resolved = { ...w5 };
+  for (const [old, current] of Object.entries(LEGACY_W5_KEYS)) {
+    if (!(old in resolved)) continue;
+    const value = resolved[old];
+    delete resolved[old];
+    if (current in w5) {
+      warn(`tempad.toml: [w5].${old} is ignored; using [w5].${current}. Remove the old key.`);
+      continue;
+    }
+    resolved[current] = value;
+    warn(`tempad.toml: [w5].${old} was renamed to [w5].${current}. Update your config.`);
+  }
+  return resolved;
+}
+
+export function loadIntentConfig(
+  tomlPath: string,
+  warn: (message: string) => void = (message) => console.warn(message),
+): IntentConfig {
   if (!existsSync(tomlPath)) {
     return defaultIntentConfig();
   }
@@ -97,7 +137,8 @@ export function loadIntentConfig(tomlPath: string): IntentConfig {
       name: requireString(raw, "name", where),
     });
   }
-  const w5 = parsed.w5 as Record<string, unknown> | undefined;
+  const rawW5 = parsed.w5 as Record<string, unknown> | undefined;
+  const w5 = rawW5 ? resolveLegacyW5Keys(rawW5, warn) : undefined;
   if (w5) {
     const number = (key: string, fallback: number) =>
       typeof w5[key] === "number" ? (w5[key] as number) : fallback;
@@ -107,7 +148,7 @@ export function loadIntentConfig(tomlPath: string): IntentConfig {
       model: typeof w5.model === "string" ? w5.model : config.w5.model,
       throttleMinutes: number("throttle_minutes", config.w5.throttleMinutes),
       watchTurns: number("watch_turns", config.w5.watchTurns),
-      askMinStintMinutes: number("ask_min_activity_minutes", config.w5.askMinStintMinutes),
+      askMinStintMinutes: number("ask_min_stint_minutes", config.w5.askMinStintMinutes),
       askBudgetMinutes: number("ask_budget_minutes", config.w5.askBudgetMinutes),
       askExpireTurns: number("ask_expire_turns", config.w5.askExpireTurns),
       backfillDays: number("backfill_days", config.w5.backfillDays),
@@ -115,9 +156,9 @@ export function loadIntentConfig(tomlPath: string): IntentConfig {
       claudeCommand:
         typeof w5.claude_command === "string" ? w5.claude_command : config.w5.claudeCommand,
       timeoutSeconds: number("timeout_seconds", config.w5.timeoutSeconds),
-      stintIdleMinutes: number("activity_idle_minutes", config.w5.stintIdleMinutes),
+      stintIdleMinutes: number("stint_idle_minutes", config.w5.stintIdleMinutes),
       memoryHours: number("memory_hours", config.w5.memoryHours),
-      memoryStints: number("memory_activities", config.w5.memoryStints),
+      memoryStints: number("memory_stints", config.w5.memoryStints),
       overlapMessages: number("overlap_messages", config.w5.overlapMessages),
       mode: parseMode(w5.mode, config.w5.mode),
       inferenceFallback: boolean("inference_fallback", config.w5.inferenceFallback),

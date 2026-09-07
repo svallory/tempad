@@ -284,7 +284,7 @@ describe("w5 eval", () => {
       .run();
     // Two message groups more than throttleMinutes*3 = 30 minutes apart, so
     // backfill splits them into two chunks classified one after another;
-    // less than activityIdleMinutes = 45 apart, so chunk 1's activity is
+    // less than activityIdleMinutes = 45 apart, so chunk 1's stint is
     // still open when chunk 2 is classified.
     for (const [index, ts] of ["2026-09-01T10:00:00.000Z", "2026-09-01T10:40:00.000Z"].entries()) {
       database
@@ -297,9 +297,9 @@ describe("w5 eval", () => {
     database.close();
 
     /**
-     * Chunk 1 proposes a new quest for a new activity. Chunk 2 reuses that
-     * activity via `matchedActivity` but names a *different, non-null*
-     * `matchedQuest` -- `apply.ts` never reassigns a matched activity's quest,
+     * Chunk 1 proposes a new quest for a new stint. Chunk 2 reuses that
+     * stint via `matchedStint` but names a *different, non-null*
+     * `matchedQuest` -- `apply.ts` never reassigns a matched stint's quest,
      * so this is exactly a quest conflict, counted and returned in the run
      * summary. `matchedQuest: null` would instead mean "no opinion" and count
      * nothing; that case is covered by its own test below.
@@ -323,7 +323,7 @@ describe("w5 eval", () => {
                 belongs: true,
                 guess: null,
                 matchedQuest: null,
-                proposedQuest: { title: "Q1", aim: "ship it", commitment: "personal" },
+                proposedQuest: { title: "Q1", outcome: "ship it", commitment: "personal" },
                 matchedStint: null,
                 continuesStint: null,
                 newStintReason: "first work of the window",
@@ -376,7 +376,7 @@ describe("w5 eval", () => {
     expect(metrics.doubts).toBe(1);
   });
 
-  test("matchedQuest null on a matched activity is no opinion, not a conflict", async () => {
+  test("matchedQuest null on a matched stint is no opinion, not a conflict", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tempad-eval-no-opinion-"));
     const sourcePath = join(dir, "source.db");
 
@@ -428,7 +428,7 @@ describe("w5 eval", () => {
                 belongs: true,
                 guess: null,
                 matchedQuest: null,
-                proposedQuest: { title: "Q1", aim: "ship it", commitment: "personal" },
+                proposedQuest: { title: "Q1", outcome: "ship it", commitment: "personal" },
                 matchedStint: null,
                 continuesStint: null,
                 newStintReason: "first work of the window",
@@ -580,7 +580,7 @@ describe("w5 eval", () => {
         payload: {
           owner: { kind: "hero", id: "H1" },
           title: "old in-range quest",
-          aim: "obj",
+          outcome: "obj",
           commitment: "focused",
           confirmed: false,
         },
@@ -590,9 +590,9 @@ describe("w5 eval", () => {
       database,
       store.append({
         actor: "hook",
-        kind: "activity.opened",
+        kind: "stint.opened",
         subject: "A_IN",
-        payload: { aim: "old in-range work", quest: "Q_IN" },
+        payload: { outcome: "old in-range work", quest: "Q_IN" },
         at: "2026-09-01T09:00:00.000Z",
       }),
     );
@@ -629,7 +629,7 @@ describe("w5 eval", () => {
         payload: {
           owner: { kind: "hero", id: "H1" },
           title: "old out-of-range quest",
-          aim: "obj",
+          outcome: "obj",
           commitment: "focused",
           confirmed: false,
         },
@@ -639,9 +639,9 @@ describe("w5 eval", () => {
       database,
       store.append({
         actor: "hook",
-        kind: "activity.opened",
+        kind: "stint.opened",
         subject: "A_OUT",
-        payload: { aim: "old out-of-range work", quest: "Q_OUT" },
+        payload: { outcome: "old out-of-range work", quest: "Q_OUT" },
         at: "2026-08-01T09:00:00.000Z",
       }),
     );
@@ -795,9 +795,9 @@ describe("w5 eval", () => {
       database,
       store.append({
         actor: "hook",
-        kind: "activity.opened",
+        kind: "stint.opened",
         subject: "A_LATE",
-        payload: { aim: "old late-in-day work" },
+        payload: { outcome: "old late-in-day work" },
         at: "2026-09-02T09:00:00.000Z",
       }),
     );
@@ -874,7 +874,7 @@ describe("w5 eval", () => {
         {
           session_id: "s1",
           at: "2026-09-01T09:00:00.000Z",
-          new: { title: "Ship p", aim: "ship it", commitment: "personal" },
+          new: { title: "Ship p", outcome: "ship it", commitment: "personal" },
         },
       ]),
     );
@@ -930,17 +930,17 @@ describe("w5 eval", () => {
          VALUES ('m1', 's1', '2026-09-01T10:00:00.000Z', 'user', 0, 'do the thing')`,
       )
       .run();
-    // A pre-existing activity/trace/answered-belongs-question from an earlier
+    // A pre-existing stint/trace/answered-belongs-question from an earlier
     // eval/backfill run of this same range -- resetRange (via runEval below)
     // retracts this trace as old-cohort, and doubtsAnswered must not count
     // its question once the trace it's tied to is gone.
     database.exec(
-      `INSERT INTO activities (id, quest_id, objective, opened_at, closed_at, outcome, revision)
-       VALUES ('activity-old', NULL, 'old work', '2026-09-01T10:00:00.000Z', '2026-09-01T10:10:00.000Z', NULL, 1)`,
+      `INSERT INTO stints (id, quest_id, outcome, opened_at, closed_at, revision)
+       VALUES ('stint-old', NULL, 'old work', '2026-09-01T10:00:00.000Z', '2026-09-01T10:10:00.000Z', 1)`,
     );
     database.exec(
-      `INSERT INTO traces (id, activity_id, tool, place, source, source_ref, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
-       VALUES ('trace-old', 'activity-old', 'edit', '/w/p', 'session', 's1', '2026-09-01T10:00:00.000Z', '2026-09-01T10:10:00.000Z', 'H1', 'old edit', 'old reason', '/w/p', 'assistant edit', 0.9, 'model', 's1', '2026-09-01T10:10:00.000Z')`,
+      `INSERT INTO traces (id, stint_id, tool, place, source, source_ref, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+       VALUES ('trace-old', 'stint-old', 'edit', '/w/p', 'session', 's1', '2026-09-01T10:00:00.000Z', '2026-09-01T10:10:00.000Z', 'H1', 'old edit', 'old reason', '/w/p', 'assistant edit', 0.9, 'model', 's1', '2026-09-01T10:10:00.000Z')`,
     );
     database.exec(
       `INSERT INTO questions (id, trace_id, session_id, text, kind, state, asked_at, answered_at, answer, answered_by, turns_watched)
@@ -1048,7 +1048,7 @@ describe("w5 eval", () => {
         {
           session_id: "does-not-exist",
           at: "2026-09-01T09:00:00.000Z",
-          new: { title: "Ship p", aim: "ship it", commitment: "personal" },
+          new: { title: "Ship p", outcome: "ship it", commitment: "personal" },
         },
       ]),
     );
@@ -1107,12 +1107,12 @@ describe("w5 eval", () => {
         {
           session_id: "s-early",
           at: "2026-09-01T09:00:00.000Z",
-          new: { title: "Early quest", aim: "early", commitment: "personal" },
+          new: { title: "Early quest", outcome: "early", commitment: "personal" },
         },
         {
           session_id: "s-late",
           at: "2026-09-01T10:00:00.000Z",
-          new: { title: "Late quest", aim: "late", commitment: "personal" },
+          new: { title: "Late quest", outcome: "late", commitment: "personal" },
         },
       ]),
     );
@@ -1163,7 +1163,7 @@ describe("w5 eval", () => {
         {
           session_id: "s1",
           at: "2026-09-01T09:00:00.000Z",
-          new: { title: "Ship p", aim: "ship it", commitment: "personal" },
+          new: { title: "Ship p", outcome: "ship it", commitment: "personal" },
           new_ref: "main-quest",
         },
         {
@@ -1265,7 +1265,7 @@ describe("w5 eval", () => {
           session_id: "s1",
           at: "2026-09-01T09:00:00.000Z",
           quest: "some-quest-id",
-          new: { title: "Ship p", aim: "ship it", commitment: "personal" },
+          new: { title: "Ship p", outcome: "ship it", commitment: "personal" },
         },
       ]),
     );

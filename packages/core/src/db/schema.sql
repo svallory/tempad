@@ -153,8 +153,8 @@ CREATE TABLE w5_quiet (
   until TEXT NOT NULL
 );
 
--- The `questions` table itself is owned by the `activities` projection
--- (src/intent/projections/activity.ts), not a migration, so it isn't
+-- The `questions` table itself is owned by the `stints` projection
+-- (src/intent/projections/stint.ts), not a migration, so it isn't
 -- mirrored above like the tables from 0001-0004. Plan 2 added two columns
 -- to that projection's CREATE TABLE: `turns_at_ask INTEGER` (turns_watched
 -- value at the moment a question was asked, for expiry) and
@@ -164,19 +164,19 @@ CREATE TABLE w5_quiet (
 -- what the verifier thinks a doubted stretch of work looks like instead,
 -- from which `w5 context` renders a `belongs` question's hand-back text.
 --
--- Likewise `traces`, `activities` and `quests` (owned by the `activities`
+-- Likewise `traces`, `stints` and `quests` (owned by the `stints`
 -- and `quests` projections) each carry a `retracted_at TEXT` column, added
 -- straight to their projection CREATE TABLE so a fresh database gets it for
 -- free. Migration 0006_retractions.sql ALTERs the same column onto an
 -- existing database's already-created projection tables (see
--- runMigration's ALTER-ADD-COLUMN tolerance in src/db/database.ts for why
+-- runMigration's tolerant-ALTER path in src/db/database.ts for why
 -- that ALTER is safe to skip on a database where those tables don't exist
 -- yet). A `retracted` event's `subject` is the id of the row it retracts;
--- projections apply it by UPDATEing whichever of traces/activities/quests
+-- projections apply it by UPDATEing whichever of traces/stints/quests
 -- has a matching id.
 --
 -- Migration 0007_activity_lifecycle.sql added `close_reason TEXT` and
--- `continues TEXT` to `activities` (mirrored above in the `activities`
+-- `continues TEXT` to what is now `stints` (mirrored above in the `stints`
 -- projection's CREATE TABLE) and `session_note TEXT` to `w5_runs`.
 --
 -- Migration 0008_declared_quests.sql added origin_kind TEXT NOT NULL DEFAULT 'inferred' to quests.
@@ -184,3 +184,16 @@ CREATE TABLE w5_quiet (
 -- Migration 0009_declared_quests_index.sql added events_quest_declared_session, a partial index
 -- on json_extract(payload, '$.session_id') for kind = 'quest.declared' (mirrored above on the
 -- events table), so declarations.ts's per-session lookups don't scan every quest.declared event.
+--
+-- Migration 0011_ubiquitous_language.sql renamed the domain vocabulary
+-- (2026-09-07): `goals` -> `sagas`, `activities` -> `stints`, and the columns
+-- `stints.objective` -> `outcome`, `traces.activity_id` /
+-- `trace_links.activity_id` -> `stint_id`, `quests.goal_id` -> `serves`,
+-- `quests.objective` -> `outcome`,
+-- `quests.origin_activity_id` -> `deviates_from_stint_id`. It also dropped the
+-- `stints.outcome` column that held a close-time judgment: nothing ever wrote
+-- it, and `outcome` now names what the stint pursued. The `events` table
+-- is append-only and was NOT rewritten: rows keep their original kinds and
+-- payload field names, and src/intent/legacy.ts translates them at the single
+-- read boundary in src/intent/store.ts. See
+-- docs/specs/2026-09-07-ubiquitous-language.md.

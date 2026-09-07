@@ -9,16 +9,16 @@ function tableExists(database: Database, name: string): boolean {
   );
 }
 
-export function countAttachments(database: Database, entity: "goal" | "quest", id: string): number {
-  if (entity === "goal") {
+export function countAttachments(database: Database, entity: "saga" | "quest", id: string): number {
+  if (entity === "saga") {
     if (!tableExists(database, "quests")) return 0;
     return (
-      database.query("SELECT count(*) AS n FROM quests WHERE goal_id = ?").get(id) as { n: number }
+      database.query("SELECT count(*) AS n FROM quests WHERE serves = ?").get(id) as { n: number }
     ).n;
   }
-  if (!tableExists(database, "activities")) return 0;
+  if (!tableExists(database, "stints")) return 0;
   return (
-    database.query("SELECT count(*) AS n FROM activities WHERE quest_id = ?").get(id) as {
+    database.query("SELECT count(*) AS n FROM stints WHERE quest_id = ?").get(id) as {
       n: number;
     }
   ).n;
@@ -26,7 +26,7 @@ export function countAttachments(database: Database, entity: "goal" | "quest", i
 
 export function assertEditIntent(
   database: Database,
-  entity: "goal" | "quest",
+  entity: "saga" | "quest",
   id: string,
   intent: EditIntent | undefined,
 ): void {

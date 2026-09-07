@@ -17,15 +17,15 @@ export function closeIdleStints(
 ): { closed: string[] } {
   const rows = database
     .query(
-      `SELECT activities.id as id,
+      `SELECT stints.id as id,
               (SELECT MAX(traces.ended_at) FROM traces
-                 WHERE traces.activity_id = activities.id AND traces.retracted_at IS NULL) as lastEndedAt
-         FROM activities
-         JOIN traces ON traces.activity_id = activities.id AND traces.retracted_at IS NULL
+                 WHERE traces.stint_id = stints.id AND traces.retracted_at IS NULL) as lastEndedAt
+         FROM stints
+         JOIN traces ON traces.stint_id = stints.id AND traces.retracted_at IS NULL
         WHERE traces.session_id = ?
-          AND activities.closed_at IS NULL
-          AND activities.retracted_at IS NULL
-        GROUP BY activities.id`,
+          AND stints.closed_at IS NULL
+          AND stints.retracted_at IS NULL
+        GROUP BY stints.id`,
     )
     .all(input.sessionId) as { id: string; lastEndedAt: string | null }[];
 
@@ -39,7 +39,7 @@ export function closeIdleStints(
       database,
       store.append({
         actor: "system",
-        kind: "activity.closed",
+        kind: "stint.closed",
         subject: row.id,
         at: row.lastEndedAt,
         payload: { reason: "idle" },
@@ -57,15 +57,15 @@ export function closeSessionStints(
 ): { closed: string[] } {
   const rows = database
     .query(
-      `SELECT activities.id as id,
+      `SELECT stints.id as id,
               (SELECT MAX(traces.ended_at) FROM traces
-                 WHERE traces.activity_id = activities.id AND traces.retracted_at IS NULL) as lastEndedAt
-         FROM activities
-         JOIN traces ON traces.activity_id = activities.id AND traces.retracted_at IS NULL
+                 WHERE traces.stint_id = stints.id AND traces.retracted_at IS NULL) as lastEndedAt
+         FROM stints
+         JOIN traces ON traces.stint_id = stints.id AND traces.retracted_at IS NULL
         WHERE traces.session_id = ?
-          AND activities.closed_at IS NULL
-          AND activities.retracted_at IS NULL
-        GROUP BY activities.id`,
+          AND stints.closed_at IS NULL
+          AND stints.retracted_at IS NULL
+        GROUP BY stints.id`,
     )
     .all(input.sessionId) as { id: string; lastEndedAt: string | null }[];
 
@@ -75,7 +75,7 @@ export function closeSessionStints(
       database,
       store.append({
         actor: "hook",
-        kind: "activity.closed",
+        kind: "stint.closed",
         subject: row.id,
         at: row.lastEndedAt ?? input.now,
         payload: { reason: "session_end" },
@@ -91,7 +91,7 @@ export function closeSessionStints(
 
 export interface OpenStintContinuingInput {
   quest?: string;
-  aim: string;
+  outcome: string;
   at: string;
   actor: Actor;
   continues?: string;
@@ -107,10 +107,10 @@ export function openStintContinuing(
     database,
     store.append({
       actor: input.actor,
-      kind: "activity.opened",
+      kind: "stint.opened",
       subject: id,
       at: input.at,
-      payload: { quest: input.quest, aim: input.aim, continues: input.continues },
+      payload: { quest: input.quest, outcome: input.outcome, continues: input.continues },
     }),
   );
   return id;

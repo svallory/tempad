@@ -1,9 +1,9 @@
-import { stintProjection } from "./activity";
-import { sagaProjection } from "./goal";
 import { heroProjection } from "./hero";
 import { registerProjection } from "./index";
 import { partyProjection } from "./party";
 import { questProjection } from "./quest";
+import { sagaProjection } from "./saga";
+import { stintProjection } from "./stint";
 import { windowProjection } from "./window";
 
 let registered = false;

@@ -218,7 +218,7 @@ function runSagaCommand(args: string[], context: IntentContext): number {
     const title = positionals[0];
     if (!title) {
       console.error(
-        'usage: tempad goal add --owner hero|party:<slug> "<title>" [--statement "..."]',
+        'usage: tempad saga add --owner hero|party:<slug> "<title>" [--statement "..."]',
       );
       return 2;
     }
@@ -227,7 +227,7 @@ function runSagaCommand(args: string[], context: IntentContext): number {
       context.database,
       store.append({
         actor: "hero",
-        kind: "goal.created",
+        kind: "saga.created",
         subject: newUlid(),
         payload: { owner, title, statement: values.statement },
       }),
@@ -244,15 +244,15 @@ function runSagaCommand(args: string[], context: IntentContext): number {
     });
     const [id, title] = positionals;
     if (!id || !title) {
-      console.error('usage: tempad goal reword <id> "<title>" [--statement]');
+      console.error('usage: tempad saga reword <id> "<title>" [--statement]');
       return 2;
     }
-    assertEditIntent(context.database, "goal", id, "reword");
+    assertEditIntent(context.database, "saga", id, "reword");
     applyIncremental(
       context.database,
       store.append({
         actor: "hero",
-        kind: "goal.reworded",
+        kind: "saga.reworded",
         subject: id,
         payload: { title, statement: values.statement },
       }),
@@ -269,23 +269,23 @@ function runSagaCommand(args: string[], context: IntentContext): number {
     });
     const [id, title] = positionals;
     if (!id || !title || !values.reason) {
-      console.error('usage: tempad goal replace <id> "<title>" [--statement] --reason "..."');
+      console.error('usage: tempad saga replace <id> "<title>" [--statement] --reason "..."');
       return 2;
     }
     const old = context.database
-      .query("SELECT owner_kind, owner_id FROM goals WHERE id = ?")
+      .query("SELECT owner_kind, owner_id FROM sagas WHERE id = ?")
       .get(id) as { owner_kind: "hero" | "party"; owner_id: string } | null;
     if (!old) {
       console.error(`unknown goal: ${id}`);
       return 1;
     }
-    assertEditIntent(context.database, "goal", id, "replace");
+    assertEditIntent(context.database, "saga", id, "replace");
     const newId = newUlid();
     applyIncremental(
       context.database,
       store.append({
         actor: "hero",
-        kind: "goal.created",
+        kind: "saga.created",
         subject: newId,
         payload: {
           owner: { kind: old.owner_kind, id: old.owner_id },
@@ -298,7 +298,7 @@ function runSagaCommand(args: string[], context: IntentContext): number {
       context.database,
       store.append({
         actor: "hero",
-        kind: "goal.ended",
+        kind: "saga.ended",
         subject: id,
         payload: { reason: "replaced", replaced_by: newId, note: values.reason },
       }),
@@ -315,14 +315,14 @@ function runSagaCommand(args: string[], context: IntentContext): number {
     });
     const id = positionals[0];
     if (!id || !values.reason) {
-      console.error("usage: tempad goal end <id> --reason achieved|abandoned");
+      console.error("usage: tempad saga end <id> --reason achieved|abandoned");
       return 2;
     }
     applyIncremental(
       context.database,
       store.append({
         actor: "hero",
-        kind: "goal.ended",
+        kind: "saga.ended",
         subject: id,
         payload: { reason: values.reason },
       }),
@@ -333,13 +333,13 @@ function runSagaCommand(args: string[], context: IntentContext): number {
   if (subcommand === "edit") {
     const [id, title] = rest;
     if (!id || !title) {
-      console.error('usage: tempad goal edit <id> "<title>"');
+      console.error('usage: tempad saga edit <id> "<title>"');
       return 2;
     }
-    assertEditIntent(context.database, "goal", id, undefined);
+    assertEditIntent(context.database, "saga", id, undefined);
     applyIncremental(
       context.database,
-      store.append({ actor: "hero", kind: "goal.reworded", subject: id, payload: { title } }),
+      store.append({ actor: "hero", kind: "saga.reworded", subject: id, payload: { title } }),
     );
     return 0;
   }
@@ -355,7 +355,7 @@ function runSagaCommand(args: string[], context: IntentContext): number {
       : context.database;
     const where = values.all ? "" : "WHERE ended_at IS NULL";
     const rows = source
-      .query(`SELECT id, title, owner_kind, end_reason FROM goals ${where} ORDER BY created_at`)
+      .query(`SELECT id, title, owner_kind, end_reason FROM sagas ${where} ORDER BY created_at`)
       .all() as {
       id: string;
       title: string;
@@ -369,7 +369,7 @@ function runSagaCommand(args: string[], context: IntentContext): number {
     return 0;
   }
 
-  console.error("usage: tempad goal add|reword|replace|end|edit|list ...");
+  console.error("usage: tempad saga add|reword|replace|end|edit|list ...");
   return 2;
 }
 
@@ -406,7 +406,7 @@ export const QUEST_DECLARE_OPTIONS = {
   parent: { type: "string" },
   quest: { type: "string" },
   new: { type: "string" },
-  aim: { type: "string" },
+  outcome: { type: "string" },
   commitment: { type: "string", default: "personal" },
   project: { type: "string" },
   origin: { type: "string" },
@@ -426,8 +426,8 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       args: rest,
       options: {
         owner: { type: "string" },
-        saga: { type: "string" },
-        aim: { type: "string" },
+        serves: { type: "string" },
+        outcome: { type: "string" },
         done: { type: "string" },
         due: { type: "string" },
         budget: { type: "string" },
@@ -439,7 +439,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
     const title = positionals[0];
     if (!title) {
       console.error(
-        'usage: tempad quest add --owner hero|party:<slug> [--goal <id>] "<title>" ...',
+        'usage: tempad quest add --owner hero|party:<slug> [--serves <id>] "<title>" ...',
       );
       return 2;
     }
@@ -452,9 +452,9 @@ function runQuestCommand(args: string[], context: IntentContext): number {
         subject: newUlid(),
         payload: {
           owner,
-          saga: values.saga,
+          serves: values.serves,
           title,
-          aim: values.aim,
+          outcome: values.outcome,
           done_condition: values.done,
           due: values.due,
           budget_minutes: parseBudget(values.budget),
@@ -470,13 +470,13 @@ function runQuestCommand(args: string[], context: IntentContext): number {
   if (subcommand === "reword") {
     const { values, positionals } = parseArgs({
       args: rest,
-      options: { aim: { type: "string" } },
+      options: { outcome: { type: "string" } },
       strict: true,
       allowPositionals: true,
     });
     const [id, title] = positionals;
     if (!id || !title) {
-      console.error('usage: tempad quest reword <id> "<title>" [--objective]');
+      console.error('usage: tempad quest reword <id> "<title>" [--outcome]');
       return 2;
     }
     assertEditIntent(context.database, "quest", id, "reword");
@@ -486,7 +486,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
         actor: "hero",
         kind: "quest.reworded",
         subject: id,
-        payload: { title, aim: values.aim },
+        payload: { title, outcome: values.outcome },
       }),
     );
     return 0;
@@ -495,13 +495,13 @@ function runQuestCommand(args: string[], context: IntentContext): number {
   if (subcommand === "replace") {
     const { values, positionals } = parseArgs({
       args: rest,
-      options: { aim: { type: "string" }, reason: { type: "string" } },
+      options: { outcome: { type: "string" }, reason: { type: "string" } },
       strict: true,
       allowPositionals: true,
     });
     const [id, title] = positionals;
     if (!id || !title || !values.reason) {
-      console.error('usage: tempad quest replace <id> "<title>" [--objective] --reason "..."');
+      console.error('usage: tempad quest replace <id> "<title>" [--outcome] --reason "..."');
       return 2;
     }
     const old = findQuest(context.database, id);
@@ -520,7 +520,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
         payload: {
           owner: { kind: old.owner_kind, id: old.owner_id },
           title,
-          aim: values.aim,
+          outcome: values.outcome,
           confirmed: true,
         },
       }),
@@ -675,7 +675,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
     const { values, positionals } = parseArgs({
       args: rest,
       options: {
-        "from-activity": { type: "string" },
+        "deviates-from": { type: "string" },
         trigger: { type: "string" },
         kind: { type: "string", default: "unknown" },
       },
@@ -683,9 +683,9 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       allowPositionals: true,
     });
     const id = positionals[0];
-    if (!id || !values["from-activity"] || !values.trigger) {
+    if (!id || !values["deviates-from"] || !values.trigger) {
       console.error(
-        'usage: tempad quest branch <id> --from-activity <activity-id> --trigger "..." [--kind ...]',
+        'usage: tempad quest branch <id> --deviates-from <stint-id> --trigger "..." [--kind ...]',
       );
       return 2;
     }
@@ -701,7 +701,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
         kind: "quest.branched",
         subject: resolved,
         payload: {
-          from_activity: values["from-activity"],
+          deviates_from: values["deviates-from"],
           trigger: values.trigger,
           kind: values.kind,
         },
@@ -764,7 +764,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       clauses.push("merged_into IS NULL");
     }
     if (values.unconfirmed) clauses.push("confirmed = 0");
-    if (values.side) clauses.push("origin_activity_id IS NOT NULL");
+    if (values.side) clauses.push("deviates_from_stint_id IS NOT NULL");
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = source
       .query(`SELECT id, title, state, confirmed FROM quests ${where} ORDER BY created_at`)
@@ -784,7 +784,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
     });
 
     const usage =
-      'usage: tempad quest declare --session <id> [--parent <id>] (--quest <id> | --new "<title>" --objective "<text>" [--commitment promised|personal|exploratory] [--project <slug>] [--origin <quest id> --trigger "<sentence>" --kind waiting|blocker|curiosity|unknown]) [--plan "a; b; c"] [--by agent|hero] [--at <iso>]';
+      'usage: tempad quest declare --session <id> [--parent <id>] (--quest <id> | --new "<title>" --outcome "<text>" [--commitment promised|personal|exploratory] [--project <slug>] [--origin <quest id> --trigger "<sentence>" --kind waiting|blocker|curiosity|unknown]) [--plan "a; b; c"] [--by agent|hero] [--at <iso>]';
 
     if (!values.session) {
       console.error(usage);
@@ -794,7 +794,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       console.error(usage);
       return 2;
     }
-    if (values.new && !values.aim) {
+    if (values.new && !values.outcome) {
       console.error(usage);
       return 2;
     }
@@ -841,7 +841,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       newQuest: values.new
         ? {
             title: values.new,
-            aim: values.aim as string,
+            outcome: values.outcome as string,
             commitment: (values.commitment as Commitment) ?? "personal",
             project: values.project,
             origin: values.origin,
@@ -882,24 +882,22 @@ function runStintCommand(args: string[], context: IntentContext): number {
     }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = context.database
-      .query(
-        `SELECT id, objective, quest_id, closed_at FROM activities ${where} ORDER BY opened_at`,
-      )
+      .query(`SELECT id, outcome, quest_id, closed_at FROM stints ${where} ORDER BY opened_at`)
       .all(...parameters) as {
       id: string;
-      aim: string;
+      outcome: string;
       quest_id: string | null;
       closed_at: string | null;
     }[];
     for (const row of rows) {
       const status = row.closed_at ? "closed" : "open";
       context.stdout(
-        `${row.id}  ${row.aim}  (${status})${row.quest_id ? ` quest=${row.quest_id}` : ""}`,
+        `${row.id}  ${row.outcome}  (${status})${row.quest_id ? ` quest=${row.quest_id}` : ""}`,
       );
     }
     return 0;
   }
-  console.error("usage: tempad activity list [--open] [--quest <id>]");
+  console.error("usage: tempad stint list [--open] [--quest <id>]");
   return 2;
 }
 
@@ -918,24 +916,22 @@ function runTraceCommand(args: string[], context: IntentContext): number {
       parameters.push(values.since);
     }
     if (values.stint) {
-      clauses.push("activity_id = ?");
+      clauses.push("stint_id = ?");
       parameters.push(values.stint);
     }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = context.database
-      .query(
-        `SELECT id, activity_id, what, why, confidence FROM traces ${where} ORDER BY started_at`,
-      )
+      .query(`SELECT id, stint_id, what, why, confidence FROM traces ${where} ORDER BY started_at`)
       .all(...parameters) as {
       id: string;
-      activity_id: string;
+      stint_id: string;
       what: string;
       why: string;
       confidence: number;
     }[];
     for (const row of rows) {
       context.stdout(
-        `${row.id}  ${row.what}  why=${row.why}  confidence=${row.confidence}  activity=${row.activity_id}`,
+        `${row.id}  ${row.what}  why=${row.why}  confidence=${row.confidence}  stint=${row.stint_id}`,
       );
     }
     return 0;
@@ -947,24 +943,24 @@ function runTraceCommand(args: string[], context: IntentContext): number {
 const BRANCH_KINDS = new Set<string>(["waiting", "blocker", "curiosity", "unknown"]);
 
 /**
- * The activity a side quest branched *from*: the most recent activity of the same
- * session, on the quest the doubted activity currently sits under (its declared
- * quest), that opened before the doubted activity did.
+ * The stint a side quest branched *from*: the most recent stint of the same
+ * session, on the quest the doubted stint currently sits under (its declared
+ * quest), that opened before the doubted stint did.
  *
- * Deliberately not the doubted activity itself -- the caller reassigns that one to
+ * Deliberately not the doubted stint itself -- the caller reassigns that one to
  * the new quest, so using it would record the new quest as branching from its own
- * activity. Matches `apply.ts`'s convention of branching from the *previous*
- * segment's activity. Null when the doubted activity is the session's first on
+ * stint. Matches `apply.ts`'s convention of branching from the *previous*
+ * segment's stint. Null when the doubted stint is the session's first on
  * that quest, which is a real outcome: there is nothing it branched away from.
  */
 function originStintId(database: Database, doubtedStintId: string): string | null {
   const doubted = database
     .query(
-      `SELECT activities.quest_id as questId, activities.opened_at as openedAt,
+      `SELECT stints.quest_id as questId, stints.opened_at as openedAt,
               (SELECT traces.session_id FROM traces
-                WHERE traces.activity_id = activities.id AND traces.retracted_at IS NULL
+                WHERE traces.stint_id = stints.id AND traces.retracted_at IS NULL
                 ORDER BY traces.started_at ASC LIMIT 1) as sessionId
-         FROM activities WHERE activities.id = ?`,
+         FROM stints WHERE stints.id = ?`,
     )
     .get(doubtedStintId) as {
     questId: string | null;
@@ -975,16 +971,16 @@ function originStintId(database: Database, doubtedStintId: string): string | nul
 
   const row = database
     .query(
-      `SELECT activities.id as id FROM activities
-        WHERE activities.quest_id = ?
-          AND activities.id != ?
-          AND activities.opened_at < ?
-          AND activities.retracted_at IS NULL
+      `SELECT stints.id as id FROM stints
+        WHERE stints.quest_id = ?
+          AND stints.id != ?
+          AND stints.opened_at < ?
+          AND stints.retracted_at IS NULL
           AND EXISTS (SELECT 1 FROM traces
-                       WHERE traces.activity_id = activities.id
+                       WHERE traces.stint_id = stints.id
                          AND traces.session_id = ?
                          AND traces.retracted_at IS NULL)
-        ORDER BY activities.opened_at DESC LIMIT 1`,
+        ORDER BY stints.opened_at DESC LIMIT 1`,
     )
     .get(doubted.questId, doubtedStintId, doubted.openedAt, doubted.sessionId) as {
     id: string;
@@ -1023,8 +1019,8 @@ function runAnswerCommand(args: string[], context: IntentContext): number {
     return 1;
   }
   const trace = context.database
-    .query("SELECT activity_id FROM traces WHERE id = ?")
-    .get(question.trace_id) as { activity_id: string } | null;
+    .query("SELECT stint_id FROM traces WHERE id = ?")
+    .get(question.trace_id) as { stint_id: string } | null;
   if (!trace) {
     console.error(`unknown trace: ${question.trace_id}`);
     return 1;
@@ -1039,7 +1035,7 @@ function runAnswerCommand(args: string[], context: IntentContext): number {
 
   if (values.belongs) {
     // "Yes it belongs" confirms the declared quest, so the trace and its
-    // activity's quest are left exactly as they are.
+    // stint's quest are left exactly as they are.
     applyIncremental(
       context.database,
       store.append({
@@ -1074,9 +1070,9 @@ function runAnswerCommand(args: string[], context: IntentContext): number {
 
   // `--origin current` is the answer-time equivalent of a live declaration's
   // `--origin`: the answer itself is what reveals a side quest existed, branching
-  // from the quest being *left*, never from the activity this command is about to
+  // from the quest being *left*, never from the stint this command is about to
   // reassign to the new quest -- that would record a quest as branching from its
-  // own activity.
+  // own stint.
   if (values.origin !== undefined) {
     if (values.origin !== "current") {
       console.error("--origin must be current");
@@ -1098,7 +1094,7 @@ function runAnswerCommand(args: string[], context: IntentContext): number {
         kind: "quest.branched",
         subject: questId,
         payload: {
-          from_activity: originStintId(context.database, trace.activity_id),
+          deviates_from: originStintId(context.database, trace.stint_id),
           trigger: values.trigger ?? "unknown",
           kind,
         },
@@ -1107,7 +1103,7 @@ function runAnswerCommand(args: string[], context: IntentContext): number {
   }
 
   answerQuestion(store, context.database, questionId, questId, values.why, "hero");
-  assignStint(store, context.database, trace.activity_id, questId, "hero");
+  assignStint(store, context.database, trace.stint_id, questId, "hero");
   return 0;
 }
 
@@ -1133,11 +1129,11 @@ export async function runIntentCommand(args: string[], context: IntentContext): 
         return runPartyCommand(rest, context);
       case "client":
         return runClientCommand(rest, context);
-      case "goal":
+      case "saga":
         return runSagaCommand(rest, context);
       case "quest":
         return runQuestCommand(rest, context);
-      case "activity":
+      case "stint":
         return runStintCommand(rest, context);
       case "trace":
         return runTraceCommand(rest, context);
@@ -1146,7 +1142,7 @@ export async function runIntentCommand(args: string[], context: IntentContext): 
       case "rebuild":
         return runRebuildCommand(rest, context);
       default:
-        console.error("unknown intent command");
+        console.error("unknown command");
         return 2;
     }
   } catch (error) {

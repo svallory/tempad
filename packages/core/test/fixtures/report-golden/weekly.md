@@ -5,7 +5,7 @@ no evidence
 
 ## 2026-09-01 (Tuesday)
 
-| project | activities | quests touched | shipped | abandoned | side quests | side-quest minutes | unconfirmed quests | doubts |
+| project | stints | quests touched | shipped | abandoned | side quests | side-quest minutes | unconfirmed quests | doubts |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | acme/widgets | 2 | 2 | 0 | 0 | 1 | 0h 20m | 1 | 0 |
 | Totals | 2 | 2 | 0 | 0 | 1 | 0h 20m | 1 | 0 |
@@ -21,7 +21,7 @@ no evidence
 
 ## Week
 
-| project | activities | quests touched | shipped | abandoned | side quests | side-quest minutes | unconfirmed quests | doubts |
+| project | stints | quests touched | shipped | abandoned | side quests | side-quest minutes | unconfirmed quests | doubts |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | acme/widgets | 2 | 2 | 0 | 0 | 1 | 0h 20m | 1 | 0 |
 | Totals | 2 | 2 | 0 | 0 | 1 | 0h 20m | 1 | 0 |

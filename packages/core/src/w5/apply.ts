@@ -23,7 +23,7 @@ export interface AppliedSummary {
   overlapDropped: number;
   unknownStintIds: number;
   /**
-   * A matched activity that had no quest, for which the classifier proposed one.
+   * A matched stint that had no quest, for which the classifier proposed one.
    */
   questProposedOnMatched: number;
 }
@@ -63,7 +63,7 @@ function createQuest(
   input: {
     heroId: string;
     title: string;
-    aim: string;
+    outcome: string;
     commitment: string;
     confirmed: boolean;
   },
@@ -78,7 +78,7 @@ function createQuest(
       payload: {
         owner: { kind: "hero", id: input.heroId },
         title: input.title,
-        aim: input.aim,
+        outcome: input.outcome,
         commitment: input.commitment,
         confirmed: input.confirmed,
       },
@@ -100,7 +100,7 @@ function branchQuest(
       subject: input.questId,
       at: input.at,
       payload: {
-        from_activity: input.fromStintId,
+        deviates_from: input.fromStintId,
         trigger: input.trigger,
         kind: classifyTrigger(input.trigger),
       },
@@ -124,7 +124,7 @@ interface StintState {
 }
 
 /**
- * Reads an activity the classifier named, ignoring retracted rows. A classifier
+ * Reads a stint the classifier named, ignoring retracted rows. A classifier
  * can return an id that never existed, belongs to another session, or was
  * retracted since the slice was built, so every id it hands back is looked up
  * before it is trusted.
@@ -132,7 +132,7 @@ interface StintState {
 function readStint(database: Database, stintId: string): StintState | null {
   const row = database
     .query(
-      "SELECT quest_id as questId, closed_at as closedAt FROM activities WHERE id = ? AND retracted_at IS NULL",
+      "SELECT quest_id as questId, closed_at as closedAt FROM stints WHERE id = ? AND retracted_at IS NULL",
     )
     .get(stintId) as { questId: string | null; closedAt: string | null } | null;
   if (!row) return null;
@@ -153,7 +153,7 @@ function resolveQuest(
     questId: createQuest(store, database, {
       heroId,
       title: proposedQuest.title,
-      aim: proposedQuest.aim,
+      outcome: proposedQuest.outcome,
       commitment: proposedQuest.commitment,
       confirmed: false,
     }),
@@ -162,19 +162,19 @@ function resolveQuest(
 }
 
 /**
- * Reuse of an activity that already exists (matched, or `continues` pointed at a
+ * Reuse of a stint that already exists (matched, or `continues` pointed at a
  * still-open one). Its quest is never reassigned, but the classifier's opinion is
  * read for what it is:
  *
  * - `matchedQuest: null` is *no opinion*, not "no quest". A model that omits the
- *   field means it did not judge the quest, so the activity keeps its own and
+ *   field means it did not judge the quest, so the stint keeps its own and
  *   nothing is reported -- treating this as a disagreement made almost every
  *   segment a conflict.
  * - a different non-null `matchedQuest` is a real disagreement: counted, logged,
  *   never applied.
- * - `proposedQuest` on a matched activity that has *no* quest is the one case
+ * - `proposedQuest` on a matched stint that has *no* quest is the one case
  *   where something is missing rather than contested, so the quest is created and
- *   attached through the ordinary `activity.assigned` path.
+ *   attached through the ordinary `stint.assigned` path.
  */
 function reuseStint(
   store: EventStore,
@@ -192,7 +192,7 @@ function reuseStint(
     const questId = createQuest(store, database, {
       heroId,
       title: proposedQuest.title,
-      aim: proposedQuest.aim,
+      outcome: proposedQuest.outcome,
       commitment: proposedQuest.commitment,
       confirmed: false,
     });
@@ -228,27 +228,20 @@ function resolveStintForSegment(
 ): ResolvedStint {
   let unknownStintId = false;
 
-  // `matchedActivity` means "this stretch of attention is still going", so it is
-  // only honoured for an activity that is actually still open.
+  // `matchedStint` means "this stretch of attention is still going", so it is
+  // only honoured for a stint that is actually still open.
   if (segment.matchedStint !== null) {
     const matched = readStint(database, segment.matchedStint);
     if (matched?.isOpen) {
-      return reuseStint(
-        store,
-        database,
-        heroId,
-        segment,
-        segment.matchedStint,
-        matched.questId,
-      );
+      return reuseStint(store, database, heroId, segment, segment.matchedStint, matched.questId);
     }
     unknownStintId = true;
   }
 
-  // `continuesActivity` means "the same objective, resumed after a gap", so it is
-  // only a link when the activity it names has actually closed. Pointing it at a
-  // still-open activity says the attention never stopped: that is a plain reuse,
-  // and opening a second row would leave two open activities for one objective.
+  // `continuesStint` means "the same outcome, resumed after a gap", so it is
+  // only a link when the stint it names has actually closed. Pointing it at a
+  // still-open stint says the attention never stopped: that is a plain reuse,
+  // and opening a second row would leave two open stints for one outcome.
   let continues: string | null = null;
   if (segment.continuesStint !== null) {
     const referenced = readStint(database, segment.continuesStint);
@@ -271,13 +264,13 @@ function resolveStintForSegment(
   let { questId, questCreated } = resolveQuest(store, database, heroId, segment);
 
   if (continues !== null && questId === null) {
-    // Returning to a closed activity keeps its quest unless the classifier named another.
+    // Returning to a closed stint keeps its quest unless the classifier named another.
     questId = readStint(database, continues)?.questId ?? null;
   }
 
   const stintId = openStintContinuing(store, database, {
     quest: questId ?? undefined,
-    aim: segment.what,
+    outcome: segment.what,
     at: openedAt,
     actor: "hook",
     continues: continues ?? undefined,
@@ -295,13 +288,13 @@ function resolveStintForSegment(
 }
 
 /**
- * Declared mode's activity resolution. The three-way selector rule is unchanged,
+ * Declared mode's stint resolution. The three-way selector rule is unchanged,
  * but every branch ends with the session's declared quest: there is no per-segment
  * quest decision left to make, so nothing here creates, proposes, reassigns or
  * branches a quest.
  *
  * Selectors arrive as aliases (`"A1"`). An alias the window never offered resolves
- * to nothing and opens a new activity, exactly as a fabricated id did before.
+ * to nothing and opens a new stint, exactly as a fabricated id did before.
  */
 function resolveStintForSegmentDeclared(
   store: EventStore,
@@ -324,7 +317,7 @@ function resolveStintForSegmentDeclared(
     } else {
       const matched = readStint(database, matchedId);
       if (matched?.isOpen) {
-        // A matched activity keeps its own row; the declared quest is attached only
+        // A matched stint keeps its own row; the declared quest is attached only
         // when it has none, since reassignment is exactly what the verifier must
         // never do.
         if (matched.questId === null && declaredQuestId !== null) {
@@ -374,7 +367,7 @@ function resolveStintForSegmentDeclared(
 
   const stintId = openStintContinuing(store, database, {
     quest: declaredQuestId ?? undefined,
-    aim: segment.what,
+    outcome: segment.what,
     at: openedAt,
     actor: "hook",
     continues: continues ?? undefined,
@@ -477,7 +470,7 @@ export function applyResult(
     ? { stintId: mostRecentOpen.stintId, questId: mostRecentOpen.questId }
     : null;
 
-  // The session may legitimately hold several activities open at once (a lead
+  // The session may legitimately hold several stints open at once (a lead
   // coordinating two quests, a session running parallel subagents), so a
   // switch never closes anything -- it only marks the nexus event for
   // side-quest branching. A switch's quest counts as a branch only when it is
@@ -502,10 +495,10 @@ export function applyResult(
       continue;
     }
 
-    // An activity opens when the work started, not when the classifier ran. For a
+    // A stint opens when the work started, not when the classifier ran. For a
     // live run the two are minutes apart, but backfill classifies history with
     // `now` set to the run's own clock: stamping `opened_at` with it put every
-    // activity days after the traces it owns, which is what made measured
+    // stint days after the traces it owns, which is what made measured
     // durations negative and left `opened_at < windowEnd` unable to hold.
     const {
       stintId,
@@ -531,19 +524,19 @@ export function applyResult(
     if (unknownStintId) {
       summary.unknownStintIds += 1;
       options.log(
-        `w5 unknown activity id: classifier named ${segment.matchedStint ?? segment.continuesStint ?? "none"}, which is not an open activity in the window; opened ${stintId} instead`,
+        `w5 unknown stint id: classifier named ${segment.matchedStint ?? segment.continuesStint ?? "none"}, which is not an open stint in the window; opened ${stintId} instead`,
       );
     }
     if (questProposedOnMatched) {
       summary.questProposedOnMatched += 1;
       options.log(
-        `w5 quest proposed on matched activity: activity ${stintId} had no quest, attached newly proposed ${questId ?? "none"}`,
+        `w5 quest proposed on matched stint: stint ${stintId} had no quest, attached newly proposed ${questId ?? "none"}`,
       );
     }
     if (questConflict) {
       summary.doubts += 1;
       options.log(
-        `w5 quest conflict: activity ${stintId} keeps quest ${questId ?? "none"}, classifier said ${segment.matchedQuest ?? "none"}`,
+        `w5 quest conflict: stint ${stintId} keeps quest ${questId ?? "none"}, classifier said ${segment.matchedQuest ?? "none"}`,
       );
     }
 

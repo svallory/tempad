@@ -107,8 +107,8 @@ export async function runOnce(
       .get(job.sessionId) as { last_message_ts: string | null } | null;
     const sinceTs = runRow?.last_message_ts ?? null;
 
-    // Idle-close before the window is built, so the classifier's "open activities
-    // this session" slice never offers an activity that idleness already ended.
+    // Idle-close before the window is built, so the classifier's "open stints
+    // this session" slice never offers a stint that idleness already ended.
     closeIdleStints(store, database, {
       sessionId: job.sessionId,
       windowStartedAt: windowStartedAt(database, job.sessionId, sinceTs) ?? now,

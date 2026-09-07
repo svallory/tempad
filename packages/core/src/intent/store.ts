@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { EVENT_KINDS, type EventInput, type EventKind, type EventRecord } from "./events";
+import { rawKindsFor, translateLegacyKind, translateLegacyPayload } from "./legacy";
 
 interface Row {
   id: number;
@@ -13,15 +14,16 @@ interface Row {
 }
 
 function toRecord(row: Row): EventRecord {
+  const kind = translateLegacyKind(row.kind);
   return {
     id: row.id,
     at: row.at,
     recordedAt: row.recorded_at,
     actor: row.actor as EventRecord["actor"],
     sessionId: row.session_id,
-    kind: row.kind as EventKind,
+    kind: kind as EventKind,
     subject: row.subject,
-    payload: JSON.parse(row.payload) as Record<string, unknown>,
+    payload: translateLegacyPayload(kind, JSON.parse(row.payload) as Record<string, unknown>),
   };
 }
 
@@ -61,8 +63,13 @@ export class EventStore {
       parameters.push(options.subject);
     }
     if (options.kind) {
-      clauses.push("kind = ?");
-      parameters.push(options.kind);
+      // `options.kind` is a decoded name, but the column holds the kind as it
+      // was written, so a plain `kind = ?` would miss every pre-rename row.
+      // Match the whole set of raw kinds that decode to it instead -- without
+      // this, `read({ kind })` silently bypasses the translation boundary.
+      const rawKinds = rawKindsFor(options.kind);
+      clauses.push(`kind IN (${rawKinds.map(() => "?").join(", ")})`);
+      parameters.push(...rawKinds);
     }
     if (options.until) {
       clauses.push("at <= ?");

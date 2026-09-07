@@ -9,9 +9,9 @@ export const questProjection: Projection = {
       id TEXT PRIMARY KEY,
       owner_kind TEXT NOT NULL,
       owner_id TEXT NOT NULL,
-      goal_id TEXT,
+      serves TEXT,
       title TEXT NOT NULL,
-      objective TEXT,
+      outcome TEXT,
       done_condition TEXT,
       due TEXT,
       budget_minutes INTEGER,
@@ -22,7 +22,7 @@ export const questProjection: Projection = {
       state TEXT NOT NULL DEFAULT 'started',
       state_reason TEXT,
       merged_into TEXT,
-      origin_activity_id TEXT,
+      deviates_from_stint_id TEXT,
       branched_at TEXT,
       trigger TEXT,
       branch_kind TEXT,
@@ -41,16 +41,16 @@ export const questProjection: Projection = {
         database
           .query(
             `INSERT OR REPLACE INTO quests
-              (id, owner_kind, owner_id, goal_id, title, objective, done_condition, due, budget_minutes, commitment, confirmed, origin_kind, revision, state, created_at)
+              (id, owner_kind, owner_id, serves, title, outcome, done_condition, due, budget_minutes, commitment, confirmed, origin_kind, revision, state, created_at)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'started', ?)`,
           )
           .run(
             event.subject,
             owner.kind,
             owner.id,
-            payload.goal ? String(payload.goal) : null,
+            payload.serves ? String(payload.serves) : null,
             String(payload.title),
-            payload.objective ? String(payload.objective) : null,
+            payload.outcome ? String(payload.outcome) : null,
             payload.done_condition ? String(payload.done_condition) : null,
             payload.due ? String(payload.due) : null,
             payload.budget_minutes !== undefined ? Number(payload.budget_minutes) : null,
@@ -64,11 +64,11 @@ export const questProjection: Projection = {
       case "quest.reworded":
         database
           .query(
-            "UPDATE quests SET title = COALESCE(?, title), objective = COALESCE(?, objective), revision = revision + 1 WHERE id = ?",
+            "UPDATE quests SET title = COALESCE(?, title), outcome = COALESCE(?, outcome), revision = revision + 1 WHERE id = ?",
           )
           .run(
             payload.title !== undefined ? String(payload.title) : null,
-            payload.objective !== undefined ? String(payload.objective) : null,
+            payload.outcome !== undefined ? String(payload.outcome) : null,
             event.subject,
           );
         return;
@@ -102,10 +102,10 @@ export const questProjection: Projection = {
       case "quest.branched":
         database
           .query(
-            "UPDATE quests SET origin_activity_id = ?, branched_at = ?, trigger = ?, branch_kind = ? WHERE id = ?",
+            "UPDATE quests SET deviates_from_stint_id = ?, branched_at = ?, trigger = ?, branch_kind = ? WHERE id = ?",
           )
           .run(
-            String(payload.from_activity),
+            String(payload.deviates_from),
             String(payload.at ?? event.at),
             String(payload.trigger),
             String(payload.kind),

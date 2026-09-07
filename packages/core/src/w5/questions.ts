@@ -193,8 +193,8 @@ export function advanceQuestions(
 
     const trace = database
       .query(
-        `SELECT traces.id as traceId, activities.quest_id as questId
-           FROM traces JOIN activities ON activities.id = traces.activity_id
+        `SELECT traces.id as traceId, stints.quest_id as questId
+           FROM traces JOIN stints ON stints.id = traces.stint_id
           WHERE traces.id = ?`,
       )
       .get(row.traceId) as { traceId: string; questId: string | null } | null;
@@ -208,9 +208,9 @@ export function advanceQuestions(
     if (newTurnsWatched < config.watchTurns) continue;
 
     // The verifier's two kinds carry their own reason to ask, so they promote on
-    // the watch_turns rule alone. The activity heuristic below is inference-only:
+    // the watch_turns rule alone. The stint heuristic below is inference-only:
     // it asks when a stretch of work has no quest, but in declared mode every
-    // activity is given the declared quest, so a `belongs` question would never
+    // stint is given the declared quest, so a `belongs` question would never
     // qualify and would sit in `watching` forever -- never asked, never expired.
     const qualifiesByKind = row.kind === "belongs" || row.kind === "declare";
     const qualifiesOnSwitch = row.kind === "which_quest" && row.isSwitch;

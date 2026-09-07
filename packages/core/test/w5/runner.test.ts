@@ -135,7 +135,7 @@ const THREE_WINDOW_MESSAGES = [
   ["w1b", "2026-09-04T15:10:00.000Z", "still on walk order"],
   ["w2a", "2026-09-04T15:20:00.000Z", "same bug, new idea"],
   ["w2b", "2026-09-04T15:30:00.000Z", "almost there"],
-  // Two hours later: past activityIdleMinutes, so the activity closes as idle.
+  // Two hours later: past activityIdleMinutes, so the stint closes as idle.
   ["w3a", "2026-09-04T17:30:00.000Z", "back to the walk order bug"],
   ["w3b", "2026-09-04T17:40:00.000Z", "fixed it"],
 ] as const;
@@ -342,7 +342,7 @@ describe("runOnce", () => {
     }
   });
 
-  test("a session_end job closes every open activity of the session and clears the note", async () => {
+  test("a session_end job closes every open stint of the session and clears the note", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tempad-runner-test-"));
     try {
       const database = openDatabase(":memory:");
@@ -362,11 +362,11 @@ describe("runOnce", () => {
       });
 
       const open = database
-        .query("SELECT COUNT(*) as count FROM activities WHERE closed_at IS NULL")
+        .query("SELECT COUNT(*) as count FROM stints WHERE closed_at IS NULL")
         .get() as { count: number };
       expect(open.count).toBe(0);
 
-      const closed = database.query("SELECT close_reason FROM activities").all() as {
+      const closed = database.query("SELECT close_reason FROM stints").all() as {
         close_reason: string | null;
       }[];
       expect(closed.every((row) => row.close_reason === "session_end")).toBe(true);
@@ -381,7 +381,7 @@ describe("runOnce", () => {
     }
   });
 
-  test("three windows of one session: windows 2 and 3 reuse window 1's activity, the idle gap makes window 3 continue it", async () => {
+  test("three windows of one session: windows 2 and 3 reuse window 1's stint, the idle gap makes window 3 continue it", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tempad-runner-test-"));
     try {
       const database = openDatabase(":memory:");
@@ -390,7 +390,7 @@ describe("runOnce", () => {
       seedThreeWindowSession(database, filePath, 2);
 
       // The classifier reuses whatever candidate the window slice offers: an open
-      // activity via matchedActivity, else a closed one via continuesActivity.
+      // stint via matchedStint, else a closed one via continuesStint.
       class MemoryClassifier implements Classifier {
         public sawOpenCandidates: number[] = [];
         async classify(window: ClassifierWindow): Promise<ClassifierResult> {
@@ -437,16 +437,16 @@ describe("runOnce", () => {
       await runAt("2026-09-04T17:41:00.000Z", 6);
 
       const stints = database
-        .query("SELECT id, continues, close_reason FROM activities ORDER BY opened_at")
+        .query("SELECT id, continues, close_reason FROM stints ORDER BY opened_at")
         .all() as { id: string; continues: string | null; close_reason: string | null }[];
 
-      // Window 1 opened one activity; window 2 reused it; the idle gap closed it and
+      // Window 1 opened one stint; window 2 reused it; the idle gap closed it and
       // window 3 opened exactly one more that points back at it.
       expect(stints).toHaveLength(2);
       expect(stints[0]?.close_reason).toBe("idle");
       expect(stints[1]?.continues).toBe(stints[0]?.id);
 
-      // Window 2 saw window 1's activity still open; window 3 saw none open (idle-closed).
+      // Window 2 saw window 1's stint still open; window 3 saw none open (idle-closed).
       expect(classifier.sawOpenCandidates).toEqual([0, 1, 0]);
 
       const traceCount = database.query("SELECT COUNT(*) as count FROM traces").get() as {
@@ -514,7 +514,7 @@ describe("runOnce in declared mode", () => {
       expect(
         (database.query("SELECT COUNT(*) as count FROM quests").get() as { count: number }).count,
       ).toBe(0);
-      const stint = database.query("SELECT quest_id as questId FROM activities").get() as {
+      const stint = database.query("SELECT quest_id as questId FROM stints").get() as {
         questId: string | null;
       };
       expect(stint.questId).toBeNull();
@@ -535,7 +535,7 @@ describe("runOnce drives a belongs question to the user", () => {
       const store = new EventStore(database);
       database
         .query(
-          `INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at, origin_kind)
+          `INSERT INTO quests (id, owner_kind, owner_id, title, outcome, confirmed, revision, state, created_at, origin_kind)
            VALUES ('Q1', 'hero', 'H1', 'Ship marko-ui', '86 components', 1, 1, 'started', '2026-09-01T00:00:00.000Z', 'declared')`,
         )
         .run();

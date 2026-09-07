@@ -56,9 +56,9 @@ function openStint(
     database,
     store.append({
       actor: "hook",
-      kind: "activity.opened",
+      kind: "stint.opened",
       subject: id,
-      payload: { aim: "work", quest },
+      payload: { outcome: "work", quest },
       at,
     }),
   );
@@ -80,7 +80,7 @@ function createQuest(
       payload: {
         owner: { kind: "hero", id: heroId },
         title: "Ship",
-        aim: "obj",
+        outcome: "obj",
         commitment: "focused",
         confirmed,
       },
@@ -129,12 +129,12 @@ describe("w5 dedupe", () => {
     expect(liveTraces.n).toBe(2);
   });
 
-  test("without --dry-run: keeps earliest trace; a duplicate on its own activity/quest orphans both, cascading", () => {
+  test("without --dry-run: keeps earliest trace; a duplicate on its own stint/quest orphans both, cascading", () => {
     const database = openDatabase(":memory:");
     const store = new EventStore(database);
     const heroId = seedHero(database, store);
     // The window was classified twice by two crashed-then-relaunched backfill
-    // runs, each opening its own activity (and quest) for it -- the real
+    // runs, each opening its own stint (and quest) for it -- the real
     // incident's shape, per the brief's Facts section.
     createQuest(store, database, "Q1", heroId, false);
     createQuest(store, database, "Q2", heroId, false);
@@ -168,14 +168,14 @@ describe("w5 dedupe", () => {
     };
     expect(trace2.retracted_at).not.toBeNull();
 
-    const activity1 = database
-      .query("SELECT retracted_at FROM activities WHERE id = 'A1'")
-      .get() as { retracted_at: string | null };
+    const activity1 = database.query("SELECT retracted_at FROM stints WHERE id = 'A1'").get() as {
+      retracted_at: string | null;
+    };
     expect(activity1.retracted_at).toBeNull();
 
-    const activity2 = database
-      .query("SELECT retracted_at FROM activities WHERE id = 'A2'")
-      .get() as { retracted_at: string | null };
+    const activity2 = database.query("SELECT retracted_at FROM stints WHERE id = 'A2'").get() as {
+      retracted_at: string | null;
+    };
     expect(activity2.retracted_at).not.toBeNull();
 
     const quest1 = database.query("SELECT retracted_at FROM quests WHERE id = 'Q1'").get() as {
@@ -193,7 +193,7 @@ describe("w5 dedupe", () => {
     expect(second).toEqual({ traces: 0, stints: 0, quests: 0 });
   });
 
-  test("an activity with a surviving live trace is not retracted", () => {
+  test("a stint with a surviving live trace is not retracted", () => {
     const database = openDatabase(":memory:");
     const store = new EventStore(database);
     const heroId = seedHero(database, store);
@@ -213,8 +213,8 @@ describe("w5 dedupe", () => {
       startedAt: "2026-08-31T14:00:00.000Z",
       endedAt: "2026-08-31T14:30:00.000Z",
     });
-    // A distinct, non-duplicate trace on the same activity -- it must keep
-    // the activity (and its quest) alive after the duplicate is retracted.
+    // A distinct, non-duplicate trace on the same stint -- it must keep
+    // the stint (and its quest) alive after the duplicate is retracted.
     recordTrace(store, database, {
       id: "T3",
       stintId: "A1",
@@ -226,13 +226,13 @@ describe("w5 dedupe", () => {
     const result = dedupe(database, { dryRun: false });
     expect(result).toEqual({ traces: 1, stints: 0, quests: 0 });
 
-    const stint = database
-      .query("SELECT retracted_at FROM activities WHERE id = 'A1'")
-      .get() as { retracted_at: string | null };
+    const stint = database.query("SELECT retracted_at FROM stints WHERE id = 'A1'").get() as {
+      retracted_at: string | null;
+    };
     expect(stint.retracted_at).toBeNull();
   });
 
-  test("a confirmed quest is not retracted even if its only activity is orphaned", () => {
+  test("a confirmed quest is not retracted even if its only stint is orphaned", () => {
     const database = openDatabase(":memory:");
     const store = new EventStore(database);
     const heroId = seedHero(database, store);
@@ -261,9 +261,9 @@ describe("w5 dedupe", () => {
     const result = dedupe(database, { dryRun: false });
     expect(result).toEqual({ traces: 1, stints: 1, quests: 0 });
 
-    const activity1 = database
-      .query("SELECT retracted_at FROM activities WHERE id = 'A1'")
-      .get() as { retracted_at: string | null };
+    const activity1 = database.query("SELECT retracted_at FROM stints WHERE id = 'A1'").get() as {
+      retracted_at: string | null;
+    };
     expect(activity1.retracted_at).not.toBeNull();
 
     const quest1 = database.query("SELECT retracted_at FROM quests WHERE id = 'Q1'").get() as {

@@ -8,7 +8,7 @@ export type BranchKind = "waiting" | "blocker" | "curiosity" | "unknown";
 
 export interface NewQuestInput {
   title: string;
-  aim: string;
+  outcome: string;
   commitment: Commitment;
   project?: string;
   origin?: string;
@@ -53,7 +53,7 @@ export function declareQuest(
         payload: {
           owner: { kind: "hero", id: input.heroId },
           title: input.newQuest.title,
-          aim: input.newQuest.aim,
+          outcome: input.newQuest.outcome,
           commitment: input.newQuest.commitment,
           confirmed: true,
           origin_kind: "declared",
@@ -70,7 +70,7 @@ export function declareQuest(
           subject: input.newQuest.origin,
           at: input.at,
           payload: {
-            from_activity: questId,
+            deviates_from: questId,
             trigger: input.newQuest.trigger ?? "unknown",
             kind: input.newQuest.kind ?? "unknown",
           },
@@ -97,7 +97,7 @@ export function declareQuest(
         new: input.newQuest
           ? {
               title: input.newQuest.title,
-              aim: input.newQuest.aim,
+              outcome: input.newQuest.outcome,
               commitment: input.newQuest.commitment,
               project: input.newQuest.project,
               origin: input.newQuest.origin,
@@ -120,7 +120,7 @@ export function declareQuest(
 export interface DeclaredQuest {
   questId: string;
   title: string;
-  aim: string | null;
+  outcome: string | null;
   plan: string[];
   scope: "session" | "subagent";
   parentSessionId: string | null;
@@ -161,13 +161,13 @@ function resolveDeclaration(
     const questId = payload.quest_id;
     if (!questId) continue;
     const quest = database
-      .query("SELECT title, objective FROM quests WHERE id = ? AND retracted_at IS NULL")
-      .get(questId) as { title: string; aim: string | null } | null;
+      .query("SELECT title, outcome FROM quests WHERE id = ? AND retracted_at IS NULL")
+      .get(questId) as { title: string; outcome: string | null } | null;
     if (!quest) continue;
     return {
       questId,
       title: quest.title,
-      aim: quest.aim,
+      outcome: quest.outcome,
       plan: payload.plan,
       scope: payload.scope as "session" | "subagent",
       parentSessionId: payload.parent_session_id ?? null,

@@ -188,7 +188,7 @@ describe("projectReport", () => {
     );
     declareQuest(store, database, {
       sessionId: "session-1",
-      newQuest: { title: "Ship p", aim: "ship it", commitment: "personal" },
+      newQuest: { title: "Ship p", outcome: "ship it", commitment: "personal" },
       plan: [],
       scope: "session",
       declaredBy: "agent",
@@ -229,7 +229,7 @@ describe("projectReport", () => {
     );
     declareQuest(store, database, {
       sessionId: "session-monday",
-      newQuest: { title: "Ship beta", aim: "ship it", commitment: "personal" },
+      newQuest: { title: "Ship beta", outcome: "ship it", commitment: "personal" },
       plan: [],
       scope: "session",
       declaredBy: "agent",

@@ -155,7 +155,7 @@ describe("hourlyReport", () => {
     database.close();
   });
 
-  test("activities active in an hour show their quest title and clipped minutes", () => {
+  test("stints active in an hour show their quest title and clipped minutes", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     seedReportFixtures(database);
 
@@ -164,12 +164,12 @@ describe("hourlyReport", () => {
       to: "2026-09-01",
     });
 
-    // trace-1 (activity-1, quest-1) runs 12:15-12:40Z = 09:15-09:40 local:
+    // trace-1 (stint-1, quest-1) runs 12:15-12:40Z = 09:15-09:40 local:
     // 25 minutes entirely inside the 09:00 local hour.
     expect(output).toContain("Polish the report output (25m)");
     // trace-2 runs 13:00-13:45Z = 10:00-10:45 local: 45 minutes inside 10:00.
     expect(output).toContain("Polish the report output (45m)");
-    // trace-3 (activity-2, quest-2, unconfirmed side quest) runs
+    // trace-3 (stint-2, quest-2, unconfirmed side quest) runs
     // 12:40-13:00Z = 09:40-10:00 local: entirely inside the 09:00 hour.
     expect(output).toContain("Investigate flaky commit grouping (20m)");
 

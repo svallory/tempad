@@ -1,16 +1,15 @@
 import type { Projection } from "./index";
 
 export const stintProjection: Projection = {
-  name: "activities",
-  tables: ["activities", "traces", "trace_links", "questions"],
+  name: "stints",
+  tables: ["stints", "traces", "trace_links", "questions"],
   createSql: `
-    CREATE TABLE IF NOT EXISTS activities (
+    CREATE TABLE IF NOT EXISTS stints (
       id TEXT PRIMARY KEY,
       quest_id TEXT,
-      objective TEXT NOT NULL,
+      outcome TEXT NOT NULL,
       opened_at TEXT NOT NULL,
       closed_at TEXT,
-      outcome TEXT,
       revision INTEGER NOT NULL DEFAULT 1,
       retracted_at TEXT,
       continues TEXT,
@@ -18,7 +17,7 @@ export const stintProjection: Projection = {
     );
     CREATE TABLE IF NOT EXISTS traces (
       id TEXT PRIMARY KEY,
-      activity_id TEXT NOT NULL,
+      stint_id TEXT NOT NULL,
       tool TEXT NOT NULL,
       place TEXT NOT NULL,
       source TEXT NOT NULL,
@@ -38,7 +37,7 @@ export const stintProjection: Projection = {
     );
     CREATE TABLE IF NOT EXISTS trace_links (
       trace_id TEXT NOT NULL,
-      activity_id TEXT NOT NULL,
+      stint_id TEXT NOT NULL,
       linked_at TEXT NOT NULL,
       superseded_at TEXT,
       reason TEXT
@@ -62,49 +61,44 @@ export const stintProjection: Projection = {
   apply(database, event) {
     const payload = event.payload;
     switch (event.kind) {
-      case "activity.opened":
+      case "stint.opened":
         database
           .query(
-            "INSERT OR REPLACE INTO activities (id, quest_id, objective, opened_at, revision, continues) VALUES (?, ?, ?, ?, 1, ?)",
+            "INSERT OR REPLACE INTO stints (id, quest_id, outcome, opened_at, revision, continues) VALUES (?, ?, ?, ?, 1, ?)",
           )
           .run(
             event.subject,
             payload.quest ? String(payload.quest) : null,
-            String(payload.objective),
+            String(payload.outcome),
             event.at,
             payload.continues ? String(payload.continues) : null,
           );
         return;
-      case "activity.reworded":
+      case "stint.reworded":
         database
-          .query("UPDATE activities SET objective = ?, revision = revision + 1 WHERE id = ?")
-          .run(String(payload.objective), event.subject);
+          .query("UPDATE stints SET outcome = ?, revision = revision + 1 WHERE id = ?")
+          .run(String(payload.outcome), event.subject);
         return;
-      case "activity.closed":
+      case "stint.closed":
         database
-          .query("UPDATE activities SET closed_at = ?, outcome = ?, close_reason = ? WHERE id = ?")
-          .run(
-            event.at,
-            payload.outcome ? String(payload.outcome) : null,
-            payload.reason ? String(payload.reason) : null,
-            event.subject,
-          );
+          .query("UPDATE stints SET closed_at = ?, close_reason = ? WHERE id = ?")
+          .run(event.at, payload.reason ? String(payload.reason) : null, event.subject);
         return;
-      case "activity.assigned":
+      case "stint.assigned":
         database
-          .query("UPDATE activities SET quest_id = ? WHERE id = ?")
+          .query("UPDATE stints SET quest_id = ? WHERE id = ?")
           .run(String(payload.quest), event.subject);
         return;
       case "trace.recorded":
         database
           .query(
             `INSERT OR REPLACE INTO traces
-              (id, activity_id, tool, place, source, source_ref, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+              (id, stint_id, tool, place, source, source_ref, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             event.subject,
-            String(payload.activity),
+            String(payload.stint),
             String(payload.tool),
             String(payload.place),
             String(payload.source),
@@ -123,9 +117,9 @@ export const stintProjection: Projection = {
           );
         database
           .query(
-            "INSERT INTO trace_links (trace_id, activity_id, linked_at, superseded_at, reason) VALUES (?, ?, ?, NULL, NULL)",
+            "INSERT INTO trace_links (trace_id, stint_id, linked_at, superseded_at, reason) VALUES (?, ?, ?, NULL, NULL)",
           )
-          .run(event.subject, String(payload.activity), event.at);
+          .run(event.subject, String(payload.stint), event.at);
         return;
       case "trace.relinked":
         database
@@ -135,17 +129,17 @@ export const stintProjection: Projection = {
           .run(event.at, event.subject);
         database
           .query(
-            "INSERT INTO trace_links (trace_id, activity_id, linked_at, superseded_at, reason) VALUES (?, ?, ?, NULL, ?)",
+            "INSERT INTO trace_links (trace_id, stint_id, linked_at, superseded_at, reason) VALUES (?, ?, ?, NULL, ?)",
           )
           .run(
             event.subject,
-            String(payload.activity),
+            String(payload.stint),
             event.at,
             payload.reason ? String(payload.reason) : null,
           );
         database
-          .query("UPDATE traces SET activity_id = ? WHERE id = ?")
-          .run(String(payload.activity), event.subject);
+          .query("UPDATE traces SET stint_id = ? WHERE id = ?")
+          .run(String(payload.stint), event.subject);
         return;
       case "question.asked":
         database
@@ -191,14 +185,14 @@ export const stintProjection: Projection = {
         return;
       case "retracted":
         // `event.subject` is the id of the retracted row. It names at most
-        // one of a trace or an activity (ids are ULIDs from one global
+        // one of a trace or a stint (ids are ULIDs from one global
         // sequence, so exactly one of these UPDATEs ever matches a row);
         // the quest case lives in quest.ts's own apply.
         database
           .query("UPDATE traces SET retracted_at = ? WHERE id = ? AND retracted_at IS NULL")
           .run(event.at, event.subject);
         database
-          .query("UPDATE activities SET retracted_at = ? WHERE id = ? AND retracted_at IS NULL")
+          .query("UPDATE stints SET retracted_at = ? WHERE id = ? AND retracted_at IS NULL")
           .run(event.at, event.subject);
         return;
       default:

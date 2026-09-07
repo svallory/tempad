@@ -17,21 +17,21 @@ describe("event store", () => {
     const subject = newUlid();
     const one = store.append({
       actor: "hero",
-      kind: "goal.created",
+      kind: "saga.created",
       subject,
       payload: { title: "a" },
     });
     const two = store.append({
       actor: "hero",
-      kind: "goal.reworded",
+      kind: "saga.reworded",
       subject,
       payload: { title: "b" },
     });
     expect(one.id).toBeLessThan(two.id);
     expect(one.recordedAt).toMatch(/Z$/);
     expect(store.read({ subject }).map((event) => event.kind)).toEqual([
-      "goal.created",
-      "goal.reworded",
+      "saga.created",
+      "saga.reworded",
     ]);
   });
 
@@ -42,14 +42,14 @@ describe("event store", () => {
     store.append({
       at: "2026-08-01T00:00:00.000Z",
       actor: "hero",
-      kind: "goal.created",
+      kind: "saga.created",
       subject,
       payload: {},
     });
     store.append({
       at: "2026-09-01T00:00:00.000Z",
       actor: "hero",
-      kind: "goal.ended",
+      kind: "saga.ended",
       subject,
       payload: { reason: "achieved" },
     });
