@@ -68,6 +68,13 @@ export interface TraceInput {
   classifiedBy: string;
   actor: Actor;
   sessionId?: string;
+  /**
+   * Declared mode only: the verifier's per-segment verdict, carried on the
+   * event so it survives into the `traces.doubt` column even when no question
+   * is ever asked about it. Absent for an inference-mode trace.
+   */
+  belongs?: boolean;
+  guess?: string | null;
 }
 
 export function recordTrace(store: EventStore, database: Database, input: TraceInput): string {
@@ -94,6 +101,8 @@ export function recordTrace(store: EventStore, database: Database, input: TraceI
         how: input.how,
         confidence: input.confidence,
         classified_by: input.classifiedBy,
+        belongs: input.belongs,
+        guess: input.guess,
       },
     }),
   );

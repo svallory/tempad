@@ -1122,6 +1122,64 @@ describe("applyResult in declared mode", () => {
     expect(stint.questId).toBe(questId);
   });
 
+  test("a doubt is recorded on the trace even when asking is disabled, and logged once", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seedDeclared(database);
+    const lines: string[] = [];
+
+    const summary = applyResult(
+      store,
+      database,
+      declaredWindow,
+      {
+        segments: [
+          segment({
+            stint: "S1",
+            belongs: false,
+            quest: null,
+            guess: "a competitor comparison",
+          }),
+        ],
+        sessionNote: null,
+      },
+      { ...declaredOptions, askingEnabled: false, log: (line) => lines.push(line) },
+    );
+
+    expect(summary.doubts).toBe(1);
+    // No question is created when asking is disabled, but the doubt is still
+    // auditable straight off the trace.
+    expect(
+      (database.query("SELECT COUNT(*) as count FROM questions").get() as { count: number }).count,
+    ).toBe(0);
+    const trace = database.query("SELECT doubt FROM traces WHERE id != 'T0'").get() as {
+      doubt: string | null;
+    };
+    expect(trace.doubt).toBe("a competitor comparison");
+    expect(
+      lines.some((line) =>
+        /^w5 doubt: session s1 stint .+ guess "a competitor comparison"$/.test(line),
+      ),
+    ).toBe(true);
+  });
+
+  test("a belonging segment records a trace with no doubt", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seedDeclared(database);
+
+    applyResult(
+      store,
+      database,
+      declaredWindow,
+      { segments: [segment({})], sessionNote: null },
+      declaredOptions,
+    );
+
+    const trace = database.query("SELECT doubt FROM traces WHERE id != 'T0'").get() as {
+      doubt: string | null;
+    };
+    expect(trace.doubt).toBeNull();
+  });
+
   test("declared mode never emits quest.created, quest.branched or a reassignment", () => {
     const database = openDatabase(":memory:");
     const { store } = seedDeclared(database);
@@ -1147,6 +1205,7 @@ describe("applyResult in declared mode", () => {
             endedAt: "2026-09-04T15:20:00.000Z",
             isSwitch: true,
             what: "something else",
+            stint: "new: an unrelated fresh stretch of work",
           }),
         ],
         sessionNote: null,
@@ -1188,6 +1247,110 @@ describe("applyResult in declared mode", () => {
     expect(opened.questId).toBe(questId);
   });
 
+  test("new: whose text matches an open stint of the session reuses it, like S would", () => {
+    const database = openDatabase(":memory:");
+    const { store, questId } = seedDeclared(database);
+    const outcome = "Generate whats-new feature screenshots and e2e tests";
+
+    const summary = applyResult(
+      store,
+      database,
+      declaredWindow,
+      { segments: [segment({ stint: `new: ${outcome}` })], sessionNote: null },
+      declaredOptions,
+    );
+    const firstStint = database.query("SELECT id FROM stints WHERE id != 'A1'").get() as {
+      id: string;
+    };
+    expect(summary.stintsOpened).toBe(1);
+
+    // Same outcome text, opened again in a later window of the same session --
+    // this used to open a duplicate stint every time (the Sep 2 eval saw the
+    // same outcome opened as a `new:` stint up to 5 times in one session).
+    const secondSummary = applyResult(
+      store,
+      database,
+      declaredWindow,
+      { segments: [segment({ stint: `new: ${outcome}` })], sessionNote: null },
+      declaredOptions,
+    );
+    expect(secondSummary.stintsOpened).toBe(0);
+    const stints = database.query("SELECT id, quest_id as questId FROM stints").all() as {
+      id: string;
+      questId: string | null;
+    }[];
+    expect(stints).toHaveLength(2); // seed's A1 plus the one reused stint
+    const reused = stints.find((stint) => stint.id === firstStint.id);
+    expect(reused?.questId).toBe(questId);
+  });
+
+  test("new: whose text matches a closed non-dismissed stint of the session opens a new one with continues", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seedDeclared(database);
+    const outcome = "Capture 3 admin screenshots for the release notes";
+
+    const opened = applyResult(
+      store,
+      database,
+      declaredWindow,
+      { segments: [segment({ stint: `new: ${outcome}` })], sessionNote: null },
+      declaredOptions,
+    );
+    expect(opened.stintsOpened).toBe(1);
+    const firstStint = database.query("SELECT id FROM stints WHERE outcome = ?").get(outcome) as {
+      id: string;
+    };
+
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hook",
+        kind: "stint.closed",
+        subject: firstStint.id,
+        payload: { reason: "idle" },
+      }),
+    );
+
+    const again = applyResult(
+      store,
+      database,
+      declaredWindow,
+      { segments: [segment({ stint: `new: ${outcome}` })], sessionNote: null },
+      declaredOptions,
+    );
+    expect(again.stintsOpened).toBe(1);
+    const stints = database
+      .query(
+        "SELECT id, continues as continues FROM stints WHERE outcome = ? ORDER BY opened_at ASC",
+      )
+      .all(outcome) as { id: string; continues: string | null }[];
+    expect(stints).toHaveLength(2);
+    expect(stints[1]?.continues).toBe(firstStint.id);
+  });
+
+  test("new: whose text matches nothing open or closed opens a fresh stint", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seedDeclared(database);
+
+    const summary = applyResult(
+      store,
+      database,
+      declaredWindow,
+      {
+        segments: [segment({ stint: "new: a genuinely fresh stretch of work" })],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+
+    expect(summary.stintsOpened).toBe(1);
+    const stint = database
+      .query("SELECT outcome, continues as continues FROM stints WHERE id != 'A1'")
+      .get() as { outcome: string; continues: string | null };
+    expect(stint.outcome).toBe("a genuinely fresh stretch of work");
+    expect(stint.continues).toBeNull();
+  });
+
   test("an alias is mapped back to the real stint id it stands for", () => {
     const database = openDatabase(":memory:");
     const { store } = seedDeclared(database);
@@ -1223,7 +1386,11 @@ describe("applyResult in declared mode", () => {
       {
         segments: [
           segment({}),
-          segment({ startedAt: "2026-09-04T15:20:00.000Z", endedAt: "2026-09-04T15:20:00.000Z" }),
+          segment({
+            startedAt: "2026-09-04T15:20:00.000Z",
+            endedAt: "2026-09-04T15:20:00.000Z",
+            stint: "new: an unrelated fresh stretch of work",
+          }),
         ],
         sessionNote: null,
       },

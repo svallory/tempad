@@ -185,6 +185,14 @@ export const DEFAULT_NEW_STINT_REASON = "classifier gave no reason";
 export const UNRECOGNIZED_QUEST_ALIAS_GUESS = "unrecognized quest alias";
 
 /**
+ * The guess repaired onto a `belongs: true` segment with a missing or null
+ * `quest` when two or more quests are active -- there is no single quest left
+ * to default to, so this is a doubt like any other unrecognized alias, never a
+ * validation failure.
+ */
+export const QUEST_NOT_NAMED_GUESS = "quest not named";
+
+/**
  * Optional fields a model routinely omits rather than sending as `null`. JSON has
  * no way to distinguish "absent" from "null" here and the two mean the same thing
  * to us, so absent is normalized to `null` before anything is validated -- a
@@ -221,6 +229,13 @@ interface DeclaredAliases {
   quests: Set<string>;
   openStints: Set<string>;
   plans: Set<string>;
+  /**
+   * The one active quest's alias, set only when the session (plus parent) has
+   * exactly one. A `belongs: true` segment with a missing, null or
+   * unrecognized `quest` then has an unambiguous default to silently assign
+   * instead of surfacing as a doubt.
+   */
+  soleQuest: string | null;
 }
 
 /**
@@ -296,21 +311,37 @@ function validateSegment(
   } else if (typeof segment.belongs !== "boolean") {
     problems.push(`${where}.belongs: expected boolean`);
   } else {
-    // An alias the window never offered places the segment nowhere. The model
-    // meant to place it somewhere, so it becomes a doubt the human can settle
-    // rather than work silently attached to nothing.
-    if (
-      declaredAliases !== null &&
-      segment.belongs === true &&
-      typeof segment.quest === "string" &&
-      !declaredAliases.quests.has(segment.quest)
-    ) {
-      segment.belongs = false;
-      segment.quest = null;
-      if (typeof segment.guess !== "string" || segment.guess.trim() === "") {
-        segment.guess = UNRECOGNIZED_QUEST_ALIAS_GUESS;
+    // A `quest` that names nothing the window offered: missing, null, or an
+    // alias the window never listed. With exactly one active quest there is
+    // an unambiguous default to assign silently; with none or several it is a
+    // doubt like any other unrecognized alias, never a validation failure.
+    if (segment.belongs === true && declaredAliases !== null) {
+      const questIsUnrecognized =
+        typeof segment.quest === "string" && !declaredAliases.quests.has(segment.quest);
+      const questIsMissing = segment.quest === null || segment.quest === undefined;
+
+      if ((questIsMissing || questIsUnrecognized) && declaredAliases.soleQuest !== null) {
+        segment.quest = declaredAliases.soleQuest;
+      } else if (questIsUnrecognized) {
+        segment.belongs = false;
+        segment.quest = null;
+        if (typeof segment.guess !== "string" || segment.guess.trim() === "") {
+          segment.guess = UNRECOGNIZED_QUEST_ALIAS_GUESS;
+        }
+        counters.selectorDefaulted += 1;
+      } else if (questIsMissing && declaredAliases.quests.size >= 2) {
+        // No single quest to default to, but failing the whole window over a
+        // missing selector loses a real stretch of work: repaired exactly like
+        // an unrecognized alias, same counter, same doubt.
+        segment.belongs = false;
+        segment.quest = null;
+        segment.guess = QUEST_NOT_NAMED_GUESS;
+        counters.selectorDefaulted += 1;
       }
-      counters.selectorDefaulted += 1;
+      // Zero active quests with `belongs: true` falls through unrepaired: the
+      // session has nothing declared yet, so `needsDeclaration` already asks
+      // to declare for the whole window rather than per segment, and a
+      // `quest` naming nothing here is a genuine validation problem below.
     }
 
     if (segment.belongs === false) {
@@ -465,14 +496,18 @@ export function validateResult(raw: unknown, window?: ClassifierWindow): Classif
   // model's values alone rather than repairing everything into a new stint.
   const declaredAliases: DeclaredAliases | null =
     mode === "declared" && window !== undefined
-      ? {
-          quests: new Set([
+      ? (() => {
+          const questAliasList = [
             ...Object.keys(window.activeQuestAliases ?? {}),
             ...Object.keys(window.parentActiveQuestAliases ?? {}),
-          ]),
-          openStints: new Set(Object.keys(window.openStintAliases ?? {})),
-          plans: new Set(Object.keys(window.planAliases ?? {})),
-        }
+          ];
+          return {
+            quests: new Set(questAliasList),
+            openStints: new Set(Object.keys(window.openStintAliases ?? {})),
+            plans: new Set(Object.keys(window.planAliases ?? {})),
+            soleQuest: questAliasList.length === 1 ? (questAliasList[0] ?? null) : null,
+          };
+        })()
       : null;
 
   const counters: SelectorCounters = { selectorDefaulted: 0, selectorAmbiguous: 0 };

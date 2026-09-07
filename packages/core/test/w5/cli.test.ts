@@ -11,7 +11,7 @@ import { applyIncremental, ensureTables } from "../../src/intent/projections";
 import { registerAllProjections } from "../../src/intent/projections/register";
 import { EventStore } from "../../src/intent/store";
 import type { SpawnFn } from "../../src/w5/cli";
-import { runW5Command } from "../../src/w5/cli";
+import { runReviewCommand, runW5Command } from "../../src/w5/cli";
 
 registerAllProjections();
 
@@ -360,5 +360,56 @@ describe("w5 context", () => {
     });
     expect(code).toBe(0);
     expect(lines.join("\n")).toContain("tempad: session s1, active quests: none.");
+  });
+});
+
+describe("tempad review", () => {
+  test("lists a trace with a recorded doubt even though no question was ever asked", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    database
+      .query(
+        `INSERT INTO traces
+          (id, stint_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at, doubt)
+          VALUES ('T1', 'A1', 'claude-code', 'p', 'session', ?, ?, 'hero', 'a side errand', 'y', 'p', 'claude-code', 0.9, 'assistant', 's1', ?, 'unrecognized quest alias')`,
+      )
+      .run(new Date().toISOString(), new Date().toISOString(), new Date().toISOString());
+
+    const lines: string[] = [];
+    const code = runReviewCommand([], {
+      database,
+      config: makeConfig(mkdtempSync(join(tmpdir(), "tempad-cli-test-"))),
+      intentConfig: defaultIntentConfig(),
+      stdout: (line) => lines.push(line),
+    });
+
+    expect(code).toBe(0);
+    expect(
+      lines.some((line) => line.includes("T1") && line.includes("unrecognized quest alias")),
+    ).toBe(true);
+  });
+
+  test("omits a doubt older than the review window", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    database
+      .query(
+        `INSERT INTO traces
+          (id, stint_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at, doubt)
+          VALUES ('T2', 'A1', 'claude-code', 'p', 'session', ?, ?, 'hero', 'old errand', 'y', 'p', 'claude-code', 0.9, 'assistant', 's1', ?, 'old doubt')`,
+      )
+      .run(old, old, old);
+
+    const lines: string[] = [];
+    const code = runReviewCommand([], {
+      database,
+      config: makeConfig(mkdtempSync(join(tmpdir(), "tempad-cli-test-"))),
+      intentConfig: defaultIntentConfig(),
+      stdout: (line) => lines.push(line),
+    });
+
+    expect(code).toBe(0);
+    expect(lines.some((line) => line.includes("T2"))).toBe(false);
   });
 });

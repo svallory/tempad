@@ -210,3 +210,10 @@ CREATE TABLE w5_quiet (
 -- inserting a line ahead of an unfinished item moves it from `P1.1` to `P1.2`
 -- while naming the same outcome, and keying on the alias would open a second
 -- stint for work already in flight. See docs/specs/2026-09-07-stints-design.md.
+--
+-- Migration 0014_doubt_traces.sql added doubt TEXT to traces (mirrored in the
+-- `stints` projection's CREATE TABLE): the verifier's `guess` for a
+-- `belongs: false` segment, null when the segment belongs. `trace.recorded`
+-- events carry `belongs`/`guess` in declared mode so this column -- and
+-- `tempad review`/`w5 eval`'s `doubts_recorded` -- can audit every doubt
+-- without a question ever having been asked about it.

@@ -36,7 +36,8 @@ export const stintProjection: Projection = {
       classified_by TEXT NOT NULL,
       session_id TEXT,
       recorded_at TEXT NOT NULL,
-      retracted_at TEXT
+      retracted_at TEXT,
+      doubt TEXT
     );
     CREATE TABLE IF NOT EXISTS trace_links (
       trace_id TEXT NOT NULL,
@@ -106,8 +107,8 @@ export const stintProjection: Projection = {
         database
           .query(
             `INSERT OR REPLACE INTO traces
-              (id, stint_id, tool, place, source, source_ref, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              (id, stint_id, tool, place, source, source_ref, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at, doubt)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             event.subject,
@@ -127,6 +128,10 @@ export const stintProjection: Projection = {
             String(payload.classified_by),
             event.sessionId,
             event.recordedAt,
+            // `belongs`/`guess` travel in the payload only when the verifier
+            // recorded a doubt; a plain trace (inference mode, or a belonging
+            // segment) carries neither and this stays null.
+            payload.belongs === false && payload.guess ? String(payload.guess) : null,
           );
         database
           .query(
