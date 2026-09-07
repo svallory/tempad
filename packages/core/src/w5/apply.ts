@@ -469,18 +469,30 @@ export function applyResult(
   // meets stintMinMinutes; the doubt has nothing to dismiss below that (no stint
   // or question was created), so there is no bookkeeping to suppress alongside it.
   const needsDeclaration = declaredMode && declaredQuestId === null;
-  const undeclaredMinutes = needsDeclaration
-    ? result.segments.reduce(
-        (sum, segment) =>
-          sum + (Date.parse(segment.endedAt) - Date.parse(segment.startedAt)) / 60_000,
-        0,
-      )
-    : 0;
-  const declarationDue = needsDeclaration && undeclaredMinutes >= options.stintMinMinutes;
-  let declareAsked = false;
 
   const overlapStart = window.overlapMessages[0]?.ts ?? null;
   const overlapEnd = window.overlapMessages.at(-1)?.ts ?? null;
+  const isOverlapDropped = (segment: ClassifierSegment): boolean =>
+    overlapStart !== null &&
+    overlapEnd !== null &&
+    segment.startedAt >= overlapStart &&
+    segment.endedAt <= overlapEnd;
+
+  // Summed over the same segments the loop below actually records -- an
+  // overlap-dropped segment is context only and must not count toward the
+  // undeclared-time threshold, or the tail alone could trigger a `declare`
+  // question for work that was never recorded this window.
+  const undeclaredMinutes = needsDeclaration
+    ? result.segments
+        .filter((segment) => !isOverlapDropped(segment))
+        .reduce(
+          (sum, segment) =>
+            sum + (Date.parse(segment.endedAt) - Date.parse(segment.startedAt)) / 60_000,
+          0,
+        )
+    : 0;
+  const declarationDue = needsDeclaration && undeclaredMinutes >= options.stintMinMinutes;
+  let declareAsked = false;
 
   const mostRecentOpen = window.sessionOpenStints.at(-1);
   let previous: { stintId: string; questId: string | null } | null = mostRecentOpen
@@ -502,12 +514,7 @@ export function applyResult(
   for (const segment of result.segments) {
     // Belt and braces: the prompt says the overlap tail is context only, but a
     // model that classifies it anyway must not double-record those minutes.
-    if (
-      overlapStart !== null &&
-      overlapEnd !== null &&
-      segment.startedAt >= overlapStart &&
-      segment.endedAt <= overlapEnd
-    ) {
+    if (isOverlapDropped(segment)) {
       summary.overlapDropped += 1;
       continue;
     }
