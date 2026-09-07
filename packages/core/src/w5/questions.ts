@@ -42,7 +42,7 @@ export interface AdvanceQuestionsInput {
   sessionId: string;
   now: string;
   turnsSinceLastRun: number;
-  sessionActivityMinutes: number;
+  sessionStintMinutes: number;
   resolvedByContext: string[];
 }
 
@@ -214,11 +214,11 @@ export function advanceQuestions(
     // qualify and would sit in `watching` forever -- never asked, never expired.
     const qualifiesByKind = row.kind === "belongs" || row.kind === "declare";
     const qualifiesOnSwitch = row.kind === "which_quest" && row.isSwitch;
-    const qualifiesOnActivity =
-      input.sessionActivityMinutes >= config.askMinActivityMinutes &&
+    const qualifiesOnStint =
+      input.sessionStintMinutes >= config.askMinStintMinutes &&
       (trace?.questId === null || trace?.questId === undefined);
 
-    if (!qualifiesByKind && !qualifiesOnSwitch && !qualifiesOnActivity) continue;
+    if (!qualifiesByKind && !qualifiesOnSwitch && !qualifiesOnStint) continue;
     if (hasRecentAsk(database, input.sessionId, input.now, config.askBudgetMinutes)) continue;
     if (hasUnansweredAsked(database, input.sessionId)) continue;
     if (isQuiet(database, input.now)) continue;

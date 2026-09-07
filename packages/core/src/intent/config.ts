@@ -6,16 +6,16 @@ export interface W5Config {
   model: string;
   throttleMinutes: number;
   watchTurns: number;
-  askMinActivityMinutes: number;
+  askMinStintMinutes: number;
   askBudgetMinutes: number;
   askExpireTurns: number;
   backfillDays: number;
   backend: W5Backend;
   claudeCommand: string;
   timeoutSeconds: number;
-  activityIdleMinutes: number;
+  stintIdleMinutes: number;
   memoryHours: number;
-  memoryActivities: number;
+  memoryStints: number;
   overlapMessages: number;
   mode: "declared" | "inferred";
   inferenceFallback: boolean;
@@ -36,16 +36,16 @@ export function defaultIntentConfig(): IntentConfig {
       model: "claude-haiku-4-5-20251001",
       throttleMinutes: 10,
       watchTurns: 3,
-      askMinActivityMinutes: 20,
+      askMinStintMinutes: 20,
       askBudgetMinutes: 30,
       askExpireTurns: 2,
       backfillDays: 15,
       backend: "claude-cli",
       claudeCommand: "claude",
       timeoutSeconds: 180,
-      activityIdleMinutes: 45,
+      stintIdleMinutes: 45,
       memoryHours: 8,
-      memoryActivities: 10,
+      memoryStints: 10,
       overlapMessages: 3,
       mode: "declared",
       inferenceFallback: true,
@@ -107,7 +107,7 @@ export function loadIntentConfig(tomlPath: string): IntentConfig {
       model: typeof w5.model === "string" ? w5.model : config.w5.model,
       throttleMinutes: number("throttle_minutes", config.w5.throttleMinutes),
       watchTurns: number("watch_turns", config.w5.watchTurns),
-      askMinActivityMinutes: number("ask_min_activity_minutes", config.w5.askMinActivityMinutes),
+      askMinStintMinutes: number("ask_min_activity_minutes", config.w5.askMinStintMinutes),
       askBudgetMinutes: number("ask_budget_minutes", config.w5.askBudgetMinutes),
       askExpireTurns: number("ask_expire_turns", config.w5.askExpireTurns),
       backfillDays: number("backfill_days", config.w5.backfillDays),
@@ -115,9 +115,9 @@ export function loadIntentConfig(tomlPath: string): IntentConfig {
       claudeCommand:
         typeof w5.claude_command === "string" ? w5.claude_command : config.w5.claudeCommand,
       timeoutSeconds: number("timeout_seconds", config.w5.timeoutSeconds),
-      activityIdleMinutes: number("activity_idle_minutes", config.w5.activityIdleMinutes),
+      stintIdleMinutes: number("activity_idle_minutes", config.w5.stintIdleMinutes),
       memoryHours: number("memory_hours", config.w5.memoryHours),
-      memoryActivities: number("memory_activities", config.w5.memoryActivities),
+      memoryStints: number("memory_activities", config.w5.memoryStints),
       overlapMessages: number("overlap_messages", config.w5.overlapMessages),
       mode: parseMode(w5.mode, config.w5.mode),
       inferenceFallback: boolean("inference_fallback", config.w5.inferenceFallback),

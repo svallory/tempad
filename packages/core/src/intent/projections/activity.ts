@@ -1,6 +1,6 @@
 import type { Projection } from "./index";
 
-export const activityProjection: Projection = {
+export const stintProjection: Projection = {
   name: "activities",
   tables: ["activities", "traces", "trace_links", "questions"],
   createSql: `

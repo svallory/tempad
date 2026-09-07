@@ -7,7 +7,7 @@ import { EventStore } from "../intent/store";
 import { type AppliedSummary, applyResult } from "./apply";
 import type { Classifier } from "./classifier";
 import { claimNextJob, completeJob, failJob } from "./jobs";
-import { closeIdleActivities, closeSessionActivities } from "./lifecycle";
+import { closeIdleStints, closeSessionStints } from "./lifecycle";
 import { advanceQuestions } from "./questions";
 import { buildWindow, findSessionFile } from "./window";
 
@@ -40,7 +40,7 @@ function countUserMessages(database: Database, sessionId: string, sinceTs: strin
   return row.count;
 }
 
-function sessionActivityMinutes(
+function sessionStintMinutes(
   database: Database,
   sessionId: string,
   sinceTs: string | null,
@@ -109,10 +109,10 @@ export async function runOnce(
 
     // Idle-close before the window is built, so the classifier's "open activities
     // this session" slice never offers an activity that idleness already ended.
-    closeIdleActivities(store, database, {
+    closeIdleStints(store, database, {
       sessionId: job.sessionId,
       windowStartedAt: windowStartedAt(database, job.sessionId, sinceTs) ?? now,
-      idleMinutes: intentConfig.activityIdleMinutes,
+      idleMinutes: intentConfig.stintIdleMinutes,
     });
 
     // A live session that has never declared anything still runs in declared mode
@@ -126,7 +126,7 @@ export async function runOnce(
       sinceTs,
       maxMessages: 200,
       memoryHours: intentConfig.memoryHours,
-      memoryActivities: intentConfig.memoryActivities,
+      memoryStints: intentConfig.memoryStints,
       overlapMessages: intentConfig.overlapMessages,
       // A live run classifies up to the present, so `now` is its window end: it
       // bounds nothing that exists today but keeps the rule identical to backfill's.
@@ -143,16 +143,16 @@ export async function runOnce(
     });
 
     if (job.kind === "session_end") {
-      closeSessionActivities(store, database, { sessionId: job.sessionId, now });
+      closeSessionStints(store, database, { sessionId: job.sessionId, now });
     }
 
     const turnsSinceLastRun = countUserMessages(database, job.sessionId, sinceTs);
-    const activityMinutes = sessionActivityMinutes(database, job.sessionId, sinceTs);
+    const stintMinutes = sessionStintMinutes(database, job.sessionId, sinceTs);
     advanceQuestions(store, database, intentConfig, {
       sessionId: job.sessionId,
       now,
       turnsSinceLastRun,
-      sessionActivityMinutes: activityMinutes,
+      sessionStintMinutes: stintMinutes,
       resolvedByContext: [],
     });
 

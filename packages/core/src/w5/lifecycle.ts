@@ -4,16 +4,16 @@ import { newUlid } from "../intent/ids";
 import { applyIncremental } from "../intent/projections";
 import type { EventStore } from "../intent/store";
 
-export interface CloseIdleActivitiesInput {
+export interface CloseIdleStintsInput {
   sessionId: string;
   windowStartedAt: string;
   idleMinutes: number;
 }
 
-export function closeIdleActivities(
+export function closeIdleStints(
   store: EventStore,
   database: Database,
-  input: CloseIdleActivitiesInput,
+  input: CloseIdleStintsInput,
 ): { closed: string[] } {
   const rows = database
     .query(
@@ -50,7 +50,7 @@ export function closeIdleActivities(
   return { closed };
 }
 
-export function closeSessionActivities(
+export function closeSessionStints(
   store: EventStore,
   database: Database,
   input: { sessionId: string; now: string },
@@ -89,18 +89,18 @@ export function closeSessionActivities(
   return { closed };
 }
 
-export interface OpenActivityContinuingInput {
+export interface OpenStintContinuingInput {
   quest?: string;
-  objective: string;
+  aim: string;
   at: string;
   actor: Actor;
   continues?: string;
 }
 
-export function openActivityContinuing(
+export function openStintContinuing(
   store: EventStore,
   database: Database,
-  input: OpenActivityContinuingInput,
+  input: OpenStintContinuingInput,
 ): string {
   const id = newUlid();
   applyIncremental(
@@ -110,7 +110,7 @@ export function openActivityContinuing(
       kind: "activity.opened",
       subject: id,
       at: input.at,
-      payload: { quest: input.quest, objective: input.objective, continues: input.continues },
+      payload: { quest: input.quest, aim: input.aim, continues: input.continues },
     }),
   );
   return id;

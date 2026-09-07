@@ -30,7 +30,7 @@ export interface ClassifierWindow {
    * the alias, so there is no 26-character id for it to garble, and `apply.ts`
    * maps whatever it returns back through this map.
    */
-  activityAliases: Record<string, string>;
+  stintAliases: Record<string, string>;
   /**
    * Inference-mode only (`[w5].mode = "inferred"`, or the backfill fallback for a
    * session that never declares anything). Absent in declared mode.
@@ -38,11 +38,11 @@ export interface ClassifierWindow {
   openQuests?: {
     id: string;
     title: string;
-    objective: string | null;
-    lastActivityAt: string | null;
+    aim: string | null;
+    lastStintAt: string | null;
   }[];
-  sessionOpenActivities: {
-    activityId: string;
+  sessionOpenStints: {
+    stintId: string;
     what: string;
     why: string;
     questId: string | null;
@@ -50,8 +50,8 @@ export interface ClassifierWindow {
     openedAt: string;
     lastTraceEndedAt: string;
   }[];
-  recentActivities: {
-    activityId: string;
+  recentStints: {
+    stintId: string;
     what: string;
     why: string;
     questId: string | null;
@@ -69,7 +69,7 @@ export interface ClassifierWindow {
 
 export interface DeclaredQuestSlice {
   title: string;
-  objective: string | null;
+  aim: string | null;
   plan: string[];
 }
 
@@ -98,10 +98,10 @@ export interface ClassifierSegment {
    */
   guess?: string | null;
   /** Alias (`"A1"`), never a real id, in declared mode. */
-  matchedActivity: string | null;
+  matchedStint: string | null;
   /** Alias (`"A1"`), never a real id, in declared mode. */
-  continuesActivity: string | null;
-  newActivityReason: string | null;
+  continuesStint: string | null;
+  newStintReason: string | null;
   isSwitch: boolean;
   trigger: string | null;
   confidence: number;
@@ -110,7 +110,7 @@ export interface ClassifierSegment {
    * absent in declared mode and only read on the fallback path.
    */
   matchedQuest?: string | null;
-  proposedQuest?: { title: string; objective: string; commitment: Commitment } | null;
+  proposedQuest?: { title: string; aim: string; commitment: Commitment } | null;
   questions?: LegacyQuestionKind[];
 }
 
@@ -348,8 +348,8 @@ export function validateResult(raw: unknown, window?: ClassifierWindow): Classif
   // Inference mode carries real ids in its slice, not aliases, so there is no
   // closed set to validate a selector against.
   const aliases =
-    mode === "declared" && window !== undefined && window.activityAliases !== undefined
-      ? new Set(Object.keys(window.activityAliases))
+    mode === "declared" && window !== undefined && window.stintAliases !== undefined
+      ? new Set(Object.keys(window.stintAliases))
       : null;
 
   const counters: SelectorCounters = { selectorDefaulted: 0, selectorAmbiguous: 0 };

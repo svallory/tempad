@@ -91,7 +91,7 @@ export function buildSystemPrompt(mode: PromptMode = "declared"): string {
 
 function renderDeclared(label: string, quest: DeclaredQuestSlice): string {
   const plan = quest.plan.length > 0 ? `. plan: ${quest.plan.join("; ")}` : "";
-  return `${label}: ${quest.title} — ${quest.objective ?? "no objective"}${plan}`;
+  return `${label}: ${quest.title} — ${quest.aim ?? "no objective"}${plan}`;
 }
 
 export function buildUserPrompt(window: ClassifierWindow): string {
@@ -113,7 +113,7 @@ export function buildUserPrompt(window: ClassifierWindow): string {
     } else {
       for (const quest of openQuests) {
         lines.push(
-          `  - ${quest.id}: ${quest.title} — ${quest.objective ?? "no objective"} (last activity ${quest.lastActivityAt ?? "unknown"})`,
+          `  - ${quest.id}: ${quest.title} — ${quest.aim ?? "no objective"} (last activity ${quest.lastStintAt ?? "unknown"})`,
         );
       }
     }
@@ -130,27 +130,27 @@ export function buildUserPrompt(window: ClassifierWindow): string {
 
   lines.push("");
   lines.push("your open activities this session (prefer matchedActivity on one of these):");
-  if (window.sessionOpenActivities.length === 0) {
+  if (window.sessionOpenStints.length === 0) {
     lines.push("  (none)");
   } else {
-    for (const activity of window.sessionOpenActivities) {
+    for (const stint of window.sessionOpenStints) {
       lines.push(
-        `  - ${activity.activityId}: ${activity.what} — why ${activity.why} (quest ${activity.questTitle ?? "none"}, opened ${activity.openedAt}, last trace ended ${activity.lastTraceEndedAt})`,
+        `  - ${stint.stintId}: ${stint.what} — why ${stint.why} (quest ${stint.questTitle ?? "none"}, opened ${stint.openedAt}, last trace ended ${stint.lastTraceEndedAt})`,
       );
     }
   }
   lines.push("");
   lines.push("recent activities in this project (use continuesActivity to resume one):");
-  if (window.recentActivities.length === 0) {
+  if (window.recentStints.length === 0) {
     lines.push("  (none)");
   } else {
-    for (const activity of window.recentActivities) {
+    for (const stint of window.recentStints) {
       const closed =
-        activity.closedAt === null
+        stint.closedAt === null
           ? "still open"
-          : `closed ${activity.closedAt} (${activity.closeReason ?? "unknown"})`;
+          : `closed ${stint.closedAt} (${stint.closeReason ?? "unknown"})`;
       lines.push(
-        `  - ${activity.activityId}: ${activity.what} — why ${activity.why} (quest ${activity.questTitle ?? "none"}, opened ${activity.openedAt}, ${closed})`,
+        `  - ${stint.stintId}: ${stint.what} — why ${stint.why} (quest ${stint.questTitle ?? "none"}, opened ${stint.openedAt}, ${closed})`,
       );
     }
   }

@@ -1,6 +1,6 @@
 import type { Projection } from "./index";
 
-export const goalProjection: Projection = {
+export const sagaProjection: Projection = {
   name: "goals",
   tables: ["goals"],
   createSql: `

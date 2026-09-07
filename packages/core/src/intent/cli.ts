@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { parseArgs } from "node:util";
 import type { Config } from "../config/env";
-import { answerQuestion, assignActivity } from "./api";
+import { answerQuestion, assignStint } from "./api";
 import type { IntentConfig } from "./config";
 import { type BranchKind, type Commitment, declareQuest } from "./declarations";
 import { assertEditIntent } from "./edit-intent";
@@ -204,7 +204,7 @@ function parseOwnerFlag(
   return resolveOwner(database, owner);
 }
 
-function runGoalCommand(args: string[], context: IntentContext): number {
+function runSagaCommand(args: string[], context: IntentContext): number {
   const [subcommand, ...rest] = args;
   const store = new EventStore(context.database);
 
@@ -406,7 +406,7 @@ export const QUEST_DECLARE_OPTIONS = {
   parent: { type: "string" },
   quest: { type: "string" },
   new: { type: "string" },
-  objective: { type: "string" },
+  aim: { type: "string" },
   commitment: { type: "string", default: "personal" },
   project: { type: "string" },
   origin: { type: "string" },
@@ -426,8 +426,8 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       args: rest,
       options: {
         owner: { type: "string" },
-        goal: { type: "string" },
-        objective: { type: "string" },
+        saga: { type: "string" },
+        aim: { type: "string" },
         done: { type: "string" },
         due: { type: "string" },
         budget: { type: "string" },
@@ -452,9 +452,9 @@ function runQuestCommand(args: string[], context: IntentContext): number {
         subject: newUlid(),
         payload: {
           owner,
-          goal: values.goal,
+          saga: values.saga,
           title,
-          objective: values.objective,
+          aim: values.aim,
           done_condition: values.done,
           due: values.due,
           budget_minutes: parseBudget(values.budget),
@@ -470,7 +470,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
   if (subcommand === "reword") {
     const { values, positionals } = parseArgs({
       args: rest,
-      options: { objective: { type: "string" } },
+      options: { aim: { type: "string" } },
       strict: true,
       allowPositionals: true,
     });
@@ -486,7 +486,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
         actor: "hero",
         kind: "quest.reworded",
         subject: id,
-        payload: { title, objective: values.objective },
+        payload: { title, aim: values.aim },
       }),
     );
     return 0;
@@ -495,7 +495,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
   if (subcommand === "replace") {
     const { values, positionals } = parseArgs({
       args: rest,
-      options: { objective: { type: "string" }, reason: { type: "string" } },
+      options: { aim: { type: "string" }, reason: { type: "string" } },
       strict: true,
       allowPositionals: true,
     });
@@ -520,7 +520,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
         payload: {
           owner: { kind: old.owner_kind, id: old.owner_id },
           title,
-          objective: values.objective,
+          aim: values.aim,
           confirmed: true,
         },
       }),
@@ -794,7 +794,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       console.error(usage);
       return 2;
     }
-    if (values.new && !values.objective) {
+    if (values.new && !values.aim) {
       console.error(usage);
       return 2;
     }
@@ -841,7 +841,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       newQuest: values.new
         ? {
             title: values.new,
-            objective: values.objective as string,
+            aim: values.aim as string,
             commitment: (values.commitment as Commitment) ?? "personal",
             project: values.project,
             origin: values.origin,
@@ -865,7 +865,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
   return 2;
 }
 
-function runActivityCommand(args: string[], context: IntentContext): number {
+function runStintCommand(args: string[], context: IntentContext): number {
   const [subcommand, ...rest] = args;
   if (subcommand === "list") {
     const { values } = parseArgs({
@@ -887,14 +887,14 @@ function runActivityCommand(args: string[], context: IntentContext): number {
       )
       .all(...parameters) as {
       id: string;
-      objective: string;
+      aim: string;
       quest_id: string | null;
       closed_at: string | null;
     }[];
     for (const row of rows) {
       const status = row.closed_at ? "closed" : "open";
       context.stdout(
-        `${row.id}  ${row.objective}  (${status})${row.quest_id ? ` quest=${row.quest_id}` : ""}`,
+        `${row.id}  ${row.aim}  (${status})${row.quest_id ? ` quest=${row.quest_id}` : ""}`,
       );
     }
     return 0;
@@ -908,7 +908,7 @@ function runTraceCommand(args: string[], context: IntentContext): number {
   if (subcommand === "list") {
     const { values } = parseArgs({
       args: rest,
-      options: { since: { type: "string" }, activity: { type: "string" } },
+      options: { since: { type: "string" }, stint: { type: "string" } },
       strict: true,
     });
     const clauses: string[] = [];
@@ -917,9 +917,9 @@ function runTraceCommand(args: string[], context: IntentContext): number {
       clauses.push("started_at >= ?");
       parameters.push(values.since);
     }
-    if (values.activity) {
+    if (values.stint) {
       clauses.push("activity_id = ?");
-      parameters.push(values.activity);
+      parameters.push(values.stint);
     }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = context.database
@@ -957,7 +957,7 @@ const BRANCH_KINDS = new Set<string>(["waiting", "blocker", "curiosity", "unknow
  * segment's activity. Null when the doubted activity is the session's first on
  * that quest, which is a real outcome: there is nothing it branched away from.
  */
-function originActivityId(database: Database, doubtedActivityId: string): string | null {
+function originStintId(database: Database, doubtedStintId: string): string | null {
   const doubted = database
     .query(
       `SELECT activities.quest_id as questId, activities.opened_at as openedAt,
@@ -966,7 +966,7 @@ function originActivityId(database: Database, doubtedActivityId: string): string
                 ORDER BY traces.started_at ASC LIMIT 1) as sessionId
          FROM activities WHERE activities.id = ?`,
     )
-    .get(doubtedActivityId) as {
+    .get(doubtedStintId) as {
     questId: string | null;
     openedAt: string;
     sessionId: string | null;
@@ -986,7 +986,7 @@ function originActivityId(database: Database, doubtedActivityId: string): string
                          AND traces.retracted_at IS NULL)
         ORDER BY activities.opened_at DESC LIMIT 1`,
     )
-    .get(doubted.questId, doubtedActivityId, doubted.openedAt, doubted.sessionId) as {
+    .get(doubted.questId, doubtedStintId, doubted.openedAt, doubted.sessionId) as {
     id: string;
   } | null;
   return row?.id ?? null;
@@ -1098,7 +1098,7 @@ function runAnswerCommand(args: string[], context: IntentContext): number {
         kind: "quest.branched",
         subject: questId,
         payload: {
-          from_activity: originActivityId(context.database, trace.activity_id),
+          from_activity: originStintId(context.database, trace.activity_id),
           trigger: values.trigger ?? "unknown",
           kind,
         },
@@ -1107,7 +1107,7 @@ function runAnswerCommand(args: string[], context: IntentContext): number {
   }
 
   answerQuestion(store, context.database, questionId, questId, values.why, "hero");
-  assignActivity(store, context.database, trace.activity_id, questId, "hero");
+  assignStint(store, context.database, trace.activity_id, questId, "hero");
   return 0;
 }
 
@@ -1134,11 +1134,11 @@ export async function runIntentCommand(args: string[], context: IntentContext): 
       case "client":
         return runClientCommand(rest, context);
       case "goal":
-        return runGoalCommand(rest, context);
+        return runSagaCommand(rest, context);
       case "quest":
         return runQuestCommand(rest, context);
       case "activity":
-        return runActivityCommand(rest, context);
+        return runStintCommand(rest, context);
       case "trace":
         return runTraceCommand(rest, context);
       case "answer":

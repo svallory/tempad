@@ -13,37 +13,37 @@ const config: W5Config = {
   model: "m",
   throttleMinutes: 10,
   watchTurns: 3,
-  askMinActivityMinutes: 20,
+  askMinStintMinutes: 20,
   askBudgetMinutes: 30,
   askExpireTurns: 2,
   backfillDays: 15,
   backend: "claude-cli",
   claudeCommand: "claude",
   timeoutSeconds: 180,
-  activityIdleMinutes: 45,
+  stintIdleMinutes: 45,
   memoryHours: 8,
-  memoryActivities: 10,
+  memoryStints: 10,
   overlapMessages: 3,
   mode: "declared",
   inferenceFallback: true,
 };
 
-function seedActivityAndTrace(
+function seedStintAndTrace(
   database: ReturnType<typeof openDatabase>,
-  input: { activityId: string; questId: string | null; sessionId: string; isSwitch: boolean },
+  input: { stintId: string; questId: string | null; sessionId: string; isSwitch: boolean },
 ): string {
   database
     .query(
       "INSERT OR IGNORE INTO activities (id, quest_id, objective, opened_at, revision) VALUES (?, ?, 'objective', '2026-09-04T14:00:00.000Z', 1)",
     )
-    .run(input.activityId, input.questId);
+    .run(input.stintId, input.questId);
   const traceId = newUlid();
   database
     .query(
       `INSERT INTO traces (id, activity_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
        VALUES (?, ?, 'claude-code', 'p', 'session', '2026-09-04T15:00:00.000Z', '2026-09-04T15:20:00.000Z', 'hero', 'what', 'why', 'p', 'claude-code', 0.6, 'assistant', ?, '2026-09-04T15:20:00.000Z')`,
     )
-    .run(traceId, input.activityId, input.sessionId);
+    .run(traceId, input.stintId, input.sessionId);
   return traceId;
 }
 
@@ -76,8 +76,8 @@ describe("advanceQuestions", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     const store = new EventStore(database);
-    const traceId = seedActivityAndTrace(database, {
-      activityId: "A1",
+    const traceId = seedStintAndTrace(database, {
+      stintId: "A1",
       questId: null,
       sessionId: "s1",
       isSwitch: true,
@@ -93,7 +93,7 @@ describe("advanceQuestions", () => {
       sessionId: "s1",
       now: "2026-09-04T15:21:00.000Z",
       turnsSinceLastRun: 2,
-      sessionActivityMinutes: 5,
+      sessionStintMinutes: 5,
       resolvedByContext: [],
     });
 
@@ -110,8 +110,8 @@ describe("advanceQuestions", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     const store = new EventStore(database);
-    const traceId = seedActivityAndTrace(database, {
-      activityId: "A1",
+    const traceId = seedStintAndTrace(database, {
+      stintId: "A1",
       questId: null,
       sessionId: "s1",
       isSwitch: true,
@@ -127,7 +127,7 @@ describe("advanceQuestions", () => {
       sessionId: "s1",
       now: "2026-09-04T15:21:00.000Z",
       turnsSinceLastRun: 3,
-      sessionActivityMinutes: 5,
+      sessionStintMinutes: 5,
       resolvedByContext: [],
     });
 
@@ -144,8 +144,8 @@ describe("advanceQuestions", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     const store = new EventStore(database);
-    const traceId = seedActivityAndTrace(database, {
-      activityId: "A1",
+    const traceId = seedStintAndTrace(database, {
+      stintId: "A1",
       questId: "Q1",
       sessionId: "s1",
       isSwitch: false,
@@ -156,7 +156,7 @@ describe("advanceQuestions", () => {
       sessionId: "s1",
       now: "2026-09-04T15:21:00.000Z",
       turnsSinceLastRun: 3,
-      sessionActivityMinutes: 25,
+      sessionStintMinutes: 25,
       resolvedByContext: [],
     });
 
@@ -170,8 +170,8 @@ describe("advanceQuestions", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     const store = new EventStore(database);
-    const traceA = seedActivityAndTrace(database, {
-      activityId: "A1",
+    const traceA = seedStintAndTrace(database, {
+      stintId: "A1",
       questId: null,
       sessionId: "s1",
       isSwitch: true,
@@ -186,7 +186,7 @@ describe("advanceQuestions", () => {
       sessionId: "s1",
       now: "2026-09-04T15:21:00.000Z",
       turnsSinceLastRun: 3,
-      sessionActivityMinutes: 5,
+      sessionStintMinutes: 5,
       resolvedByContext: [],
     });
     applyIncremental(
@@ -200,8 +200,8 @@ describe("advanceQuestions", () => {
       }),
     );
 
-    const traceB = seedActivityAndTrace(database, {
-      activityId: "A2",
+    const traceB = seedStintAndTrace(database, {
+      stintId: "A2",
       questId: null,
       sessionId: "s1",
       isSwitch: true,
@@ -217,7 +217,7 @@ describe("advanceQuestions", () => {
       sessionId: "s1",
       now: "2026-09-04T15:40:00.000Z",
       turnsSinceLastRun: 3,
-      sessionActivityMinutes: 5,
+      sessionStintMinutes: 5,
       resolvedByContext: [],
     });
 
@@ -228,8 +228,8 @@ describe("advanceQuestions", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     const store = new EventStore(database);
-    const traceA = seedActivityAndTrace(database, {
-      activityId: "A1",
+    const traceA = seedStintAndTrace(database, {
+      stintId: "A1",
       questId: null,
       sessionId: "s1",
       isSwitch: true,
@@ -244,12 +244,12 @@ describe("advanceQuestions", () => {
       sessionId: "s1",
       now: "2026-09-04T15:21:00.000Z",
       turnsSinceLastRun: 3,
-      sessionActivityMinutes: 5,
+      sessionStintMinutes: 5,
       resolvedByContext: [],
     });
 
-    const traceB = seedActivityAndTrace(database, {
-      activityId: "A2",
+    const traceB = seedStintAndTrace(database, {
+      stintId: "A2",
       questId: null,
       sessionId: "s1",
       isSwitch: true,
@@ -265,7 +265,7 @@ describe("advanceQuestions", () => {
       sessionId: "s1",
       now: "2026-09-04T15:22:00.000Z",
       turnsSinceLastRun: 3,
-      sessionActivityMinutes: 5,
+      sessionStintMinutes: 5,
       resolvedByContext: [],
     });
 
@@ -277,8 +277,8 @@ describe("advanceQuestions", () => {
     ensureTables(database);
     const store = new EventStore(database);
     database.query("INSERT INTO w5_quiet (until) VALUES ('2026-09-04T16:00:00.000Z')").run();
-    const traceId = seedActivityAndTrace(database, {
-      activityId: "A1",
+    const traceId = seedStintAndTrace(database, {
+      stintId: "A1",
       questId: null,
       sessionId: "s1",
       isSwitch: true,
@@ -294,7 +294,7 @@ describe("advanceQuestions", () => {
       sessionId: "s1",
       now: "2026-09-04T15:21:00.000Z",
       turnsSinceLastRun: 3,
-      sessionActivityMinutes: 5,
+      sessionStintMinutes: 5,
       resolvedByContext: [],
     });
 
@@ -305,8 +305,8 @@ describe("advanceQuestions", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     const store = new EventStore(database);
-    const traceId = seedActivityAndTrace(database, {
-      activityId: "A1",
+    const traceId = seedStintAndTrace(database, {
+      stintId: "A1",
       questId: null,
       sessionId: "s1",
       isSwitch: true,
@@ -321,7 +321,7 @@ describe("advanceQuestions", () => {
       sessionId: "s1",
       now: "2026-09-04T15:21:00.000Z",
       turnsSinceLastRun: 3,
-      sessionActivityMinutes: 5,
+      sessionStintMinutes: 5,
       resolvedByContext: [],
     });
 
@@ -329,7 +329,7 @@ describe("advanceQuestions", () => {
       sessionId: "s1",
       now: "2026-09-04T15:25:00.000Z",
       turnsSinceLastRun: 2,
-      sessionActivityMinutes: 5,
+      sessionStintMinutes: 5,
       resolvedByContext: [],
     });
 
@@ -342,8 +342,8 @@ describe("advanceQuestions", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     const store = new EventStore(database);
-    const traceId = seedActivityAndTrace(database, {
-      activityId: "A1",
+    const traceId = seedStintAndTrace(database, {
+      stintId: "A1",
       questId: null,
       sessionId: "s1",
       isSwitch: true,
@@ -359,7 +359,7 @@ describe("advanceQuestions", () => {
       sessionId: "s1",
       now: "2026-09-04T15:21:00.000Z",
       turnsSinceLastRun: 1,
-      sessionActivityMinutes: 5,
+      sessionStintMinutes: 5,
       resolvedByContext: [questionId],
     });
 
@@ -379,8 +379,8 @@ test("advanceQuestions transitions are event-sourced: tempad rebuild reproduces 
   const store = new EventStore(database);
 
   // Question 1: watched, then promoted to asked (which_quest + isSwitch).
-  const traceA = seedActivityAndTrace(database, {
-    activityId: "A1",
+  const traceA = seedStintAndTrace(database, {
+    stintId: "A1",
     questId: null,
     sessionId: "s1",
     isSwitch: true,
@@ -395,13 +395,13 @@ test("advanceQuestions transitions are event-sourced: tempad rebuild reproduces 
     sessionId: "s1",
     now: "2026-09-04T15:21:00.000Z",
     turnsSinceLastRun: 3,
-    sessionActivityMinutes: 5,
+    sessionStintMinutes: 5,
     resolvedByContext: [],
   });
 
   // Question 2 (different session): watched once, not yet promoted.
-  const traceB = seedActivityAndTrace(database, {
-    activityId: "A2",
+  const traceB = seedStintAndTrace(database, {
+    stintId: "A2",
     questId: null,
     sessionId: "s2",
     isSwitch: false,
@@ -416,13 +416,13 @@ test("advanceQuestions transitions are event-sourced: tempad rebuild reproduces 
     sessionId: "s2",
     now: "2026-09-04T15:21:00.000Z",
     turnsSinceLastRun: 1,
-    sessionActivityMinutes: 5,
+    sessionStintMinutes: 5,
     resolvedByContext: [],
   });
 
   // Question 3: why-kind on an activity that already has a quest -> auto-expires.
-  const traceC = seedActivityAndTrace(database, {
-    activityId: "A3",
+  const traceC = seedStintAndTrace(database, {
+    stintId: "A3",
     questId: "Q1",
     sessionId: "s3",
     isSwitch: false,
@@ -432,13 +432,13 @@ test("advanceQuestions transitions are event-sourced: tempad rebuild reproduces 
     sessionId: "s3",
     now: "2026-09-04T15:21:00.000Z",
     turnsSinceLastRun: 1,
-    sessionActivityMinutes: 5,
+    sessionStintMinutes: 5,
     resolvedByContext: [],
   });
 
   // Question 4: resolved by context.
-  const traceD = seedActivityAndTrace(database, {
-    activityId: "A4",
+  const traceD = seedStintAndTrace(database, {
+    stintId: "A4",
     questId: null,
     sessionId: "s4",
     isSwitch: true,
@@ -453,7 +453,7 @@ test("advanceQuestions transitions are event-sourced: tempad rebuild reproduces 
     sessionId: "s4",
     now: "2026-09-04T15:21:00.000Z",
     turnsSinceLastRun: 1,
-    sessionActivityMinutes: 5,
+    sessionStintMinutes: 5,
     resolvedByContext: [resolvedQuestion],
   });
 
@@ -462,7 +462,7 @@ test("advanceQuestions transitions are event-sourced: tempad rebuild reproduces 
     sessionId: "s1",
     now: "2026-09-04T15:25:00.000Z",
     turnsSinceLastRun: 2,
-    sessionActivityMinutes: 5,
+    sessionStintMinutes: 5,
     resolvedByContext: [],
   });
 
@@ -500,8 +500,8 @@ describe("advanceQuestions and the verifier's question kinds", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     const store = new EventStore(database);
-    const traceId = seedActivityAndTrace(database, {
-      activityId: "A1",
+    const traceId = seedStintAndTrace(database, {
+      stintId: "A1",
       questId: "Q1",
       sessionId: "s1",
       isSwitch: false,
@@ -521,7 +521,7 @@ describe("advanceQuestions and the verifier's question kinds", () => {
         turnsSinceLastRun: 1,
         // Deliberately below askMinActivityMinutes: these kinds must not depend
         // on the activity heuristic at all.
-        sessionActivityMinutes: 0,
+        sessionStintMinutes: 0,
         resolvedByContext: [],
       });
       expect(early.asked).toHaveLength(0);
@@ -537,7 +537,7 @@ describe("advanceQuestions and the verifier's question kinds", () => {
         sessionId: "s1",
         now: "2026-09-04T15:40:00.000Z",
         turnsSinceLastRun: 3,
-        sessionActivityMinutes: 0,
+        sessionStintMinutes: 0,
         resolvedByContext: [],
       });
 
@@ -558,7 +558,7 @@ describe("advanceQuestions and the verifier's question kinds", () => {
         sessionId: "s1",
         now: "2026-09-04T15:40:00.000Z",
         turnsSinceLastRun: 3,
-        sessionActivityMinutes: 0,
+        sessionStintMinutes: 0,
         resolvedByContext: [],
       });
 
@@ -566,7 +566,7 @@ describe("advanceQuestions and the verifier's question kinds", () => {
         sessionId: "s1",
         now: "2026-09-04T16:40:00.000Z",
         turnsSinceLastRun: 2,
-        sessionActivityMinutes: 0,
+        sessionStintMinutes: 0,
         resolvedByContext: [],
       });
 
@@ -591,7 +591,7 @@ describe("advanceQuestions and the verifier's question kinds", () => {
       sessionId: "s1",
       now: "2026-09-04T15:40:00.000Z",
       turnsSinceLastRun: 3,
-      sessionActivityMinutes: 0,
+      sessionStintMinutes: 0,
       resolvedByContext: [],
     });
 
@@ -610,7 +610,7 @@ describe("advanceQuestions and the verifier's question kinds", () => {
       sessionId: "s1",
       now: "2026-09-04T15:40:00.000Z",
       turnsSinceLastRun: 3,
-      sessionActivityMinutes: 0,
+      sessionStintMinutes: 0,
       resolvedByContext: [],
     });
 

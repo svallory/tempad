@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { openDatabase } from "../../src/db/database";
-import { askQuestion, openActivity, recordTrace, relinkTrace } from "../../src/intent/api";
+import { askQuestion, openStint, recordTrace, relinkTrace } from "../../src/intent/api";
 import { runIntentCommand } from "../../src/intent/cli";
 import { defaultIntentConfig } from "../../src/intent/config";
 import { EventStore } from "../../src/intent/store";
@@ -9,10 +9,10 @@ describe("activities and traces", () => {
   test("record a trace, relink it, history kept", () => {
     const database = openDatabase(":memory:");
     const store = new EventStore(database);
-    const first = openActivity(store, database, { objective: "fix walk order", actor: "hook" });
-    const second = openActivity(store, database, { objective: "compare Astryx", actor: "hook" });
+    const first = openStint(store, database, { aim: "fix walk order", actor: "hook" });
+    const second = openStint(store, database, { aim: "compare Astryx", actor: "hook" });
     const trace = recordTrace(store, database, {
-      activity: first,
+      stint: first,
       tool: "claude-code",
       place: "~/work/marko-ui",
       source: "session",
@@ -58,9 +58,9 @@ describe("activities and traces", () => {
       stdout: (line: string) => lines.push(line),
     };
     await runIntentCommand(["hero", "init", "S"], context);
-    const activity = openActivity(store, database, { objective: "compare Astryx", actor: "hook" });
+    const stint = openStint(store, database, { aim: "compare Astryx", actor: "hook" });
     const trace = recordTrace(store, database, {
-      activity,
+      stint,
       tool: "claude-code",
       place: "p",
       source: "session",
@@ -100,7 +100,7 @@ describe("activities and traces", () => {
     expect(quest.confirmed).toBe(0);
     expect(
       (
-        database.query("SELECT quest_id FROM activities WHERE id = ?").get(activity) as {
+        database.query("SELECT quest_id FROM activities WHERE id = ?").get(stint) as {
           quest_id: string;
         }
       ).quest_id,
@@ -118,9 +118,9 @@ describe("activities and traces", () => {
       stdout: (line: string) => lines.push(line),
     };
     await runIntentCommand(["hero", "init", "S"], context);
-    const activity = openActivity(store, database, { objective: "compare Astryx", actor: "hook" });
+    const stint = openStint(store, database, { aim: "compare Astryx", actor: "hook" });
     const trace = recordTrace(store, database, {
-      activity,
+      stint,
       tool: "claude-code",
       place: "p",
       source: "session",
@@ -168,9 +168,9 @@ describe("activities and traces", () => {
     await runIntentCommand(["hero", "init", "S"], context);
     await runIntentCommand(["quest", "add", "--owner", "hero", "Existing quest"], context);
     const quest = database.query("SELECT id FROM quests").get() as { id: string };
-    const activity = openActivity(store, database, { objective: "compare Astryx", actor: "hook" });
+    const stint = openStint(store, database, { aim: "compare Astryx", actor: "hook" });
     const trace = recordTrace(store, database, {
-      activity,
+      stint,
       tool: "claude-code",
       place: "p",
       source: "session",
@@ -218,14 +218,14 @@ describe("tempad answer --belongs", () => {
       context,
     );
     const quest = database.query("SELECT id FROM quests").get() as { id: string };
-    const activity = openActivity(store, database, {
-      objective: "fix walk order",
+    const stint = openStint(store, database, {
+      aim: "fix walk order",
       quest: quest.id,
       at: "2026-09-04T15:00:00.000Z",
       actor: "hook",
     });
     const trace = recordTrace(store, database, {
-      activity,
+      stint,
       tool: "claude-code",
       place: "p",
       source: "session",
@@ -249,11 +249,11 @@ describe("tempad answer --belongs", () => {
       guess: "a competitor comparison",
       actor: "hook",
     });
-    return { database, context, question, activity, quest, store };
+    return { database, context, question, stint, quest, store };
   }
 
   test("--belongs answers the question and leaves the trace and its quest alone", async () => {
-    const { database, context, question, activity, quest } = await seedBelongsQuestion();
+    const { database, context, question, stint, quest } = await seedBelongsQuestion();
 
     expect(
       await runIntentCommand(
@@ -269,10 +269,10 @@ describe("tempad answer --belongs", () => {
     expect(row.answer).toBe("it is the same work");
 
     // "Yes it belongs" confirms the declared quest: nothing moves.
-    const activityRow = database
+    const stintRow = database
       .query("SELECT quest_id as questId FROM activities WHERE id = ?")
-      .get(activity) as { questId: string | null };
-    expect(activityRow.questId).toBe(quest.id);
+      .get(stint) as { questId: string | null };
+    expect(stintRow.questId).toBe(quest.id);
     expect(
       (database.query("SELECT COUNT(*) as count FROM quests").get() as { count: number }).count,
     ).toBe(1);
@@ -304,7 +304,7 @@ describe("tempad answer --belongs", () => {
   });
 
   test("--belongs on a declare-kind question is refused with a message, exit 1", async () => {
-    const { database, context, activity } = await seedBelongsQuestion();
+    const { database, context, stint } = await seedBelongsQuestion();
     const store = new EventStore(database);
     const trace = database.query("SELECT id FROM traces").get() as { id: string };
     const declareQuestion = askQuestion(store, database, {
@@ -322,14 +322,14 @@ describe("tempad answer --belongs", () => {
     };
     expect(row.state).not.toBe("answered");
 
-    const activityRow = database
+    const stintRow = database
       .query("SELECT quest_id as questId FROM activities WHERE id = ?")
-      .get(activity) as { questId: string | null };
-    expect(activityRow.questId).not.toBeNull();
+      .get(stint) as { questId: string | null };
+    expect(stintRow.questId).not.toBeNull();
   });
 
   test("--quest on a belongs question still moves the trace's activity", async () => {
-    const { database, context, question, activity } = await seedBelongsQuestion();
+    const { database, context, question, stint } = await seedBelongsQuestion();
 
     expect(
       await runIntentCommand(
@@ -340,23 +340,23 @@ describe("tempad answer --belongs", () => {
 
     const moved = database
       .query("SELECT title FROM quests WHERE id = (SELECT quest_id FROM activities WHERE id = ?)")
-      .get(activity) as { title: string };
+      .get(stint) as { title: string };
     expect(moved.title).toBe("Compare Astryx");
   });
 
   test("--origin current branches from the quest being left, not the reassigned activity", async () => {
-    const { database, context, question, activity, quest, store } = await seedBelongsQuestion();
+    const { database, context, question, stint, quest, store } = await seedBelongsQuestion();
 
     // An earlier activity of the same session on the declared quest: this is what
     // the side quest actually branched away from.
-    const earlier = openActivity(store, database, {
-      objective: "the work that was underway",
+    const earlier = openStint(store, database, {
+      aim: "the work that was underway",
       quest: quest.id,
       at: "2026-09-04T14:00:00.000Z",
       actor: "hook",
     });
     recordTrace(store, database, {
-      activity: earlier,
+      stint: earlier,
       tool: "claude-code",
       place: "p",
       source: "session",
@@ -401,7 +401,7 @@ describe("tempad answer --belongs", () => {
     };
     // Never the activity this same command reassigns to the new quest -- that
     // would record the quest as branching from its own activity.
-    expect(payload.from_activity).not.toBe(activity);
+    expect(payload.from_activity).not.toBe(stint);
     expect(payload.from_activity).toBe(earlier);
     expect(payload.trigger).toBe("what does Astryx do for agents?");
     expect(payload.kind).toBe("curiosity");

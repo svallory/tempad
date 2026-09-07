@@ -8,7 +8,7 @@ export type BranchKind = "waiting" | "blocker" | "curiosity" | "unknown";
 
 export interface NewQuestInput {
   title: string;
-  objective: string;
+  aim: string;
   commitment: Commitment;
   project?: string;
   origin?: string;
@@ -53,7 +53,7 @@ export function declareQuest(
         payload: {
           owner: { kind: "hero", id: input.heroId },
           title: input.newQuest.title,
-          objective: input.newQuest.objective,
+          aim: input.newQuest.aim,
           commitment: input.newQuest.commitment,
           confirmed: true,
           origin_kind: "declared",
@@ -97,7 +97,7 @@ export function declareQuest(
         new: input.newQuest
           ? {
               title: input.newQuest.title,
-              objective: input.newQuest.objective,
+              aim: input.newQuest.aim,
               commitment: input.newQuest.commitment,
               project: input.newQuest.project,
               origin: input.newQuest.origin,
@@ -120,7 +120,7 @@ export function declareQuest(
 export interface DeclaredQuest {
   questId: string;
   title: string;
-  objective: string | null;
+  aim: string | null;
   plan: string[];
   scope: "session" | "subagent";
   parentSessionId: string | null;
@@ -162,12 +162,12 @@ function resolveDeclaration(
     if (!questId) continue;
     const quest = database
       .query("SELECT title, objective FROM quests WHERE id = ? AND retracted_at IS NULL")
-      .get(questId) as { title: string; objective: string | null } | null;
+      .get(questId) as { title: string; aim: string | null } | null;
     if (!quest) continue;
     return {
       questId,
       title: quest.title,
-      objective: quest.objective,
+      aim: quest.aim,
       plan: payload.plan,
       scope: payload.scope as "session" | "subagent",
       parentSessionId: payload.parent_session_id ?? null,

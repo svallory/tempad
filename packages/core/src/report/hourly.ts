@@ -1,8 +1,8 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
 import {
-  type ActivityTraceIntervalRow,
-  queryActivityTraceIntervals,
+  type StintTraceIntervalRow,
+  queryStintTraceIntervals,
   querySideQuests,
   resolveIntentDatabase,
 } from "./intent-queries.ts";
@@ -64,7 +64,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
       client: options.client,
     };
     const daySideQuests = querySideQuests(intentDatabase, dayRangeOptions);
-    const dayActivityIntervals = queryActivityTraceIntervals(intentDatabase, dayRangeOptions);
+    const dayStintIntervals = queryStintTraceIntervals(intentDatabase, dayRangeOptions);
 
     const keys = new Map<string, ProjectKey>();
     for (const row of [...dayCommits, ...dayMessages]) {
@@ -80,7 +80,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
         project: sideQuest.project,
       });
     }
-    for (const interval of dayActivityIntervals) {
+    for (const interval of dayStintIntervals) {
       if (!interval.org || !interval.project) continue;
       keys.set(projectKeyString({ org: interval.org, project: interval.project }), {
         org: interval.org,
@@ -157,10 +157,10 @@ function render(database: Database, config: Config, options: ReportOptions): str
           parts.push(`${group.sha.slice(0, 7)}${suffix}`);
         }
 
-        const hourIntervals = dayActivityIntervals.filter(
+        const hourIntervals = dayStintIntervals.filter(
           (interval) => interval.org === key.org && interval.project === key.project,
         );
-        for (const [label, minutes] of hourActivityMinutes(hourIntervals, timeZone, day, hour)) {
+        for (const [label, minutes] of hourStintMinutes(hourIntervals, timeZone, day, hour)) {
           parts.push(`${label} (${minutesLabel(minutes)})`);
         }
 
@@ -199,8 +199,8 @@ function minutesLabel(totalMinutes: number): string {
  * time on `day`, grouped by quest title (or the activity's own objective
  * when it has no quest), for the hourly report's per-hour activity list.
  */
-function hourActivityMinutes(
-  intervals: ActivityTraceIntervalRow[],
+function hourStintMinutes(
+  intervals: StintTraceIntervalRow[],
   timeZone: string,
   day: string,
   hour: number,
@@ -214,7 +214,7 @@ function hourActivityMinutes(
     const intervalStart = Math.max(new Date(interval.startedAt).getTime(), hourStartMs);
     const intervalEnd = Math.min(new Date(interval.endedAt).getTime(), hourEndMs);
     if (intervalEnd <= intervalStart) continue;
-    const label = interval.questTitle ?? interval.objective;
+    const label = interval.questTitle ?? interval.aim;
     const minutes = (intervalEnd - intervalStart) / 60000;
     minutesByLabel.set(label, (minutesByLabel.get(label) ?? 0) + minutes);
   }

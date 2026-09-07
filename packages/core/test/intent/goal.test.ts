@@ -23,23 +23,23 @@ describe("goals", () => {
     const { run, database } = harness();
     await run(["hero", "init", "S"]);
     expect(await run(["goal", "add", "--owner", "hero", "Make more money"])).toBe(0);
-    const goal = database.query("SELECT id, revision FROM goals").get() as {
+    const saga = database.query("SELECT id, revision FROM goals").get() as {
       id: string;
       revision: number;
     };
-    expect(await run(["goal", "reword", goal.id, "Earn more"])).toBe(0);
+    expect(await run(["goal", "reword", saga.id, "Earn more"])).toBe(0);
     const reworded = database.query("SELECT id, title, revision FROM goals").get() as {
       id: string;
       title: string;
       revision: number;
     };
-    expect(reworded.id).toBe(goal.id);
+    expect(reworded.id).toBe(saga.id);
     expect(reworded.title).toBe("Earn more");
-    expect(reworded.revision).toBe(goal.revision + 1);
-    expect(await run(["goal", "end", goal.id, "--reason", "achieved"])).toBe(0);
+    expect(reworded.revision).toBe(saga.revision + 1);
+    expect(await run(["goal", "end", saga.id, "--reason", "achieved"])).toBe(0);
     expect(
       (
-        database.query("SELECT end_reason FROM goals WHERE id = ?").get(goal.id) as {
+        database.query("SELECT end_reason FROM goals WHERE id = ?").get(saga.id) as {
           end_reason: string;
         }
       ).end_reason,
@@ -71,8 +71,8 @@ describe("goals", () => {
     const { run, database } = harness();
     await run(["hero", "init", "S"]);
     await run(["goal", "add", "--owner", "hero", "G"]);
-    const goal = database.query("SELECT id FROM goals").get() as { id: string };
-    expect(await run(["goal", "edit", goal.id, "G2"])).toBe(0);
+    const saga = database.query("SELECT id FROM goals").get() as { id: string };
+    expect(await run(["goal", "edit", saga.id, "G2"])).toBe(0);
     // attach a quest directly through the store (quest CLI arrives in Task 5)
     const store = new EventStore(database);
     const quest = newUlid();
@@ -82,10 +82,10 @@ describe("goals", () => {
         actor: "hero",
         kind: "quest.created",
         subject: quest,
-        payload: { owner: { kind: "hero", id: "x" }, goal: goal.id, title: "Q", confirmed: true },
+        payload: { owner: { kind: "hero", id: "x" }, saga: saga.id, title: "Q", confirmed: true },
       }),
     );
-    expect(await run(["goal", "edit", goal.id, "G3"])).toBe(1);
+    expect(await run(["goal", "edit", saga.id, "G3"])).toBe(1);
   });
 
   test("party owner must exist", async () => {
@@ -98,9 +98,9 @@ describe("goals", () => {
     const { run, database } = harness();
     await run(["hero", "init", "S"]);
     await run(["goal", "add", "--owner", "hero", "G", "--statement", "Original statement"]);
-    const goal = database.query("SELECT id FROM goals").get() as { id: string };
-    expect(await run(["goal", "reword", goal.id, "New title"])).toBe(0);
-    const row = database.query("SELECT title, statement FROM goals WHERE id = ?").get(goal.id) as {
+    const saga = database.query("SELECT id FROM goals").get() as { id: string };
+    expect(await run(["goal", "reword", saga.id, "New title"])).toBe(0);
+    const row = database.query("SELECT title, statement FROM goals WHERE id = ?").get(saga.id) as {
       title: string;
       statement: string | null;
     };
@@ -112,7 +112,7 @@ describe("goals", () => {
     const { run, database } = harness();
     await run(["hero", "init", "S"]);
     await run(["goal", "add", "--owner", "hero", "G"]);
-    const goal = database.query("SELECT id FROM goals").get() as { id: string };
+    const saga = database.query("SELECT id FROM goals").get() as { id: string };
     const store = new EventStore(database);
     const quest = newUlid();
     applyIncremental(
@@ -121,20 +121,20 @@ describe("goals", () => {
         actor: "hero",
         kind: "quest.created",
         subject: quest,
-        payload: { owner: { kind: "hero", id: "x" }, goal: goal.id, title: "Q", confirmed: true },
+        payload: { owner: { kind: "hero", id: "x" }, saga: saga.id, title: "Q", confirmed: true },
       }),
     );
     // reword is explicit wording-change intent: allowed even with attachments
-    expect(await run(["goal", "reword", goal.id, "G reworded"])).toBe(0);
+    expect(await run(["goal", "reword", saga.id, "G reworded"])).toBe(0);
     // bare edit is still refused, and message names reword/replace subcommands
     const originalError = console.error;
     let message = "";
     console.error = (line: string) => {
       message = line;
     };
-    expect(await run(["goal", "edit", goal.id, "G edited"])).toBe(1);
+    expect(await run(["goal", "edit", saga.id, "G edited"])).toBe(1);
     console.error = originalError;
-    expect(message).toContain(`tempad goal reword ${goal.id}`);
-    expect(message).toContain(`tempad goal replace ${goal.id}`);
+    expect(message).toContain(`tempad goal reword ${saga.id}`);
+    expect(message).toContain(`tempad goal replace ${saga.id}`);
   });
 });

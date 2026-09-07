@@ -34,9 +34,9 @@ throttle_minutes = 5
     expect(config.w5.backend).toBe("claude-cli");
     expect(config.w5.claudeCommand).toBe("claude");
     expect(config.w5.timeoutSeconds).toBe(180);
-    expect(config.w5.activityIdleMinutes).toBe(45);
+    expect(config.w5.stintIdleMinutes).toBe(45);
     expect(config.w5.memoryHours).toBe(8);
-    expect(config.w5.memoryActivities).toBe(10);
+    expect(config.w5.memoryStints).toBe(10);
     expect(config.w5.overlapMessages).toBe(3);
   });
 
@@ -54,17 +54,17 @@ overlap_messages = 2
 `,
     );
     const config = loadIntentConfig(path);
-    expect(config.w5.activityIdleMinutes).toBe(30);
+    expect(config.w5.stintIdleMinutes).toBe(30);
     expect(config.w5.memoryHours).toBe(4);
-    expect(config.w5.memoryActivities).toBe(5);
+    expect(config.w5.memoryStints).toBe(5);
     expect(config.w5.overlapMessages).toBe(2);
   });
 
   test("defaultIntentConfig().w5 has the activity lifecycle defaults", () => {
     const config = defaultIntentConfig();
-    expect(config.w5.activityIdleMinutes).toBe(45);
+    expect(config.w5.stintIdleMinutes).toBe(45);
     expect(config.w5.memoryHours).toBe(8);
-    expect(config.w5.memoryActivities).toBe(10);
+    expect(config.w5.memoryStints).toBe(10);
     expect(config.w5.overlapMessages).toBe(3);
   });
 

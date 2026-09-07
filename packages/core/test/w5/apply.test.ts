@@ -58,13 +58,13 @@ const window: ClassifierWindow = {
   mode: "declared",
   declaredQuest: null,
   parentDeclaredQuest: null,
-  activityAliases: { A1: "A1" },
+  stintAliases: { A1: "A1" },
   openQuests: [
-    { id: "Q1", title: "Ship marko-ui", objective: "86 components", lastActivityAt: null },
+    { id: "Q1", title: "Ship marko-ui", aim: "86 components", lastStintAt: null },
   ],
-  sessionOpenActivities: [
+  sessionOpenStints: [
     {
-      activityId: "A1",
+      stintId: "A1",
       what: "fixing walk order",
       why: "ship",
       questId: "Q1",
@@ -73,7 +73,7 @@ const window: ClassifierWindow = {
       lastTraceEndedAt: "2026-09-04T14:30:00.000Z",
     },
   ],
-  recentActivities: [],
+  recentStints: [],
   recentSideQuests: [],
   overlapMessages: [],
   previousSessionNote: null,
@@ -90,9 +90,9 @@ const good: ClassifierResult = {
       guess: null,
       matchedQuest: "Q1",
       proposedQuest: null,
-      matchedActivity: "A1",
-      continuesActivity: null,
-      newActivityReason: null,
+      matchedStint: "A1",
+      continuesStint: null,
+      newStintReason: null,
       isSwitch: false,
       trigger: null,
       confidence: 0.9,
@@ -108,12 +108,12 @@ const good: ClassifierResult = {
       matchedQuest: null,
       proposedQuest: {
         title: "Compare Astryx",
-        objective: "see what they claim",
+        aim: "see what they claim",
         commitment: "exploratory",
       },
-      matchedActivity: null,
-      continuesActivity: null,
-      newActivityReason: "a comparison unrelated to the walk order work",
+      matchedStint: null,
+      continuesStint: null,
+      newStintReason: "a comparison unrelated to the walk order work",
       isSwitch: true,
       trigger: "what does Astryx do for agents?",
       confidence: 0.6,
@@ -142,7 +142,7 @@ describe("applyResult", () => {
     });
 
     expect(summary.traces).toBe(2);
-    expect(summary.activitiesOpened).toBe(1);
+    expect(summary.stintsOpened).toBe(1);
     expect(summary.questsProposed).toBe(1);
     expect(summary.branches).toBe(1);
     expect(summary.questionsWatching).toBe(1);
@@ -186,12 +186,12 @@ describe("applyResult", () => {
           matchedQuest: null,
           proposedQuest: {
             title: "Compare Astryx",
-            objective: "see what they claim",
+            aim: "see what they claim",
             commitment: "exploratory",
           },
-          matchedActivity: null,
-          continuesActivity: null,
-          newActivityReason: "a comparison unrelated to the walk order work",
+          matchedStint: null,
+          continuesStint: null,
+          newStintReason: "a comparison unrelated to the walk order work",
           isSwitch: true,
           trigger: "what does Astryx do for agents?",
           confidence: 0.6,
@@ -206,9 +206,9 @@ describe("applyResult", () => {
           guess: null,
           matchedQuest: null,
           proposedQuest: null,
-          matchedActivity: null,
-          continuesActivity: null,
-          newActivityReason: "still reading docs on the new topic",
+          matchedStint: null,
+          continuesStint: null,
+          newStintReason: "still reading docs on the new topic",
           isSwitch: false,
           trigger: null,
           confidence: 0.7,
@@ -224,12 +224,12 @@ describe("applyResult", () => {
           matchedQuest: null,
           proposedQuest: {
             title: "Check email",
-            objective: "clear inbox",
+            aim: "clear inbox",
             commitment: "personal",
           },
-          matchedActivity: null,
-          continuesActivity: null,
-          newActivityReason: "an unrelated personal errand",
+          matchedStint: null,
+          continuesStint: null,
+          newStintReason: "an unrelated personal errand",
           isSwitch: true,
           trigger: "let me check email real quick",
           confidence: 0.5,
@@ -254,14 +254,14 @@ describe("applyResult", () => {
     // wrongly point at A1 instead of the activity opened for segment 1/2.
     expect(summary.branches).toBe(2);
 
-    const secondActivity = database
+    const secondStint = database
       .query("SELECT id FROM activities WHERE objective = 'read Astryx docs'")
       .get() as { id: string };
     const emailQuest = database
       .query("SELECT id, origin_activity_id FROM quests WHERE title = 'Check email'")
       .get() as { id: string; origin_activity_id: string };
 
-    expect(emailQuest.origin_activity_id).toBe(secondActivity.id);
+    expect(emailQuest.origin_activity_id).toBe(secondStint.id);
   });
 
   test("askingEnabled false records no question row", () => {
@@ -298,9 +298,9 @@ describe("applyResult", () => {
           belongs: true,
           guess: null,
           matchedQuest: "Q9",
-          matchedActivity: "A1",
-          continuesActivity: null,
-          newActivityReason: null,
+          matchedStint: "A1",
+          continuesStint: null,
+          newStintReason: null,
         },
       ],
       sessionNote: null,
@@ -316,13 +316,13 @@ describe("applyResult", () => {
     });
 
     expect(summary.doubts).toBe(1);
-    expect(summary.activitiesOpened).toBe(0);
+    expect(summary.stintsOpened).toBe(0);
     expect(logs).toHaveLength(1);
 
-    const activity = database.query("SELECT quest_id FROM activities WHERE id = 'A1'").get() as {
+    const stint = database.query("SELECT quest_id FROM activities WHERE id = 'A1'").get() as {
       quest_id: string;
     };
-    expect(activity.quest_id).toBe("Q1");
+    expect(stint.quest_id).toBe("Q1");
 
     const trace = database.query("SELECT activity_id FROM traces WHERE id != 'T0'").get() as {
       activity_id: string;
@@ -344,9 +344,9 @@ describe("applyResult", () => {
           guess: null,
           matchedQuest: null,
           proposedQuest: null,
-          matchedActivity: "A1",
-          continuesActivity: null,
-          newActivityReason: null,
+          matchedStint: "A1",
+          continuesStint: null,
+          newStintReason: null,
         },
       ],
       sessionNote: null,
@@ -363,13 +363,13 @@ describe("applyResult", () => {
 
     expect(summary.doubts).toBe(0);
     expect(summary.questProposedOnMatched).toBe(0);
-    expect(summary.activitiesOpened).toBe(0);
+    expect(summary.stintsOpened).toBe(0);
     expect(logs).toHaveLength(0);
 
-    const activity = database.query("SELECT quest_id FROM activities WHERE id = 'A1'").get() as {
+    const stint = database.query("SELECT quest_id FROM activities WHERE id = 'A1'").get() as {
       quest_id: string;
     };
-    expect(activity.quest_id).toBe("Q1");
+    expect(stint.quest_id).toBe("Q1");
   });
 
   test("proposedQuest on a matched activity with no quest creates and attaches it", () => {
@@ -387,12 +387,12 @@ describe("applyResult", () => {
           matchedQuest: null,
           proposedQuest: {
             title: "Ship the walk order fix",
-            objective: "land it",
+            aim: "land it",
             commitment: "personal",
           },
-          matchedActivity: "A1",
-          continuesActivity: null,
-          newActivityReason: null,
+          matchedStint: "A1",
+          continuesStint: null,
+          newStintReason: null,
         },
       ],
       sessionNote: null,
@@ -410,17 +410,17 @@ describe("applyResult", () => {
     expect(summary.questProposedOnMatched).toBe(1);
     expect(summary.questsProposed).toBe(1);
     expect(summary.doubts).toBe(0);
-    expect(summary.activitiesOpened).toBe(0);
+    expect(summary.stintsOpened).toBe(0);
     expect(logs).toHaveLength(1);
 
-    const activity = database.query("SELECT quest_id FROM activities WHERE id = 'A1'").get() as {
+    const stint = database.query("SELECT quest_id FROM activities WHERE id = 'A1'").get() as {
       quest_id: string | null;
     };
-    expect(activity.quest_id).not.toBeNull();
+    expect(stint.quest_id).not.toBeNull();
 
     const quest = database
       .query("SELECT title, confirmed FROM quests WHERE id = ?")
-      .get(activity.quest_id) as { title: string; confirmed: number };
+      .get(stint.quest_id) as { title: string; confirmed: number };
     expect(quest.title).toBe("Ship the walk order fix");
     expect(quest.confirmed).toBe(0);
   });
@@ -438,12 +438,12 @@ describe("applyResult", () => {
           matchedQuest: null,
           proposedQuest: {
             title: "Something else entirely",
-            objective: "no",
+            aim: "no",
             commitment: "personal",
           },
-          matchedActivity: "A1",
-          continuesActivity: null,
-          newActivityReason: null,
+          matchedStint: "A1",
+          continuesStint: null,
+          newStintReason: null,
         },
       ],
       sessionNote: null,
@@ -460,10 +460,10 @@ describe("applyResult", () => {
     expect(summary.questProposedOnMatched).toBe(0);
     expect(summary.questsProposed).toBe(0);
 
-    const activity = database.query("SELECT quest_id FROM activities WHERE id = 'A1'").get() as {
+    const stint = database.query("SELECT quest_id FROM activities WHERE id = 'A1'").get() as {
       quest_id: string;
     };
-    expect(activity.quest_id).toBe("Q1");
+    expect(stint.quest_id).toBe("Q1");
   });
 
   test("continuesActivity opens a new activity linked to the closed one, keeping its quest", () => {
@@ -483,9 +483,9 @@ describe("applyResult", () => {
           belongs: true,
           guess: null,
           matchedQuest: "Q1",
-          matchedActivity: null,
-          continuesActivity: "A0",
-          newActivityReason: null,
+          matchedStint: null,
+          continuesStint: "A0",
+          newStintReason: null,
         },
       ],
       sessionNote: null,
@@ -499,7 +499,7 @@ describe("applyResult", () => {
       mode: "inferred",
     });
 
-    expect(summary.activitiesOpened).toBe(1);
+    expect(summary.stintsOpened).toBe(1);
     expect(summary.doubts).toBe(0);
 
     const opened = database
@@ -522,18 +522,18 @@ describe("applyResult", () => {
           belongs: true,
           guess: null,
           matchedQuest: "Q1",
-          matchedActivity: "A1",
-          continuesActivity: null,
-          newActivityReason: null,
+          matchedStint: "A1",
+          continuesStint: null,
+          newStintReason: null,
           isSwitch: false,
         },
         {
           ...baseNew,
           startedAt: "2026-09-04T15:10:00.000Z",
           endedAt: "2026-09-04T15:20:00.000Z",
-          matchedActivity: null,
-          continuesActivity: null,
-          newActivityReason: "a different objective entirely",
+          matchedStint: null,
+          continuesStint: null,
+          newStintReason: "a different objective entirely",
           isSwitch: true,
           questions: [],
         },
@@ -573,10 +573,10 @@ describe("applyResult", () => {
 
     const twoOpenWindow: ClassifierWindow = {
       ...window,
-      sessionOpenActivities: [
-        ...window.sessionOpenActivities,
+      sessionOpenStints: [
+        ...window.sessionOpenStints,
         {
-          activityId: "B1",
+          stintId: "B1",
           what: "second open activity",
           why: "ship",
           questId: "Q1",
@@ -596,9 +596,9 @@ describe("applyResult", () => {
           belongs: true,
           guess: null,
           matchedQuest: "Q1",
-          matchedActivity: "A1",
-          continuesActivity: null,
-          newActivityReason: null,
+          matchedStint: "A1",
+          continuesStint: null,
+          newStintReason: null,
           isSwitch: true,
           questions: [],
         },
@@ -639,10 +639,10 @@ describe("applyResult", () => {
           belongs: true,
           guess: null,
           matchedQuest: null,
-          proposedQuest: { title: "Quest B", objective: "do B", commitment: "exploratory" },
-          matchedActivity: null,
-          continuesActivity: null,
-          newActivityReason: "switch to B",
+          proposedQuest: { title: "Quest B", aim: "do B", commitment: "exploratory" },
+          matchedStint: null,
+          continuesStint: null,
+          newStintReason: "switch to B",
           isSwitch: true,
           trigger: "waiting on the build",
           questions: [],
@@ -655,9 +655,9 @@ describe("applyResult", () => {
           belongs: true,
           guess: null,
           matchedQuest: "Q1",
-          matchedActivity: "A1",
-          continuesActivity: null,
-          newActivityReason: null,
+          matchedStint: "A1",
+          continuesStint: null,
+          newStintReason: null,
           isSwitch: true,
           trigger: "build finished",
           questions: [],
@@ -712,9 +712,9 @@ describe("applyResult", () => {
           ...baseMatched,
           startedAt: "2026-09-04T14:40:00.000Z",
           endedAt: "2026-09-04T14:50:00.000Z",
-          matchedActivity: "A1",
-          continuesActivity: null,
-          newActivityReason: null,
+          matchedStint: "A1",
+          continuesStint: null,
+          newStintReason: null,
         },
       ],
       sessionNote: null,
@@ -739,7 +739,7 @@ describe("applyResult", () => {
     const { store } = seed(database);
 
     const hallucinated: ClassifierResult = {
-      segments: [{ ...baseMatched, matchedActivity: "A-does-not-exist", matchedQuest: "Q1" }],
+      segments: [{ ...baseMatched, matchedStint: "A-does-not-exist", matchedQuest: "Q1" }],
       sessionNote: null,
     };
 
@@ -752,8 +752,8 @@ describe("applyResult", () => {
       mode: "inferred",
     });
 
-    expect(summary.unknownActivityIds).toBe(1);
-    expect(summary.activitiesOpened).toBe(1);
+    expect(summary.unknownStintIds).toBe(1);
+    expect(summary.stintsOpened).toBe(1);
     expect(summary.doubts).toBe(0);
     expect(logs).toHaveLength(1);
 
@@ -781,10 +781,10 @@ describe("applyResult", () => {
 
     const closedWindow: ClassifierWindow = {
       ...window,
-      sessionOpenActivities: [
-        ...window.sessionOpenActivities,
+      sessionOpenStints: [
+        ...window.sessionOpenStints,
         {
-          activityId: "A-retracted",
+          stintId: "A-retracted",
           what: "wrong call",
           why: "unknown",
           questId: "Q1",
@@ -801,12 +801,12 @@ describe("applyResult", () => {
       closedWindow,
       {
         segments: [
-          { ...baseMatched, matchedActivity: "A-closed", matchedQuest: "Q1" },
+          { ...baseMatched, matchedStint: "A-closed", matchedQuest: "Q1" },
           {
             ...baseNew,
-            matchedActivity: "A-retracted",
-            continuesActivity: null,
-            newActivityReason: null,
+            matchedStint: "A-retracted",
+            continuesStint: null,
+            newStintReason: null,
             belongs: true,
             guess: null,
             matchedQuest: "Q1",
@@ -820,7 +820,7 @@ describe("applyResult", () => {
       { actor: "hook", askingEnabled: false, now: "2026-09-04T15:21:00.000Z", log: () => {} },
     );
 
-    expect(summary.unknownActivityIds).toBe(2);
+    expect(summary.unknownStintIds).toBe(2);
     const reused = database
       .query(
         "SELECT COUNT(*) as count FROM traces WHERE activity_id IN ('A-closed', 'A-retracted')",
@@ -839,7 +839,7 @@ describe("applyResult", () => {
       window,
       {
         segments: [
-          { ...baseMatched, matchedActivity: null, continuesActivity: "A1", matchedQuest: "Q1" },
+          { ...baseMatched, matchedStint: null, continuesStint: "A1", matchedQuest: "Q1" },
         ],
         sessionNote: null,
       },
@@ -847,13 +847,13 @@ describe("applyResult", () => {
     );
 
     // The objective never stopped, so this is a plain reuse: no new row, no continues link.
-    expect(summary.activitiesOpened).toBe(0);
-    expect(summary.unknownActivityIds).toBe(0);
+    expect(summary.stintsOpened).toBe(0);
+    expect(summary.unknownStintIds).toBe(0);
 
-    const activityCount = database.query("SELECT COUNT(*) as count FROM activities").get() as {
+    const stintCount = database.query("SELECT COUNT(*) as count FROM activities").get() as {
       count: number;
     };
-    expect(activityCount.count).toBe(1);
+    expect(stintCount.count).toBe(1);
 
     const trace = database.query("SELECT activity_id FROM traces WHERE id != 'T0'").get() as {
       activity_id: string;
@@ -873,8 +873,8 @@ describe("applyResult", () => {
         segments: [
           {
             ...baseMatched,
-            matchedActivity: null,
-            continuesActivity: "A-nope",
+            matchedStint: null,
+            continuesStint: "A-nope",
             belongs: true,
             guess: null,
             matchedQuest: "Q1",
@@ -885,8 +885,8 @@ describe("applyResult", () => {
       { actor: "hook", askingEnabled: false, now: "2026-09-04T15:21:00.000Z", log: () => {} },
     );
 
-    expect(summary.unknownActivityIds).toBe(1);
-    expect(summary.activitiesOpened).toBe(1);
+    expect(summary.unknownStintIds).toBe(1);
+    expect(summary.stintsOpened).toBe(1);
 
     const linked = database
       .query("SELECT COUNT(*) as count FROM activities WHERE continues IS NOT NULL")
@@ -907,10 +907,10 @@ describe("applyResult", () => {
           belongs: true,
           guess: null,
           matchedQuest: null,
-          proposedQuest: { title: "Side task", objective: "fill the wait", commitment: "personal" },
-          matchedActivity: null,
-          continuesActivity: null,
-          newActivityReason: "started this while the build was running",
+          proposedQuest: { title: "Side task", aim: "fill the wait", commitment: "personal" },
+          matchedStint: null,
+          continuesStint: null,
+          newStintReason: "started this while the build was running",
           isSwitch: true,
           trigger: "waiting on the build to finish",
           questions: [],
@@ -955,7 +955,7 @@ describe("applyResult in declared mode", () => {
     messages: [{ ts: "2026-09-04T15:20:00.000Z", role: "user", text: "still on it" }],
     openQuests: undefined,
     recentSideQuests: undefined,
-    activityAliases: { A1: "A1" },
+    stintAliases: { A1: "A1" },
   };
 
   function segment(overrides: Partial<ClassifierSegment>): ClassifierSegment {
@@ -966,9 +966,9 @@ describe("applyResult in declared mode", () => {
       why: "ship marko-ui",
       belongs: true,
       guess: null,
-      matchedActivity: null,
-      continuesActivity: null,
-      newActivityReason: "a fresh stretch of work",
+      matchedStint: null,
+      continuesStint: null,
+      newStintReason: "a fresh stretch of work",
       isSwitch: false,
       trigger: null,
       confidence: 0.9,
@@ -998,10 +998,10 @@ describe("applyResult in declared mode", () => {
 
     expect(summary.doubts).toBe(0);
     expect(summary.questsProposed).toBe(0);
-    const activity = database
+    const stint = database
       .query("SELECT quest_id as questId FROM activities ORDER BY opened_at DESC LIMIT 1")
       .get() as { questId: string | null };
-    expect(activity.questId).toBe(questId);
+    expect(stint.questId).toBe(questId);
     expect(
       (database.query("SELECT COUNT(*) as count FROM questions").get() as { count: number }).count,
     ).toBe(0);
@@ -1018,8 +1018,8 @@ describe("applyResult in declared mode", () => {
       {
         segments: [
           segment({
-            matchedActivity: "A1",
-            newActivityReason: null,
+            matchedStint: "A1",
+            newStintReason: null,
             belongs: false,
             guess: "a competitor comparison",
           }),
@@ -1038,10 +1038,10 @@ describe("applyResult in declared mode", () => {
     expect(question.sessionId).toBe("s1");
 
     // The doubt is raised, never acted on: the activity keeps the declared quest.
-    const activity = database
+    const stint = database
       .query("SELECT quest_id as questId FROM activities WHERE id = 'A1'")
       .get() as { questId: string | null };
-    expect(activity.questId).toBe(questId);
+    expect(stint.questId).toBe(questId);
   });
 
   test("declared mode never emits quest.created, quest.branched or a reassignment", () => {
@@ -1095,14 +1095,14 @@ describe("applyResult in declared mode", () => {
       database,
       declaredWindow,
       {
-        segments: [segment({ matchedActivity: "A7", newActivityReason: null })],
+        segments: [segment({ matchedStint: "A7", newStintReason: null })],
         sessionNote: null,
       },
       declaredOptions,
     );
 
-    expect(summary.unknownActivityIds).toBe(1);
-    expect(summary.activitiesOpened).toBe(1);
+    expect(summary.unknownStintIds).toBe(1);
+    expect(summary.stintsOpened).toBe(1);
     const opened = database
       .query("SELECT quest_id as questId FROM activities WHERE id != 'A1'")
       .get() as { questId: string | null };
@@ -1116,21 +1116,21 @@ describe("applyResult in declared mode", () => {
     const summary = applyResult(
       store,
       database,
-      { ...declaredWindow, activityAliases: { A1: "A1" } },
+      { ...declaredWindow, stintAliases: { A1: "A1" } },
       {
-        segments: [segment({ matchedActivity: "A1", newActivityReason: null })],
+        segments: [segment({ matchedStint: "A1", newStintReason: null })],
         sessionNote: null,
       },
       declaredOptions,
     );
 
     // The alias resolved, so nothing new was opened and the trace joined A1.
-    expect(summary.activitiesOpened).toBe(0);
-    expect(summary.unknownActivityIds).toBe(0);
+    expect(summary.stintsOpened).toBe(0);
+    expect(summary.unknownStintIds).toBe(0);
     const trace = database
       .query("SELECT activity_id as activityId FROM traces WHERE id != 'T0'")
-      .get() as { activityId: string };
-    expect(trace.activityId).toBe("A1");
+      .get() as { stintId: string };
+    expect(trace.stintId).toBe("A1");
   });
 
   test("a session with no declaration records traces with no quest and asks to declare once", () => {
@@ -1151,12 +1151,12 @@ describe("applyResult in declared mode", () => {
       declaredOptions,
     );
 
-    expect(summary.activitiesOpened).toBe(2);
+    expect(summary.stintsOpened).toBe(2);
     const opened = database
       .query("SELECT quest_id as questId FROM activities WHERE id != 'A1'")
       .all() as { questId: string | null }[];
     expect(opened).toHaveLength(2);
-    expect(opened.every((activity) => activity.questId === null)).toBe(true);
+    expect(opened.every((stint) => stint.questId === null)).toBe(true);
 
     // One gap, one question -- not one per segment.
     const questions = database.query("SELECT kind FROM questions").all() as { kind: string }[];
@@ -1189,7 +1189,7 @@ describe("applyResult in declared mode", () => {
       database,
       {
         ...declaredWindow,
-        parentDeclaredQuest: { title: "Ship marko-ui", objective: null, plan: [] },
+        parentDeclaredQuest: { title: "Ship marko-ui", aim: null, plan: [] },
       },
       {
         segments: [segment({ belongs: false, guess: "unrelated refactor" })],
@@ -1205,10 +1205,10 @@ describe("applyResult in declared mode", () => {
     expect(question.sessionId).toBe("parent");
 
     // The subagent's own quest, not the parent's, is what its work is attributed to.
-    const activity = database
+    const stint = database
       .query("SELECT quest_id as questId FROM activities WHERE id != 'A1'")
       .get() as { questId: string | null };
-    expect(activity.questId).toBe("Q2");
+    expect(stint.questId).toBe("Q2");
   });
 
   test("a doubt is still counted when asking is disabled, without asking", () => {

@@ -38,7 +38,7 @@ export function resolveIntentDatabase(database: Database, asOf: string | undefin
   return asOfDatabase;
 }
 
-export interface ActivityRow {
+export interface StintRow {
   id: string;
   questId: string | null;
   questTitle: string | null;
@@ -46,7 +46,7 @@ export interface ActivityRow {
   questOriginKind: string | null;
   org: string | null;
   project: string | null;
-  objective: string;
+  aim: string;
   openedAt: string;
   closedAt: string | null;
   outcome: string | null;
@@ -58,7 +58,7 @@ export interface SideQuestRow {
   title: string;
   org: string | null;
   project: string | null;
-  fromActivityObjective: string | null;
+  fromStintAim: string | null;
   branchedAt: string;
   trigger: string | null;
   kind: string | null;
@@ -67,7 +67,7 @@ export interface SideQuestRow {
 }
 
 interface TraceIntervalRow {
-  activityId: string;
+  stintId: string;
   startedAt: string;
   endedAt: string;
   org: string | null;
@@ -128,7 +128,7 @@ function queryTraceIntervals(database: Database, range: DateRange): TraceInterva
 }
 
 /** Minutes of trace time clipped to [start, end), summed per activity id. */
-function minutesByActivity(
+function minutesByStint(
   intervals: TraceIntervalRow[],
   start: string,
   end: string,
@@ -142,7 +142,7 @@ function minutesByActivity(
     const intervalEnd = Math.min(new Date(interval.endedAt).getTime(), endMs);
     if (intervalEnd <= intervalStart) continue;
     const minutesInRange = (intervalEnd - intervalStart) / 60000;
-    minutes.set(interval.activityId, (minutes.get(interval.activityId) ?? 0) + minutesInRange);
+    minutes.set(interval.stintId, (minutes.get(interval.stintId) ?? 0) + minutesInRange);
   }
 
   return minutes;
@@ -154,7 +154,7 @@ function minutesByActivity(
  * so they never report a time outside the report's range or an activity's
  * opened/closed_at when the trace evidence itself falls inside the range.
  */
-function clippedEvidenceByActivity(
+function clippedEvidenceByStint(
   intervals: TraceIntervalRow[],
   start: string,
   end: string,
@@ -167,32 +167,32 @@ function clippedEvidenceByActivity(
     const intervalStart = Math.max(new Date(interval.startedAt).getTime(), startMs);
     const intervalEnd = Math.min(new Date(interval.endedAt).getTime(), endMs);
     if (intervalEnd <= intervalStart) continue;
-    const times = evidence.get(interval.activityId) ?? [];
+    const times = evidence.get(interval.stintId) ?? [];
     times.push(new Date(intervalStart).toISOString(), new Date(intervalEnd).toISOString());
-    evidence.set(interval.activityId, times);
+    evidence.set(interval.stintId, times);
   }
 
   return evidence;
 }
 
 /** Org/project for an activity, taken from its earliest linked trace's session. */
-function projectByActivity(
+function projectByStint(
   intervals: TraceIntervalRow[],
 ): Map<string, { org: string; project: string }> {
   const projects = new Map<string, { org: string; project: string }>();
   for (const interval of intervals) {
-    if (projects.has(interval.activityId)) continue;
+    if (projects.has(interval.stintId)) continue;
     if (interval.org && interval.project) {
-      projects.set(interval.activityId, { org: interval.org, project: interval.project });
+      projects.set(interval.stintId, { org: interval.org, project: interval.project });
     }
   }
   return projects;
 }
 
-export interface ActivityTraceIntervalRow {
-  activityId: string;
+export interface StintTraceIntervalRow {
+  stintId: string;
   questTitle: string | null;
-  objective: string;
+  aim: string;
   org: string | null;
   project: string | null;
   startedAt: string;
@@ -205,40 +205,40 @@ export interface ActivityTraceIntervalRow {
  * bucket activity time by a finer grain than a day -- the hourly report's
  * per-hour "activities active this hour" cells.
  */
-export function queryActivityTraceIntervals(
+export function queryStintTraceIntervals(
   database: Database,
   range: DateRange,
-): ActivityTraceIntervalRow[] {
+): StintTraceIntervalRow[] {
   if (!hasIntentTables(database)) return [];
   const { start, end } = toDayBounds(range);
   const intervals = queryTraceIntervals(database, range);
   const startMs = new Date(start).getTime();
   const endMs = new Date(end).getTime();
 
-  const activityIds = new Set(intervals.map((interval) => interval.activityId));
-  if (activityIds.size === 0) return [];
+  const stintIds = new Set(intervals.map((interval) => interval.stintId));
+  if (stintIds.size === 0) return [];
 
-  const activityRows = database
+  const stintRows = database
     .query(
       `SELECT a.id as id, a.objective as objective, q.title as questTitle
        FROM activities a
        LEFT JOIN quests q ON q.id = a.quest_id
-       WHERE a.retracted_at IS NULL AND a.id IN (${[...activityIds].map(() => "?").join(", ")})`,
+       WHERE a.retracted_at IS NULL AND a.id IN (${[...stintIds].map(() => "?").join(", ")})`,
     )
-    .all(...activityIds) as { id: string; objective: string; questTitle: string | null }[];
-  const activitiesById = new Map(activityRows.map((row) => [row.id, row]));
+    .all(...stintIds) as { id: string; aim: string; questTitle: string | null }[];
+  const stintsById = new Map(stintRows.map((row) => [row.id, row]));
 
-  const rows: ActivityTraceIntervalRow[] = [];
+  const rows: StintTraceIntervalRow[] = [];
   for (const interval of intervals) {
     const intervalStart = Math.max(new Date(interval.startedAt).getTime(), startMs);
     const intervalEnd = Math.min(new Date(interval.endedAt).getTime(), endMs);
     if (intervalEnd <= intervalStart) continue;
-    const activity = activitiesById.get(interval.activityId);
-    if (!activity) continue;
+    const stint = stintsById.get(interval.stintId);
+    if (!stint) continue;
     rows.push({
-      activityId: interval.activityId,
-      questTitle: activity.questTitle,
-      objective: activity.objective,
+      stintId: interval.stintId,
+      questTitle: stint.questTitle,
+      aim: stint.aim,
       org: interval.org,
       project: interval.project,
       startedAt: new Date(intervalStart).toISOString(),
@@ -248,15 +248,15 @@ export function queryActivityTraceIntervals(
   return rows;
 }
 
-export function queryActivities(database: Database, range: DateRange): ActivityRow[] {
+export function queryStints(database: Database, range: DateRange): StintRow[] {
   if (!hasIntentTables(database)) return [];
   const { start, end } = toDayBounds(range);
   const intervals = queryTraceIntervals(database, range);
-  const minutes = minutesByActivity(intervals, start, end);
-  const projects = projectByActivity(intervals);
+  const minutes = minutesByStint(intervals, start, end);
+  const projects = projectByStint(intervals);
 
-  const activityIds = new Set(intervals.map((interval) => interval.activityId));
-  if (activityIds.size === 0) return [];
+  const stintIds = new Set(intervals.map((interval) => interval.stintId));
+  if (stintIds.size === 0) return [];
 
   const rows = database
     .query(
@@ -265,12 +265,12 @@ export function queryActivities(database: Database, range: DateRange): ActivityR
               q.title as questTitle, q.confirmed as questConfirmed, q.origin_kind as questOriginKind
        FROM activities a
        LEFT JOIN quests q ON q.id = a.quest_id
-       WHERE a.retracted_at IS NULL AND a.id IN (${[...activityIds].map(() => "?").join(", ")})`,
+       WHERE a.retracted_at IS NULL AND a.id IN (${[...stintIds].map(() => "?").join(", ")})`,
     )
-    .all(...activityIds) as {
+    .all(...stintIds) as {
     id: string;
     questId: string | null;
-    objective: string;
+    aim: string;
     openedAt: string;
     closedAt: string | null;
     outcome: string | null;
@@ -290,7 +290,7 @@ export function queryActivities(database: Database, range: DateRange): ActivityR
         questOriginKind: row.questOriginKind,
         org: project?.org ?? null,
         project: project?.project ?? null,
-        objective: row.objective,
+        aim: row.aim,
         openedAt: row.openedAt,
         closedAt: row.closedAt,
         outcome: row.outcome,
@@ -304,8 +304,8 @@ export function querySideQuests(database: Database, range: DateRange): SideQuest
   if (!hasIntentTables(database)) return [];
   const { start, end } = toDayBounds(range);
   const intervals = queryTraceIntervals(database, range);
-  const minutesByQuestActivity = minutesByActivity(intervals, start, end);
-  const projects = projectByActivity(intervals);
+  const minutesByQuestStint = minutesByStint(intervals, start, end);
+  const projects = projectByStint(intervals);
 
   const conditions = [
     "q.retracted_at IS NULL",
@@ -331,19 +331,19 @@ export function querySideQuests(database: Database, range: DateRange): SideQuest
     trigger: string | null;
     kind: string | null;
     returnedAt: string | null;
-    fromActivityObjective: string | null;
+    fromStintAim: string | null;
   }[];
 
   return rows.map((row) => {
-    const questActivities = database
+    const questStints = database
       .query("SELECT id FROM activities WHERE quest_id = ? AND retracted_at IS NULL")
       .all(row.id) as { id: string }[];
 
     let minutes = 0;
     let project: { org: string; project: string } | null = null;
-    for (const activity of questActivities) {
-      minutes += minutesByQuestActivity.get(activity.id) ?? 0;
-      project ??= projects.get(activity.id) ?? null;
+    for (const stint of questStints) {
+      minutes += minutesByQuestStint.get(stint.id) ?? 0;
+      project ??= projects.get(stint.id) ?? null;
     }
 
     return {
@@ -351,7 +351,7 @@ export function querySideQuests(database: Database, range: DateRange): SideQuest
       title: row.title,
       org: project?.org ?? null,
       project: project?.project ?? null,
-      fromActivityObjective: row.fromActivityObjective,
+      fromStintAim: row.fromStintAim,
       branchedAt: row.branchedAt,
       trigger: row.trigger,
       kind: row.kind,
@@ -371,7 +371,7 @@ export interface QuestSummaryRow {
   project: string | null;
   firstEvidence: string;
   lastEvidence: string;
-  activities: number;
+  stints: number;
   sideQuestMinutes: number;
 }
 
@@ -386,24 +386,24 @@ export function queryQuests(database: Database, range: DateRange): QuestSummaryR
   if (!hasIntentTables(database)) return [];
   const { start, end } = toDayBounds(range);
   const intervals = queryTraceIntervals(database, range);
-  const projects = projectByActivity(intervals);
-  const evidenceByActivity = clippedEvidenceByActivity(intervals, start, end);
+  const projects = projectByStint(intervals);
+  const evidenceByStint = clippedEvidenceByStint(intervals, start, end);
 
-  const activityIds = new Set(intervals.map((interval) => interval.activityId));
-  if (activityIds.size === 0) return [];
+  const stintIds = new Set(intervals.map((interval) => interval.stintId));
+  if (stintIds.size === 0) return [];
 
-  const activityRows = database
+  const stintRows = database
     .query(
       `SELECT id, quest_id as questId FROM activities WHERE retracted_at IS NULL AND id IN (${[
-        ...activityIds,
+        ...stintIds,
       ]
         .map(() => "?")
         .join(", ")})`,
     )
-    .all(...activityIds) as { id: string; questId: string | null }[];
+    .all(...stintIds) as { id: string; questId: string | null }[];
 
   const questIds = new Set(
-    activityRows.map((row) => row.questId).filter((id): id is string => id !== null),
+    stintRows.map((row) => row.questId).filter((id): id is string => id !== null),
   );
   if (questIds.size === 0) return [];
 
@@ -427,8 +427,8 @@ export function queryQuests(database: Database, range: DateRange): QuestSummaryR
   for (const sideQuest of querySideQuests(database, range)) {
     const origin = database
       .query("SELECT origin_activity_id as originActivityId FROM quests WHERE id = ?")
-      .get(sideQuest.id) as { originActivityId: string | null } | null;
-    const parentId = activityRows.find((row) => row.id === origin?.originActivityId)?.questId;
+      .get(sideQuest.id) as { originStintId: string | null } | null;
+    const parentId = stintRows.find((row) => row.id === origin?.originStintId)?.questId;
     if (!parentId) continue;
     sideQuestMinutesByQuestId.set(
       parentId,
@@ -438,8 +438,8 @@ export function queryQuests(database: Database, range: DateRange): QuestSummaryR
 
   return questRows
     .map((quest) => {
-      const questActivities = activityRows.filter((row) => row.questId === quest.id);
-      const evidenceTimes = questActivities.flatMap((row) => evidenceByActivity.get(row.id) ?? []);
+      const questStints = stintRows.filter((row) => row.questId === quest.id);
+      const evidenceTimes = questStints.flatMap((row) => evidenceByStint.get(row.id) ?? []);
       // A quest's activity can match `queryTraceIntervals`' SQL range (which
       // compares raw trace start/end) yet clip to nothing once bounded to
       // [start, end) -- e.g. a trace that only brushes the range's edge.
@@ -456,8 +456,8 @@ export function queryQuests(database: Database, range: DateRange): QuestSummaryR
       );
 
       let project: { org: string; project: string } | null = null;
-      for (const activity of questActivities) {
-        project ??= projects.get(activity.id) ?? null;
+      for (const stint of questStints) {
+        project ??= projects.get(stint.id) ?? null;
       }
 
       return {
@@ -470,7 +470,7 @@ export function queryQuests(database: Database, range: DateRange): QuestSummaryR
         project: project?.project ?? null,
         firstEvidence,
         lastEvidence,
-        activities: questActivities.length,
+        stints: questStints.length,
         sideQuestMinutes: sideQuestMinutesByQuestId.get(quest.id) ?? 0,
       };
     })

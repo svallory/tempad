@@ -53,10 +53,10 @@ describe("retracted events", () => {
     };
     expect(trace.retracted_at).not.toBeNull();
 
-    const activity = database
+    const stint = database
       .query("SELECT retracted_at FROM activities WHERE id = 'A1'")
       .get() as { retracted_at: string | null };
-    expect(activity.retracted_at).toBeNull();
+    expect(stint.retracted_at).toBeNull();
   });
 
   test("a retracted activity.opened marks the activity row retracted_at", () => {
@@ -72,10 +72,10 @@ describe("retracted events", () => {
       }),
     );
 
-    const activity = database
+    const stint = database
       .query("SELECT retracted_at FROM activities WHERE id = 'A1'")
       .get() as { retracted_at: string | null };
-    expect(activity.retracted_at).not.toBeNull();
+    expect(stint.retracted_at).not.toBeNull();
   });
 
   test("a retracted quest.created marks the quest row retracted_at", () => {
@@ -117,7 +117,7 @@ describe("retracted events", () => {
         actor: "hook",
         kind: "activity.opened",
         subject: "A1",
-        payload: { objective: "do work" },
+        payload: { aim: "do work" },
         at: "2026-09-04T14:00:00.000Z",
       }),
     );
@@ -129,7 +129,7 @@ describe("retracted events", () => {
         subject: "T1",
         sessionId: "s1",
         payload: {
-          activity: "A1",
+          stint: "A1",
           tool: "claude-code",
           place: "p",
           source: "session",

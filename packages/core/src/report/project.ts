@@ -3,7 +3,7 @@ import type { Config } from "../config/env.ts";
 import {
   attributeNonClaudeEvidence,
   type NonClaudeEvidenceRow,
-  queryActivities,
+  queryStints,
   queryQuests,
   querySideQuests,
   resolveIntentDatabase,
@@ -73,7 +73,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
   const mondayItems = queryMondayItems(database, range);
   const quests = queryQuests(intentDatabase, range);
   const sideQuests = querySideQuests(intentDatabase, range);
-  const activities = queryActivities(intentDatabase, range);
+  const stints = queryStints(intentDatabase, range);
   const attribution = new Map(
     attributeNonClaudeEvidence(intentDatabase, range).map((row) => [row.id, row]),
   );
@@ -129,7 +129,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
         elapsedLabel(quest.firstEvidence, quest.lastEvidence),
         "-",
         "-",
-        String(quest.activities),
+        String(quest.stints),
         minutesLabel(quest.sideQuestMinutes),
       ];
     });
@@ -164,10 +164,10 @@ function render(database: Database, config: Config, options: ReportOptions): str
     const rows = [...questRows, ...otherRows];
 
     const sideQuestMinutes = projectSideQuests.reduce((sum, quest) => sum + quest.minutes, 0);
-    const mainActivityMinutes = activities
-      .filter((activity) => activity.org === key.org && activity.project === key.project)
-      .reduce((sum, activity) => sum + activity.minutes, 0);
-    const totalMinutes = sideQuestMinutes + mainActivityMinutes;
+    const mainStintMinutes = stints
+      .filter((stint) => stint.org === key.org && stint.project === key.project)
+      .reduce((sum, stint) => sum + stint.minutes, 0);
+    const totalMinutes = sideQuestMinutes + mainStintMinutes;
     const percent = totalMinutes > 0 ? Math.round((sideQuestMinutes / totalMinutes) * 100) : 0;
     const sideQuestFooter =
       projectSideQuests.length > 0

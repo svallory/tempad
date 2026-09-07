@@ -11,14 +11,14 @@ describe("time travel", () => {
   test("goals as of August exclude September changes", () => {
     const database = openDatabase(":memory:");
     const store = new EventStore(database);
-    const goal = newUlid();
+    const saga = newUlid();
     applyIncremental(
       database,
       store.append({
         at: "2026-08-01T00:00:00.000Z",
         actor: "hero",
         kind: "goal.created",
-        subject: goal,
+        subject: saga,
         payload: { owner: { kind: "hero", id: "h" }, title: "Old title" },
       }),
     );
@@ -28,7 +28,7 @@ describe("time travel", () => {
         at: "2026-09-02T00:00:00.000Z",
         actor: "hero",
         kind: "goal.reworded",
-        subject: goal,
+        subject: saga,
         payload: { title: "New title" },
       }),
     );

@@ -21,7 +21,7 @@ describe("quests", () => {
     const { run, database } = harness();
     await run(["hero", "init", "S"]);
     await run(["goal", "add", "--owner", "hero", "G"]);
-    const goal = database.query("SELECT id FROM goals").get() as { id: string };
+    const saga = database.query("SELECT id FROM goals").get() as { id: string };
     expect(
       await run([
         "quest",
@@ -29,7 +29,7 @@ describe("quests", () => {
         "--owner",
         "hero",
         "--goal",
-        goal.id,
+        saga.id,
         "Ship marko-ui",
         "--budget",
         "30h",
@@ -147,12 +147,12 @@ describe("quests", () => {
     const [a, b] = database.query("SELECT id FROM quests ORDER BY title").all() as { id: string }[];
     expect(await run(["quest", "merge", b?.id ?? "", "--into", a?.id ?? ""])).toBe(0);
 
-    const { askQuestion, openActivity, recordTrace } = await import("../../src/intent/api");
+    const { askQuestion, openStint, recordTrace } = await import("../../src/intent/api");
     const { EventStore } = await import("../../src/intent/store");
     const store = new EventStore(database);
-    const activity = openActivity(store, database, { objective: "work", actor: "hook" });
+    const stint = openStint(store, database, { aim: "work", actor: "hook" });
     const trace = recordTrace(store, database, {
-      activity,
+      stint,
       tool: "claude-code",
       place: "p",
       source: "session",
@@ -175,7 +175,7 @@ describe("quests", () => {
       actor: "hook",
     });
     expect(await run(["answer", question, "--quest", b?.id ?? ""])).toBe(0);
-    const row = database.query("SELECT quest_id FROM activities WHERE id = ?").get(activity) as {
+    const row = database.query("SELECT quest_id FROM activities WHERE id = ?").get(stint) as {
       quest_id: string;
     };
     expect(row.quest_id).toBe(a?.id ?? "");
@@ -189,9 +189,9 @@ describe("quests", () => {
     expect(await run(["quest", "reword", quest.id, "New title"])).toBe(0);
     const row = database
       .query("SELECT title, objective FROM quests WHERE id = ?")
-      .get(quest.id) as { title: string; objective: string | null };
+      .get(quest.id) as { title: string; aim: string | null };
     expect(row.title).toBe("New title");
-    expect(row.objective).toBe("Original objective");
+    expect(row.aim).toBe("Original objective");
   });
 
   test("unknown quest id: confirm/pause/resume/done/abandon/branch/return fail without appending events", async () => {
@@ -260,12 +260,12 @@ describe("quests", () => {
     const { run, database } = harness();
     await run(["hero", "init", "S"]);
 
-    const { askQuestion, openActivity, recordTrace } = await import("../../src/intent/api");
+    const { askQuestion, openStint, recordTrace } = await import("../../src/intent/api");
     const { EventStore } = await import("../../src/intent/store");
     const store = new EventStore(database);
-    const activity = openActivity(store, database, { objective: "work", actor: "hook" });
+    const stint = openStint(store, database, { aim: "work", actor: "hook" });
     const trace = recordTrace(store, database, {
-      activity,
+      stint,
       tool: "claude-code",
       place: "p",
       source: "session",
@@ -303,10 +303,10 @@ describe("quests", () => {
     expect(payload.quest).toBe(newQuest.id);
     expect(payload.quest.startsWith("new:")).toBe(false);
 
-    const activityRow = database
+    const stintRow = database
       .query("SELECT quest_id FROM activities WHERE id = ?")
-      .get(activity) as { quest_id: string };
-    expect(activityRow.quest_id).toBe(newQuest.id);
+      .get(stint) as { quest_id: string };
+    expect(stintRow.quest_id).toBe(newQuest.id);
   });
 
   test("rebuild --until <date> prints a warning that projections are stuck in the past", async () => {
