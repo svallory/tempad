@@ -1271,6 +1271,38 @@ describe("applyResult in declared mode", () => {
     expect(asked.some((q) => q.kind === "declare")).toBe(true);
   });
 
+  test("a declare question is not asked when only overlap-dropped segments meet stintMinMinutes", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seed(database);
+
+    const overlapDeclaredWindow: ClassifierWindow = {
+      ...declaredWindow,
+      overlapMessages: [
+        { ts: "2026-09-04T15:00:00.000Z", role: "user", text: "tail one" },
+        { ts: "2026-09-04T15:06:00.000Z", role: "user", text: "tail two" },
+      ],
+    };
+
+    const summary = applyResult(
+      store,
+      database,
+      overlapDeclaredWindow,
+      {
+        segments: [
+          segment({ startedAt: "2026-09-04T15:00:00.000Z", endedAt: "2026-09-04T15:06:00.000Z" }),
+        ],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+
+    expect(summary.overlapDropped).toBe(1);
+    const asked = database.query("SELECT kind FROM questions WHERE state = 'watching'").all() as {
+      kind: string;
+    }[];
+    expect(asked.some((q) => q.kind === "declare")).toBe(false);
+  });
+
   test("a subagent's doubt is addressed to the parent session", () => {
     const database = openDatabase(":memory:");
     const { store, heroId } = seed(database);
