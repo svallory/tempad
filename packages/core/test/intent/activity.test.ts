@@ -221,6 +221,7 @@ describe("tempad answer --belongs", () => {
     const activity = openActivity(store, database, {
       objective: "fix walk order",
       quest: quest.id,
+      at: "2026-09-04T15:00:00.000Z",
       actor: "hook",
     });
     const trace = recordTrace(store, database, {
@@ -238,6 +239,7 @@ describe("tempad answer --belongs", () => {
       confidence: 0.9,
       classifiedBy: "assistant",
       actor: "hook",
+      sessionId: "s1",
     });
     const question = askQuestion(store, database, {
       trace,
@@ -247,7 +249,7 @@ describe("tempad answer --belongs", () => {
       guess: "a competitor comparison",
       actor: "hook",
     });
-    return { database, context, question, activity, quest };
+    return { database, context, question, activity, quest, store };
   }
 
   test("--belongs answers the question and leaves the trace and its quest alone", async () => {
@@ -317,8 +319,34 @@ describe("tempad answer --belongs", () => {
     expect(moved.title).toBe("Compare Astryx");
   });
 
-  test("--origin current on a new quest records the branch with its trigger and kind", async () => {
-    const { database, context, question, activity } = await seedBelongsQuestion();
+  test("--origin current branches from the quest being left, not the reassigned activity", async () => {
+    const { database, context, question, activity, quest, store } = await seedBelongsQuestion();
+
+    // An earlier activity of the same session on the declared quest: this is what
+    // the side quest actually branched away from.
+    const earlier = openActivity(store, database, {
+      objective: "the work that was underway",
+      quest: quest.id,
+      at: "2026-09-04T14:00:00.000Z",
+      actor: "hook",
+    });
+    recordTrace(store, database, {
+      activity: earlier,
+      tool: "claude-code",
+      place: "p",
+      source: "session",
+      startedAt: "2026-09-04T14:00:00.000Z",
+      endedAt: "2026-09-04T14:30:00.000Z",
+      who: "hero",
+      what: "earlier work",
+      why: "ship",
+      where: "w",
+      how: "h",
+      confidence: 0.9,
+      classifiedBy: "assistant",
+      actor: "hook",
+      sessionId: "s1",
+    });
 
     expect(
       await runIntentCommand(
@@ -342,13 +370,40 @@ describe("tempad answer --belongs", () => {
       .query("SELECT payload FROM events WHERE kind = 'quest.branched'")
       .get() as { payload: string };
     const payload = JSON.parse(branched.payload) as {
-      from_activity: string;
+      from_activity: string | null;
       trigger: string;
       kind: string;
     };
-    expect(payload.from_activity).toBe(activity);
+    // Never the activity this same command reassigns to the new quest -- that
+    // would record the quest as branching from its own activity.
+    expect(payload.from_activity).not.toBe(activity);
+    expect(payload.from_activity).toBe(earlier);
     expect(payload.trigger).toBe("what does Astryx do for agents?");
     expect(payload.kind).toBe("curiosity");
+
+    // The new quest's origin points at the quest that was left, not at itself.
+    const originQuest = database
+      .query("SELECT quest_id as questId FROM activities WHERE id = ?")
+      .get(earlier) as { questId: string | null };
+    expect(originQuest.questId).toBe(quest.id);
+  });
+
+  test("--origin current records a null origin when nothing preceded the doubted activity", async () => {
+    const { database, context, question } = await seedBelongsQuestion();
+
+    expect(
+      await runIntentCommand(
+        ["answer", question, "--quest", "new:Compare Astryx", "--origin", "current"],
+        context,
+      ),
+    ).toBe(0);
+
+    const branched = database
+      .query("SELECT payload FROM events WHERE kind = 'quest.branched'")
+      .get() as { payload: string };
+    // The doubted activity is the session's first on that quest: there is nothing
+    // it branched away from, and nothing is invented.
+    expect(JSON.parse(branched.payload).from_activity).toBeNull();
   });
 
   test("--origin is refused without a new quest, and an unknown --kind is refused", async () => {

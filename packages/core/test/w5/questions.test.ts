@@ -490,3 +490,137 @@ test("advanceQuestions transitions are event-sourced: tempad rebuild reproduces 
 
   expect(after).toEqual(before);
 });
+
+describe("advanceQuestions and the verifier's question kinds", () => {
+  /**
+   * The declared-mode shape: the activity carries the declared quest, so the
+   * inference-era "no quest" heuristic can never fire for these questions.
+   */
+  function seedDeclaredQuestion(kind: "belongs" | "declare") {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    const store = new EventStore(database);
+    const traceId = seedActivityAndTrace(database, {
+      activityId: "A1",
+      questId: "Q1",
+      sessionId: "s1",
+      isSwitch: false,
+    });
+    const questionId = seedQuestion(database, store, { traceId, sessionId: "s1", kind });
+    return { database, store, questionId };
+  }
+
+  for (const kind of ["belongs", "declare"] as const) {
+    test(`a ${kind} question watches, then is asked once watchTurns is reached`, () => {
+      const { database, store, questionId } = seedDeclaredQuestion(kind);
+
+      // Below watchTurns: still watching.
+      const early = advanceQuestions(store, database, config, {
+        sessionId: "s1",
+        now: "2026-09-04T15:30:00.000Z",
+        turnsSinceLastRun: 1,
+        // Deliberately below askMinActivityMinutes: these kinds must not depend
+        // on the activity heuristic at all.
+        sessionActivityMinutes: 0,
+        resolvedByContext: [],
+      });
+      expect(early.asked).toHaveLength(0);
+      expect(
+        (
+          database.query("SELECT state FROM questions WHERE id = ?").get(questionId) as {
+            state: string;
+          }
+        ).state,
+      ).toBe("watching");
+
+      const later = advanceQuestions(store, database, config, {
+        sessionId: "s1",
+        now: "2026-09-04T15:40:00.000Z",
+        turnsSinceLastRun: 3,
+        sessionActivityMinutes: 0,
+        resolvedByContext: [],
+      });
+
+      expect(later.asked.map((question) => question.id)).toEqual([questionId]);
+      expect(
+        (
+          database.query("SELECT state FROM questions WHERE id = ?").get(questionId) as {
+            state: string;
+          }
+        ).state,
+      ).toBe("asked");
+    });
+
+    test(`an asked ${kind} question expires after askExpireTurns`, () => {
+      const { database, store, questionId } = seedDeclaredQuestion(kind);
+
+      advanceQuestions(store, database, config, {
+        sessionId: "s1",
+        now: "2026-09-04T15:40:00.000Z",
+        turnsSinceLastRun: 3,
+        sessionActivityMinutes: 0,
+        resolvedByContext: [],
+      });
+
+      const expiring = advanceQuestions(store, database, config, {
+        sessionId: "s1",
+        now: "2026-09-04T16:40:00.000Z",
+        turnsSinceLastRun: 2,
+        sessionActivityMinutes: 0,
+        resolvedByContext: [],
+      });
+
+      expect(expiring.expired.map((question) => question.id)).toEqual([questionId]);
+      expect(
+        (
+          database.query("SELECT state FROM questions WHERE id = ?").get(questionId) as {
+            state: string;
+          }
+        ).state,
+      ).toBe("expired");
+    });
+  }
+
+  test("a belongs question on an activity that has a quest is still asked", () => {
+    // The regression this guards: the promotion gate used to require a null
+    // quest, which declared mode never produces, so belongs questions sat in
+    // `watching` forever -- never asked, never expired.
+    const { database, store, questionId } = seedDeclaredQuestion("belongs");
+
+    const result = advanceQuestions(store, database, config, {
+      sessionId: "s1",
+      now: "2026-09-04T15:40:00.000Z",
+      turnsSinceLastRun: 3,
+      sessionActivityMinutes: 0,
+      resolvedByContext: [],
+    });
+
+    expect(result.asked.map((question) => question.id)).toEqual([questionId]);
+    const quest = database
+      .query("SELECT quest_id as questId FROM activities WHERE id = 'A1'")
+      .get() as { questId: string | null };
+    expect(quest.questId).toBe("Q1");
+  });
+
+  test("the ask budget and quiet window still gate the new kinds", () => {
+    const { database, store, questionId } = seedDeclaredQuestion("belongs");
+    database.query("INSERT INTO w5_quiet (until) VALUES ('2026-09-04T18:00:00.000Z')").run();
+
+    const result = advanceQuestions(store, database, config, {
+      sessionId: "s1",
+      now: "2026-09-04T15:40:00.000Z",
+      turnsSinceLastRun: 3,
+      sessionActivityMinutes: 0,
+      resolvedByContext: [],
+    });
+
+    expect(result.asked).toHaveLength(0);
+    expect(
+      (
+        database.query("SELECT state FROM questions WHERE id = ?").get(questionId) as {
+          state: string;
+        }
+      ).state,
+    ).toBe("watching");
+  });
+});

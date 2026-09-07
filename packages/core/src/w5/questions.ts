@@ -207,12 +207,18 @@ export function advanceQuestions(
 
     if (newTurnsWatched < config.watchTurns) continue;
 
+    // The verifier's two kinds carry their own reason to ask, so they promote on
+    // the watch_turns rule alone. The activity heuristic below is inference-only:
+    // it asks when a stretch of work has no quest, but in declared mode every
+    // activity is given the declared quest, so a `belongs` question would never
+    // qualify and would sit in `watching` forever -- never asked, never expired.
+    const qualifiesByKind = row.kind === "belongs" || row.kind === "declare";
     const qualifiesOnSwitch = row.kind === "which_quest" && row.isSwitch;
     const qualifiesOnActivity =
       input.sessionActivityMinutes >= config.askMinActivityMinutes &&
       (trace?.questId === null || trace?.questId === undefined);
 
-    if (!qualifiesOnSwitch && !qualifiesOnActivity) continue;
+    if (!qualifiesByKind && !qualifiesOnSwitch && !qualifiesOnActivity) continue;
     if (hasRecentAsk(database, input.sessionId, input.now, config.askBudgetMinutes)) continue;
     if (hasUnansweredAsked(database, input.sessionId)) continue;
     if (isQuiet(database, input.now)) continue;

@@ -946,6 +946,52 @@ function runTraceCommand(args: string[], context: IntentContext): number {
 
 const BRANCH_KINDS = new Set<string>(["waiting", "blocker", "curiosity", "unknown"]);
 
+/**
+ * The activity a side quest branched *from*: the most recent activity of the same
+ * session, on the quest the doubted activity currently sits under (its declared
+ * quest), that opened before the doubted activity did.
+ *
+ * Deliberately not the doubted activity itself -- the caller reassigns that one to
+ * the new quest, so using it would record the new quest as branching from its own
+ * activity. Matches `apply.ts`'s convention of branching from the *previous*
+ * segment's activity. Null when the doubted activity is the session's first on
+ * that quest, which is a real outcome: there is nothing it branched away from.
+ */
+function originActivityId(database: Database, doubtedActivityId: string): string | null {
+  const doubted = database
+    .query(
+      `SELECT activities.quest_id as questId, activities.opened_at as openedAt,
+              (SELECT traces.session_id FROM traces
+                WHERE traces.activity_id = activities.id AND traces.retracted_at IS NULL
+                ORDER BY traces.started_at ASC LIMIT 1) as sessionId
+         FROM activities WHERE activities.id = ?`,
+    )
+    .get(doubtedActivityId) as {
+    questId: string | null;
+    openedAt: string;
+    sessionId: string | null;
+  } | null;
+  if (!doubted || doubted.questId === null || doubted.sessionId === null) return null;
+
+  const row = database
+    .query(
+      `SELECT activities.id as id FROM activities
+        WHERE activities.quest_id = ?
+          AND activities.id != ?
+          AND activities.opened_at < ?
+          AND activities.retracted_at IS NULL
+          AND EXISTS (SELECT 1 FROM traces
+                       WHERE traces.activity_id = activities.id
+                         AND traces.session_id = ?
+                         AND traces.retracted_at IS NULL)
+        ORDER BY activities.opened_at DESC LIMIT 1`,
+    )
+    .get(doubted.questId, doubtedActivityId, doubted.openedAt, doubted.sessionId) as {
+    id: string;
+  } | null;
+  return row?.id ?? null;
+}
+
 function runAnswerCommand(args: string[], context: IntentContext): number {
   const { values, positionals } = parseArgs({
     args,
@@ -1023,7 +1069,9 @@ function runAnswerCommand(args: string[], context: IntentContext): number {
 
   // `--origin current` is the answer-time equivalent of a live declaration's
   // `--origin`: the answer itself is what reveals a side quest existed, branching
-  // from the declared quest's most recent activity.
+  // from the quest being *left*, never from the activity this command is about to
+  // reassign to the new quest -- that would record a quest as branching from its
+  // own activity.
   if (values.origin !== undefined) {
     if (values.origin !== "current") {
       console.error("--origin must be current");
@@ -1045,7 +1093,7 @@ function runAnswerCommand(args: string[], context: IntentContext): number {
         kind: "quest.branched",
         subject: questId,
         payload: {
-          from_activity: trace.activity_id,
+          from_activity: originActivityId(context.database, trace.activity_id),
           trigger: values.trigger ?? "unknown",
           kind,
         },
