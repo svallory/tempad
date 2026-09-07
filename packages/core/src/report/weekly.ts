@@ -3,6 +3,7 @@ import type { Config } from "../config/env.ts";
 import {
   queryActivities,
   queryQuests,
+  querySideQuestDoubts,
   querySideQuests,
   resolveIntentDatabase,
 } from "./intent-queries.ts";
@@ -33,6 +34,7 @@ interface DayProjectStats {
   sideQuests: number;
   sideQuestMinutes: number;
   unconfirmedQuests: number;
+  doubts: number;
 }
 
 function emptyStats(): DayProjectStats {
@@ -44,6 +46,7 @@ function emptyStats(): DayProjectStats {
     sideQuests: 0,
     sideQuestMinutes: 0,
     unconfirmedQuests: 0,
+    doubts: 0,
   };
 }
 
@@ -56,6 +59,7 @@ function addStats(a: DayProjectStats, b: DayProjectStats): DayProjectStats {
     sideQuests: a.sideQuests + b.sideQuests,
     sideQuestMinutes: a.sideQuestMinutes + b.sideQuestMinutes,
     unconfirmedQuests: a.unconfirmedQuests + b.unconfirmedQuests,
+    doubts: a.doubts + b.doubts,
   };
 }
 
@@ -69,6 +73,7 @@ function statsRow(label: string, stats: DayProjectStats): string[] {
     String(stats.sideQuests),
     minutesLabel(stats.sideQuestMinutes),
     String(stats.unconfirmedQuests),
+    String(stats.doubts),
   ];
 }
 
@@ -81,6 +86,7 @@ const HEADERS = [
   "side quests",
   "side-quest minutes",
   "unconfirmed quests",
+  "doubts",
 ];
 
 function render(database: Database, config: Config, options: ReportOptions): string {
@@ -155,6 +161,11 @@ function render(database: Database, config: Config, options: ReportOptions): str
         unconfirmedQuests: quests.filter(
           (row) => row.org === key.org && row.project === key.project && !row.confirmed,
         ).length,
+        doubts: querySideQuestDoubts(intentDatabase, {
+          ...dayRangeOptions,
+          org: key.org,
+          project: key.project,
+        }),
       };
 
       rows.push(statsRow(projectKeyString(key), stats));

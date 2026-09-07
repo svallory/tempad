@@ -32,6 +32,27 @@ describe("weeklyReport", () => {
     database.close();
   });
 
+  test("the weekly table gains a doubts column sourced from belongs questions in range", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(
+      `INSERT INTO questions (id, trace_id, session_id, text, kind, state, turns_watched)
+       VALUES ('question-belongs-1', 'trace-1', 'session-1', 'does this belong?', 'belongs', 'watching', 1)`,
+    );
+
+    const output = weeklyReport.render(database, REPORT_CONFIG, {
+      from: "2026-08-31",
+      to: "2026-09-04",
+    });
+
+    expect(output).toContain("doubts");
+    const row = output.split("\n").find((line) => line.includes("acme/widgets"));
+    expect(row).toContain("| 1 |");
+
+    database.close();
+  });
+
   test("a weekday with no evidence prints no evidence, an empty weekend day is skipped", () => {
     const database = openDatabase(join(dir, "tempad.db"));
 

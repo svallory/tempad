@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { currentDeclaredQuest } from "../intent/declarations.ts";
 import { stateAsOf } from "../intent/time-travel.ts";
 import { localDayBoundsUtc } from "./markdown.ts";
 import { clientCondition, type DateRange } from "./queries.ts";
@@ -42,6 +43,7 @@ export interface ActivityRow {
   questId: string | null;
   questTitle: string | null;
   questConfirmed: boolean;
+  questOriginKind: string | null;
   org: string | null;
   project: string | null;
   objective: string;
@@ -260,7 +262,7 @@ export function queryActivities(database: Database, range: DateRange): ActivityR
     .query(
       `SELECT a.id as id, a.quest_id as questId, a.objective as objective,
               a.opened_at as openedAt, a.closed_at as closedAt, a.outcome as outcome,
-              q.title as questTitle, q.confirmed as questConfirmed
+              q.title as questTitle, q.confirmed as questConfirmed, q.origin_kind as questOriginKind
        FROM activities a
        LEFT JOIN quests q ON q.id = a.quest_id
        WHERE a.retracted_at IS NULL AND a.id IN (${[...activityIds].map(() => "?").join(", ")})`,
@@ -274,6 +276,7 @@ export function queryActivities(database: Database, range: DateRange): ActivityR
     outcome: string | null;
     questTitle: string | null;
     questConfirmed: number | null;
+    questOriginKind: string | null;
   }[];
 
   return rows
@@ -284,6 +287,7 @@ export function queryActivities(database: Database, range: DateRange): ActivityR
         questId: row.questId,
         questTitle: row.questTitle,
         questConfirmed: row.questConfirmed === 1,
+        questOriginKind: row.questOriginKind,
         org: project?.org ?? null,
         project: project?.project ?? null,
         objective: row.objective,
@@ -361,6 +365,7 @@ export interface QuestSummaryRow {
   id: string;
   title: string;
   confirmed: boolean;
+  originKind: string;
   state: string;
   org: string | null;
   project: string | null;
@@ -404,13 +409,19 @@ export function queryQuests(database: Database, range: DateRange): QuestSummaryR
 
   const questRows = database
     .query(
-      `SELECT id, title, confirmed, state FROM quests WHERE retracted_at IS NULL AND id IN (${[
+      `SELECT id, title, confirmed, state, origin_kind as originKind FROM quests WHERE retracted_at IS NULL AND id IN (${[
         ...questIds,
       ]
         .map(() => "?")
         .join(", ")})`,
     )
-    .all(...questIds) as { id: string; title: string; confirmed: number; state: string }[];
+    .all(...questIds) as {
+    id: string;
+    title: string;
+    confirmed: number;
+    state: string;
+    originKind: string;
+  }[];
 
   const sideQuestMinutesByQuestId = new Map<string, number>();
   for (const sideQuest of querySideQuests(database, range)) {
@@ -453,6 +464,7 @@ export function queryQuests(database: Database, range: DateRange): QuestSummaryR
         id: quest.id,
         title: quest.title,
         confirmed: quest.confirmed === 1,
+        originKind: quest.originKind,
         state: quest.state,
         org: project?.org ?? null,
         project: project?.project ?? null,
@@ -496,6 +508,122 @@ export function queryOpenQuestions(database: Database, range: DateRange): number
        LEFT JOIN questions qu ON qu.trace_id = t.id
        WHERE ${conditions.join(" AND ")}${client.sql}
          AND (t.confidence = 0 OR qu.state = 'expired')`,
+    )
+    .get(...params) as { count: number };
+  return row.count;
+}
+
+export interface NonClaudeEvidenceRow {
+  id: string;
+  kind: "commit" | "monday_item";
+  questId: string | null;
+  questTitle: string | null;
+}
+
+/**
+ * Attributes each `gh_commits`/`monday_items` row in range to a quest by
+ * finding the `claude_sessions` row in the same org/project whose
+ * `[started_at, ended_at]` window overlaps the row's timestamp, then
+ * resolving that session's current declared quest as of the timestamp. When
+ * more than one session overlaps, the one with the latest `started_at` wins
+ * -- a heuristic ("most recently started session is presumed active"), not
+ * a guarantee. A commit/item with no overlapping session, or whose session
+ * has no declaration at that timestamp, comes back unattributed
+ * (`questId: null`) -- never invented. Read-only: writes nothing back.
+ */
+export function attributeNonClaudeEvidence(
+  database: Database,
+  range: DateRange,
+): NonClaudeEvidenceRow[] {
+  const { start, end } = toDayBounds(range);
+  const rows: NonClaudeEvidenceRow[] = [];
+
+  const commitRows = database
+    .query(
+      `SELECT c.sha as id, r.org as org, r.project as project, c.authored_at as at
+       FROM gh_commits c
+       JOIN gh_repos r ON r.full_name = c.repo
+       WHERE c.authored_at >= ? AND c.authored_at < ?`,
+    )
+    .all(start, end) as { id: string; org: string | null; project: string | null; at: string }[];
+
+  const mondayRows = database
+    .query(
+      `SELECT CAST(id AS TEXT) as id, org as org, project as project, updated_at as at
+       FROM monday_items
+       WHERE updated_at >= ? AND updated_at < ?`,
+    )
+    .all(start, end) as { id: string; org: string | null; project: string | null; at: string }[];
+
+  const attribute = (
+    id: string,
+    kind: "commit" | "monday_item",
+    org: string | null,
+    project: string | null,
+    at: string,
+  ): NonClaudeEvidenceRow => {
+    if (!org || !project) return { id, kind, questId: null, questTitle: null };
+
+    const session = database
+      .query(
+        `SELECT id FROM claude_sessions
+         WHERE org = ? AND project = ? AND started_at <= ? AND ended_at >= ?
+         ORDER BY started_at DESC LIMIT 1`,
+      )
+      .get(org, project, at, at) as { id: string } | null;
+    if (!session) return { id, kind, questId: null, questTitle: null };
+
+    const declared = currentDeclaredQuest(database, { sessionId: session.id, at });
+    if (!declared) return { id, kind, questId: null, questTitle: null };
+
+    return { id, kind, questId: declared.questId, questTitle: declared.title };
+  };
+
+  for (const row of commitRows) {
+    rows.push(attribute(row.id, "commit", row.org, row.project, row.at));
+  }
+  for (const row of mondayRows) {
+    rows.push(attribute(row.id, "monday_item", row.org, row.project, row.at));
+  }
+
+  return rows;
+}
+
+/**
+ * Doubts (`belongs: false` verifier segments recorded as `belongs`-kind
+ * questions) tied to a trace/session in range, scoped by org/project/client
+ * the same way `queryTraceIntervals` scopes traces.
+ */
+export function querySideQuestDoubts(database: Database, range: DateRange): number {
+  if (!hasIntentTables(database)) return 0;
+  const { start, end } = toDayBounds(range);
+  const conditions = [
+    "qu.kind = 'belongs'",
+    "t.retracted_at IS NULL",
+    "t.started_at >= ?",
+    "t.started_at < ?",
+  ];
+  const params: (string | number)[] = [start, end];
+
+  if (range.org) {
+    conditions.push("LOWER(s.org) = ?");
+    params.push(range.org.toLowerCase());
+  }
+  if (range.project) {
+    conditions.push("LOWER(s.project) = ?");
+    params.push(range.project.toLowerCase());
+  }
+
+  const client = clientCondition("s.path_meta", range.client);
+  if (client.param) params.push(client.param);
+
+  const row = database
+    .query(
+      `SELECT COUNT(DISTINCT qu.id) as count
+       FROM questions qu
+       JOIN traces t ON t.id = qu.trace_id
+       LEFT JOIN claude_sessions s ON s.id = t.session_id
+       WHERE ${conditions.join(" AND ")}${client.sql}`,
     )
     .get(...params) as { count: number };
   return row.count;
