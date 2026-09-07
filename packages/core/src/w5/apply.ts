@@ -138,7 +138,7 @@ interface StintState {
 function readStint(database: Database, stintId: string): StintState | null {
   const row = database
     .query(
-      "SELECT quest_id as questId, closed_at as closedAt FROM stints WHERE id = ? AND retracted_at IS NULL",
+      "SELECT quest_id as questId, closed_at as closedAt FROM stints WHERE id = ? AND retracted_at IS NULL AND dismissed_at IS NULL",
     )
     .get(stintId) as { questId: string | null; closedAt: string | null } | null;
   if (!row) return null;
