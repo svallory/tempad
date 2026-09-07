@@ -175,9 +175,10 @@ async function runReportCommand(args: string[]): Promise<number> {
 const SKILL_SOURCE_PATH = join(import.meta.dir, "..", "skills", "tempad-quest", "SKILL.md");
 
 function skillDestinationFor(scope: string): string {
-  const home = process.env.HOME ?? "";
   if (scope === "project")
     return join(process.cwd(), ".claude", "skills", "tempad-quest", "SKILL.md");
+  const home = process.env.HOME;
+  if (!home) throw new Error("HOME is not set; required for `tempad skill install --scope user`");
   return join(home, ".claude", "skills", "tempad-quest", "SKILL.md");
 }
 

@@ -444,6 +444,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
           budget_minutes: parseBudget(values.budget),
           commitment: values.commitment,
           confirmed: true,
+          origin_kind: "declared",
         },
       }),
     );
@@ -807,6 +808,23 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       return 1;
     }
 
+    let resolvedQuest: string | undefined;
+    if (values.quest) {
+      const resolved = resolveExistingQuest(context.database, values.quest);
+      if (!resolved) {
+        console.error(`unknown quest ${values.quest}`);
+        return 1;
+      }
+      const row = context.database
+        .query("SELECT retracted_at FROM quests WHERE id = ?")
+        .get(resolved) as { retracted_at: string | null };
+      if (row.retracted_at !== null) {
+        console.error(`quest ${resolved} is retracted`);
+        return 1;
+      }
+      resolvedQuest = resolved;
+    }
+
     const plan = values.plan
       ? values.plan
           .split(";")
@@ -817,7 +835,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
     const result = declareQuest(store, context.database, {
       sessionId: values.session,
       parentSessionId: values.parent,
-      questId: values.quest,
+      questId: resolvedQuest,
       newQuest: values.new
         ? {
             title: values.new,

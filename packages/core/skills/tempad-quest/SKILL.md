@@ -13,11 +13,12 @@ whenever the objective shifts.
 Every `UserPromptSubmit` hook injects a line like:
 
 ```
-tempad: session <id>, declared quest: <title> | none. Declare with the tempad-quest skill if this prompt starts a different objective.
+tempad: session <id>, declared quest: <title>. Declare with the tempad-quest skill if this prompt starts a different objective.
 ```
 
-This line names your own session id and your current declared quest (or `none`). Do not track
-either yourself — read it fresh each turn.
+`<title>` is either the declared quest's real title, or the literal word `none` when nothing is
+declared yet — never a placeholder to fill in yourself. This line names your own session id and
+your current declared quest. Do not track either yourself — read it fresh each turn.
 
 ## Declare at session start
 
