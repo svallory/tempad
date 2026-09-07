@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildAdditionalContext,
+  buildBelongsHandback,
   buildDeclarationLine,
+  buildDeclareHandback,
   installHooks,
   promptHookScriptPath,
   renderHookSettings,
@@ -312,5 +314,69 @@ describe("w5-stop.sh / w5-prompt.sh injection safety", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("verifier hand-back text", () => {
+  test("a belongs hand-back names the declared quest, the guess and both answer commands", () => {
+    const text = buildBelongsHandback("Ship marko-ui", "a competitor comparison", "Q123");
+
+    expect(text).toBe(
+      [
+        'w5 thinks the last stretch is not part of "Ship marko-ui" (looks like: a competitor comparison). Reply:',
+        '  tempad answer Q123 --belongs --why "<reason>"',
+        "  or",
+        '  tempad answer Q123 --quest <id>|new:"<title>" --why "<reason>" [--origin current --trigger "<sentence>" --kind waiting|blocker|curiosity|unknown]',
+        "Ask the user if you are not sure.",
+      ].join("\n"),
+    );
+  });
+
+  test("a declare hand-back names the session and the declare command", () => {
+    const text = buildDeclareHandback("s1");
+
+    expect(text).toBe(
+      [
+        "w5 has no declared quest for this session. Reply:",
+        '  tempad quest declare --session s1 --quest <id>|--new "<title>" --objective "<text>" [--commitment ...] --by agent',
+      ].join("\n"),
+    );
+  });
+
+  test("buildAdditionalContext renders each verifier kind through its own hand-back", () => {
+    const text = buildAdditionalContext(
+      [
+        {
+          id: "Q1",
+          traceId: "T1",
+          sessionId: "s1",
+          kind: "belongs",
+          state: "asked",
+          turnsWatched: 1,
+          turnsAtAsk: 1,
+          isSwitch: false,
+        },
+        {
+          id: "Q2",
+          traceId: "T2",
+          sessionId: "s1",
+          kind: "declare",
+          state: "asked",
+          turnsWatched: 1,
+          turnsAtAsk: 1,
+          isSwitch: false,
+        },
+      ],
+      {
+        declaredTitle: "Ship marko-ui",
+        sessionId: "s1",
+        guessFor: (questionId) => (questionId === "Q1" ? "a competitor comparison" : null),
+      },
+    );
+
+    expect(text).toContain('not part of "Ship marko-ui" (looks like: a competitor comparison)');
+    expect(text).toContain("tempad answer Q1 --belongs");
+    expect(text).toContain("w5 has no declared quest for this session");
+    expect(text).toContain("tempad quest declare --session s1");
   });
 });

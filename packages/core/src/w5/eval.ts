@@ -99,7 +99,7 @@ export interface EvalMetrics {
   ratio: number;
   medianActivityDurationMinutes: number;
   continuesLinks: number;
-  questConflicts: number;
+  doubts: number;
   unknownActivityIds: number;
   overlapDropped: number;
   questProposedOnMatched: number;
@@ -371,7 +371,7 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
     ratio: traceCount.count === 0 ? 0 : activityCount.count / traceCount.count,
     medianActivityDurationMinutes: median(durationsMinutes),
     continuesLinks: continuesCount.count,
-    questConflicts: backfillResult.questConflicts,
+    doubts: backfillResult.doubts,
     unknownActivityIds: backfillResult.unknownActivityIds,
     overlapDropped: backfillResult.overlapDropped,
     questProposedOnMatched: backfillResult.questProposedOnMatched,

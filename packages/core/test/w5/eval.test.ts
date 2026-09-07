@@ -27,6 +27,8 @@ class FakeClassifier implements Classifier {
           endedAt: last,
           what: "work",
           why: "ship",
+          belongs: true,
+          guess: null,
           matchedQuest: null,
           proposedQuest: null,
           matchedActivity: null,
@@ -92,7 +94,7 @@ describe("w5 eval", () => {
     expect(metrics.activities).toBe(1);
     expect(metrics.ratio).toBe(1);
     expect(metrics.continuesLinks).toBe(0);
-    expect(metrics.questConflicts).toBe(0);
+    expect(metrics.doubts).toBe(0);
     expect(metrics.sample.length).toBe(1);
     expect(metrics.sample[0]).toMatchObject({
       what: "work",
@@ -281,6 +283,8 @@ describe("w5 eval", () => {
                 endedAt: last,
                 what: "work",
                 why: "ship",
+                belongs: true,
+                guess: null,
                 matchedQuest: null,
                 proposedQuest: { title: "Q1", objective: "ship it", commitment: "personal" },
                 matchedActivity: null,
@@ -304,6 +308,8 @@ describe("w5 eval", () => {
               endedAt: last,
               what: "more work",
               why: "ship",
+              belongs: true,
+              guess: null,
               matchedQuest: "Q-OTHER",
               proposedQuest: null,
               matchedActivity: open?.activityId ?? null,
@@ -330,7 +336,7 @@ describe("w5 eval", () => {
       log: () => {},
     });
 
-    expect(metrics.questConflicts).toBe(1);
+    expect(metrics.doubts).toBe(1);
   });
 
   test("matchedQuest null on a matched activity is no opinion, not a conflict", async () => {
@@ -382,6 +388,8 @@ describe("w5 eval", () => {
                 endedAt: last,
                 what: "work",
                 why: "ship",
+                belongs: true,
+                guess: null,
                 matchedQuest: null,
                 proposedQuest: { title: "Q1", objective: "ship it", commitment: "personal" },
                 matchedActivity: null,
@@ -405,6 +413,8 @@ describe("w5 eval", () => {
               endedAt: last,
               what: "more work",
               why: "ship",
+              belongs: true,
+              guess: null,
               matchedQuest: null,
               proposedQuest: null,
               matchedActivity: open?.activityId ?? null,
@@ -431,7 +441,7 @@ describe("w5 eval", () => {
       log: () => {},
     });
 
-    expect(metrics.questConflicts).toBe(0);
+    expect(metrics.doubts).toBe(0);
   });
 
   test("selector repairs are counted and surfaced in the metrics", async () => {
@@ -481,6 +491,7 @@ describe("w5 eval", () => {
                 endedAt: last,
                 what: "work",
                 why: "ship",
+                belongs: true,
                 confidence: 0.9,
                 isSwitch: false,
               },

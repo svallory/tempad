@@ -22,14 +22,13 @@ const window: ClassifierWindow = {
       text: "wait, what does Astryx do for agents? compare it with ours",
     },
   ],
-  openQuests: [
-    {
-      id: "Q1",
-      title: "Ship marko-ui",
-      objective: "86 components",
-      lastActivityAt: "2026-09-04T14:00:00.000Z",
-    },
-  ],
+  declaredQuest: {
+    title: "Ship marko-ui",
+    objective: "86 components",
+    plan: ["walk order", "docs"],
+  },
+  parentDeclaredQuest: null,
+  activityAliases: { A1: "01HREALACTIVITYIDONE00000A", A0: "01HREALACTIVITYIDZERO0000B" },
   sessionOpenActivities: [
     {
       activityId: "A1",
@@ -54,9 +53,6 @@ const window: ClassifierWindow = {
       closeReason: "session_end",
     },
   ],
-  recentSideQuests: [
-    { id: "Q2", title: "Compare Astryx", trigger: "what does Astryx do for agents?" },
-  ],
   overlapMessages: [
     { ts: "2026-09-04T14:50:00.000Z", role: "user", text: "context only tail message" },
   ],
@@ -70,34 +66,28 @@ const good = {
       endedAt: "2026-09-04T15:20:00.000Z",
       what: "fix walk order",
       why: "ship marko-ui",
-      matchedQuest: "Q1",
-      proposedQuest: null,
+      belongs: true,
+      guess: null,
       matchedActivity: "A1",
       continuesActivity: null,
       newActivityReason: null,
       isSwitch: false,
       trigger: null,
       confidence: 0.9,
-      questions: [],
     },
     {
       startedAt: "2026-09-04T15:20:00.000Z",
       endedAt: "2026-09-04T15:20:00.000Z",
       what: "compare Astryx",
       why: "unknown",
-      matchedQuest: null,
-      proposedQuest: {
-        title: "Compare Astryx",
-        objective: "see what they claim",
-        commitment: "exploratory",
-      },
+      belongs: false,
+      guess: "a competitor comparison, not the marko-ui work",
       matchedActivity: null,
       continuesActivity: null,
       newActivityReason: "a fresh comparison unrelated to any open activity",
       isSwitch: true,
       trigger: "what does Astryx do for agents?",
       confidence: 0.6,
-      questions: ["which_quest"],
     },
   ],
   sessionNote: "chasing the walk order bug, will compare Astryx after",
@@ -108,19 +98,20 @@ describe("classifier", () => {
     expect(validateResult(good).segments.length).toBe(2);
     expect(() =>
       validateResult({
-        segments: [{ ...good.segments[0], confidence: 2, questions: ["nope"] }],
+        segments: [{ ...good.segments[0], confidence: 2 }],
       }),
-    ).toThrow(/confidence.*questions|questions.*confidence/s);
+    ).toThrow(/confidence/);
   });
 
-  test("user prompt contains messages, open quests and the memory slice sections", () => {
+  test("user prompt contains messages, the declared quest and the memory slice sections", () => {
     const text = buildUserPrompt(window);
     expect(text).toContain("Astryx");
-    expect(text).toContain("Ship marko-ui");
+    expect(text).toContain("your declared quest: Ship marko-ui");
     expect(text).toContain("fixing walk order");
     expect(text).toContain("your open activities this session");
     expect(text).toContain("recent activities in this project");
-    expect(text).toContain("recent side quests");
+    expect(text).not.toContain("recent side quests");
+    expect(text).not.toContain("open quests:");
     expect(text).toContain("do not classify");
     expect(text).toContain("context only tail message");
     expect(text).toContain("was about to look at the walk order bug again");
@@ -203,8 +194,6 @@ describe("classifier", () => {
 
   test("validateResult treats omitted optional fields as null instead of failing", () => {
     const {
-      matchedQuest: _matchedQuest,
-      proposedQuest: _proposedQuest,
       matchedActivity: _matchedActivity,
       continuesActivity: _continuesActivity,
       trigger: _trigger,
@@ -217,8 +206,6 @@ describe("classifier", () => {
       segments: [{ ...withoutOptionals, newActivityReason: "new thread of work" }],
     });
 
-    expect(result.segments[0]?.matchedQuest).toBeNull();
-    expect(result.segments[0]?.proposedQuest).toBeNull();
     expect(result.segments[0]?.matchedActivity).toBeNull();
     expect(result.segments[0]?.continuesActivity).toBeNull();
     expect(result.segments[0]?.trigger).toBeNull();
@@ -245,6 +232,65 @@ describe("classifier", () => {
         segments: [{ ...good.segments[0], matchedActivity: null, continuesActivity: 7 }],
       }),
     ).toThrow(/continuesActivity/);
+  });
+
+  test("validateResult rejects belongs: false with a null guess", () => {
+    expect(() =>
+      validateResult({
+        segments: [{ ...good.segments[0], belongs: false, guess: null }],
+      }),
+    ).toThrow(/guess: expected a non-empty string when belongs is false/);
+
+    expect(() =>
+      validateResult({
+        segments: [{ ...good.segments[0], belongs: false, guess: "   " }],
+      }),
+    ).toThrow(/guess: expected a non-empty string when belongs is false/);
+  });
+
+  test("validateResult repairs a guess sent alongside belongs: true back to null", () => {
+    const result = validateResult({
+      segments: [{ ...good.segments[0], belongs: true, guess: "something else entirely" }],
+    });
+
+    expect(result.segments[0]?.belongs).toBe(true);
+    expect(result.segments[0]?.guess).toBeNull();
+  });
+
+  test("validateResult requires belongs to be a boolean", () => {
+    expect(() => validateResult({ segments: [{ ...good.segments[0], belongs: "yes" }] })).toThrow(
+      /belongs: expected boolean/,
+    );
+  });
+
+  test("validateResult treats an alias outside activityAliases as no selector at all", () => {
+    const result = validateResult(
+      { segments: [{ ...good.segments[0], matchedActivity: "A9", continuesActivity: null }] },
+      window,
+    );
+
+    // "A9" is not a key of window.activityAliases, so it never counts as a
+    // selector: the segment names none and is repaired the usual way.
+    expect(result.segments[0]?.matchedActivity).toBeNull();
+    expect(result.segments[0]?.newActivityReason).toBe(DEFAULT_NEW_ACTIVITY_REASON);
+    expect(result.selectorDefaulted).toBe(1);
+  });
+
+  test("validateResult keeps an alias that is present in activityAliases", () => {
+    const result = validateResult(
+      { segments: [{ ...good.segments[0], matchedActivity: "A1" }] },
+      window,
+    );
+
+    expect(result.segments[0]?.matchedActivity).toBe("A1");
+    expect(result.selectorDefaulted).toBe(0);
+  });
+
+  test("the fixed prompt text never contains a ULID-shaped candidate id", () => {
+    const text = buildUserPrompt(window);
+    expect(text).not.toContain("01HREALACTIVITYIDONE00000A");
+    expect(text).not.toContain("01HREALACTIVITYIDZERO0000B");
+    expect(text).toContain("A1:");
   });
 
   test("validateResult rejects a sessionNote that is not null or is over 300 characters", () => {
@@ -324,5 +370,43 @@ describe("classifier", () => {
     expect(message).toContain("401");
     expect(message).toContain("unauthorized: invalid x-api-key header");
     expect(message).not.toContain(secretKey);
+  });
+});
+
+describe("a classifier that returns a bad alias", () => {
+  /** Stands in for a model that invents an alias the window never offered. */
+  class BadAliasClassifier {
+    async classify(classifierWindow: ClassifierWindow) {
+      return validateResult(
+        {
+          segments: [
+            {
+              startedAt: classifierWindow.messages[0]?.ts,
+              endedAt: classifierWindow.messages.at(-1)?.ts,
+              what: "work",
+              why: "ship",
+              belongs: true,
+              guess: null,
+              matchedActivity: "A42",
+              continuesActivity: null,
+              newActivityReason: null,
+              isSwitch: false,
+              trigger: null,
+              confidence: 0.9,
+            },
+          ],
+          sessionNote: null,
+        },
+        classifierWindow,
+      );
+    }
+  }
+
+  test("the bad alias is dropped and the segment is repaired into a new activity", async () => {
+    const result = await new BadAliasClassifier().classify(window);
+
+    expect(result.segments[0]?.matchedActivity).toBeNull();
+    expect(result.segments[0]?.newActivityReason).toBe(DEFAULT_NEW_ACTIVITY_REASON);
+    expect(result.selectorDefaulted).toBe(1);
   });
 });

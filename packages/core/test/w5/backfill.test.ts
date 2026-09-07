@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Config } from "../../src/config/env";
 import { openDatabase } from "../../src/db/database";
 import type { W5Config } from "../../src/intent/config";
+import { declareQuest } from "../../src/intent/declarations";
 import { applyIncremental, ensureTables } from "../../src/intent/projections";
 import { registerAllProjections } from "../../src/intent/projections/register";
 import { EventStore } from "../../src/intent/store";
@@ -59,6 +60,8 @@ class FakeClassifier implements Classifier {
           endedAt: last,
           what: "work",
           why: "ship",
+          belongs: true,
+          guess: null,
           matchedQuest: null,
           proposedQuest: null,
           matchedActivity: null,
@@ -165,6 +168,8 @@ describe("backfill", () => {
               endedAt: mid,
               what: "work part 1",
               why: "ship",
+              belongs: true,
+              guess: null,
               matchedQuest: null,
               proposedQuest: null,
               matchedActivity: null,
@@ -180,6 +185,8 @@ describe("backfill", () => {
               endedAt: last,
               what: "work part 2",
               why: "ship",
+              belongs: true,
+              guess: null,
               matchedQuest: null,
               proposedQuest: null,
               matchedActivity: null,
@@ -325,6 +332,8 @@ describe("backfill", () => {
               endedAt: last,
               what: "work",
               why: "ship",
+              belongs: true,
+              guess: null,
               matchedQuest: null,
               proposedQuest: null,
               matchedActivity: null,
@@ -421,6 +430,7 @@ describe("backfill", () => {
         openActivities: string[];
         recentActivities: string[];
         previousSessionNote: string | null;
+        aliases: Record<string, string>;
       }[] = [];
 
       async classify(window: ClassifierWindow): Promise<ClassifierResult> {
@@ -428,6 +438,7 @@ describe("backfill", () => {
           openActivities: window.sessionOpenActivities.map((a) => a.activityId),
           recentActivities: window.recentActivities.map((a) => a.activityId),
           previousSessionNote: window.previousSessionNote,
+          aliases: window.activityAliases,
         });
         const open = window.sessionOpenActivities.at(-1) ?? null;
         const first = window.messages[0]?.ts ?? "2026-09-04T15:00:00.000Z";
@@ -439,6 +450,8 @@ describe("backfill", () => {
               endedAt: last,
               what: "work",
               why: "ship",
+              belongs: true,
+              guess: null,
               matchedQuest: null,
               proposedQuest: null,
               matchedActivity: open?.activityId ?? null,
@@ -470,7 +483,10 @@ describe("backfill", () => {
     expect(classifier.seen[0]?.previousSessionNote).toBeNull();
 
     const activity = database.query("SELECT id FROM activities").get() as { id: string };
+    // This session declares nothing, so backfill falls back to inference mode,
+    // where the slice keeps real ids and no alias map is built.
     expect(classifier.seen[1]?.openActivities).toEqual([activity.id]);
+    expect(classifier.seen[1]?.aliases).toEqual({});
     expect(classifier.seen[1]?.previousSessionNote).toBe("note from chunk 1");
 
     // Chunk 2 reused chunk 1's activity rather than opening a second one.
@@ -606,6 +622,8 @@ describe("chronological window order", () => {
               endedAt: last,
               what: "work",
               why: "ship",
+              belongs: true,
+              guess: null,
               matchedQuest: null,
               proposedQuest: null,
               matchedActivity: null,
@@ -669,6 +687,8 @@ describe("chronological window order", () => {
               endedAt: last,
               what: "work",
               why: "ship",
+              belongs: true,
+              guess: null,
               matchedQuest: null,
               proposedQuest: null,
               matchedActivity: null,
@@ -697,5 +717,138 @@ describe("chronological window order", () => {
       sessionId: "sA",
       overlap: ["2026-09-04T10:00:00.000Z"],
     });
+  });
+});
+
+describe("backfill and declared quests", () => {
+  test("a session that never declares falls back to inference and its quests are inferred", async () => {
+    const database = openDatabase(":memory:");
+    seedHero(database);
+    seedSession(database, { id: "s1", endedAt: "2026-09-04T15:20:00.000Z" });
+
+    /** Proposes a quest, as the pre-verifier classifier did. */
+    class ProposingClassifier implements Classifier {
+      async classify(window: ClassifierWindow): Promise<ClassifierResult> {
+        const first = window.messages[0]?.ts ?? "2026-09-04T15:00:00.000Z";
+        return {
+          segments: [
+            {
+              startedAt: first,
+              endedAt: window.messages.at(-1)?.ts ?? first,
+              what: "work",
+              why: "ship",
+              belongs: true,
+              guess: null,
+              matchedQuest: null,
+              proposedQuest: {
+                title: "Inferred quest",
+                objective: "guessed from the transcript",
+                commitment: "exploratory",
+              },
+              matchedActivity: null,
+              continuesActivity: null,
+              newActivityReason: "first work of the window",
+              isSwitch: false,
+              trigger: null,
+              confidence: 0.9,
+              questions: [],
+            },
+          ],
+          sessionNote: null,
+        };
+      }
+    }
+
+    await backfill(database, makeConfig(), config, new ProposingClassifier(), {
+      days: 15,
+      now: "2026-09-04T17:00:00.000Z",
+      log: () => {},
+    });
+
+    const quest = database.query("SELECT title, origin_kind as originKind FROM quests").get() as {
+      title: string;
+      originKind: string;
+    } | null;
+    expect(quest?.title).toBe("Inferred quest");
+    expect(quest?.originKind).toBe("inferred");
+  });
+
+  test("inference_fallback false leaves an undeclared session's traces unattributed", async () => {
+    const database = openDatabase(":memory:");
+    seedHero(database);
+    seedSession(database, { id: "s1", endedAt: "2026-09-04T15:20:00.000Z" });
+
+    await backfill(
+      database,
+      makeConfig(),
+      { ...config, inferenceFallback: false },
+      new FakeClassifier(),
+      { days: 15, now: "2026-09-04T17:00:00.000Z", log: () => {} },
+    );
+
+    expect(
+      (database.query("SELECT COUNT(*) as count FROM quests").get() as { count: number }).count,
+    ).toBe(0);
+    const activities = database.query("SELECT quest_id as questId FROM activities").all() as {
+      questId: string | null;
+    }[];
+    expect(activities.length).toBeGreaterThan(0);
+    expect(activities.every((activity) => activity.questId === null)).toBe(true);
+  });
+
+  test("a session that declares partway through never gets an inferred quest", async () => {
+    const database = openDatabase(":memory:");
+    seedHero(database);
+    seedSession(database, {
+      id: "s1",
+      endedAt: "2026-09-04T16:00:00.000Z",
+      messageTimestamps: ["2026-09-04T15:00:00.000Z", "2026-09-04T16:00:00.000Z"],
+    });
+    const hero = database.query("SELECT id FROM heroes").get() as { id: string };
+    database
+      .query(
+        `INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at, origin_kind)
+         VALUES ('Q1', 'hero', ?, 'Declared quest', 'stated up front', 1, 1, 'started', '2026-09-01T00:00:00.000Z', 'declared')`,
+      )
+      .run(hero.id);
+
+    // Declared only near the end of the session; earlier windows precede it.
+    declareQuest(new EventStore(database), database, {
+      sessionId: "s1",
+      questId: "Q1",
+      plan: [],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-04T15:59:00.000Z",
+      heroId: hero.id,
+    });
+
+    await backfill(database, makeConfig(), config, new FakeClassifier(), {
+      days: 15,
+      now: "2026-09-04T17:00:00.000Z",
+      log: () => {},
+    });
+
+    // The whole span runs declared: the fallback is only for sessions that
+    // declare nothing, ever, so no inferred quest is ever created here.
+    const inferred = database
+      .query("SELECT COUNT(*) as count FROM quests WHERE origin_kind = 'inferred'")
+      .get() as { count: number };
+    expect(inferred.count).toBe(0);
+  });
+
+  test("the result field is named doubts", async () => {
+    const database = openDatabase(":memory:");
+    seedHero(database);
+    seedSession(database, { id: "s1", endedAt: "2026-09-04T15:20:00.000Z" });
+
+    const result = await backfill(database, makeConfig(), config, new FakeClassifier(), {
+      days: 15,
+      now: "2026-09-04T17:00:00.000Z",
+      log: () => {},
+    });
+
+    expect(result.doubts).toBe(0);
+    expect("questConflicts" in result).toBe(false);
   });
 });

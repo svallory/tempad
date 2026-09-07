@@ -128,6 +128,8 @@ export interface AskQuestionInput {
   sessionId?: string;
   kind: string;
   text: string;
+  /** What the verifier thinks the work looks like instead, for a `belongs` question. */
+  guess?: string | null;
   isSwitch?: boolean;
   actor: Actor;
 }
@@ -149,6 +151,7 @@ export function askQuestion(
         trace: input.trace,
         kind: input.kind,
         text: input.text,
+        guess: input.guess ?? undefined,
         is_switch: input.isSwitch ?? false,
       },
     }),

@@ -115,8 +115,14 @@ export async function runOnce(
       idleMinutes: intentConfig.activityIdleMinutes,
     });
 
+    // A live session that has never declared anything still runs in declared mode
+    // (it gets a `declare` question); the inference fallback is backfill's, for
+    // sessions no agent will ever resume.
+    const mode = intentConfig.mode;
+
     const window = buildWindow(database, {
       sessionId: job.sessionId,
+      mode,
       sinceTs,
       maxMessages: 200,
       memoryHours: intentConfig.memoryHours,
@@ -133,6 +139,7 @@ export async function runOnce(
       askingEnabled: !job.forced,
       now,
       log: options.log,
+      mode,
     });
 
     if (job.kind === "session_end") {

@@ -57,6 +57,8 @@ const good: ClassifierResult = {
       endedAt: "2026-09-04T15:20:00.000Z",
       what: "fix walk order",
       why: "ship marko-ui",
+      belongs: true,
+      guess: null,
       matchedQuest: null,
       proposedQuest: null,
       matchedActivity: null,
@@ -251,6 +253,8 @@ describe("runOnce", () => {
             endedAt: "2026-09-04T15:20:00.000Z",
             what: "fix walk order",
             why: "unknown",
+            belongs: true,
+            guess: null,
             matchedQuest: null,
             proposedQuest: null,
             matchedActivity: null,
@@ -400,6 +404,8 @@ describe("runOnce", () => {
                 endedAt: last,
                 what: "fix walk order",
                 why: "ship marko-ui",
+                belongs: true,
+                guess: null,
                 matchedQuest: open?.questId ?? closed?.questId ?? null,
                 proposedQuest: null,
                 matchedActivity: open?.activityId ?? null,
@@ -445,6 +451,71 @@ describe("runOnce", () => {
         count: number;
       };
       expect(traceCount.count).toBe(3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("runOnce in declared mode", () => {
+  test("a doubted segment is counted as a doubt in the run summary", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-runner-doubts-"));
+    try {
+      const database = openDatabase(":memory:");
+      seedHero(database);
+      seedSessionWithMessages(database, join(dir, "s1.jsonl"));
+      enqueueJob(database, { sessionId: "s1", forced: true, throttleMinutes: 10 });
+
+      const doubting: ClassifierResult = {
+        segments: [
+          {
+            ...(good.segments[0] as ClassifierResult["segments"][number]),
+            belongs: false,
+            guess: "a competitor comparison",
+          },
+        ],
+        sessionNote: null,
+      };
+
+      const result = await runOnce(
+        database,
+        makeConfig(dir),
+        config,
+        new FakeClassifier(doubting),
+        {
+          now: "2026-09-04T15:21:00.000Z",
+          log: () => {},
+        },
+      );
+
+      // The field is `doubts`, not `questConflicts`.
+      expect(result.summary?.doubts).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a live session that never declared still runs declared: no quest is invented", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-runner-undeclared-"));
+    try {
+      const database = openDatabase(":memory:");
+      seedHero(database);
+      seedSessionWithMessages(database, join(dir, "s1.jsonl"));
+      enqueueJob(database, { sessionId: "s1", forced: true, throttleMinutes: 10 });
+
+      await runOnce(database, makeConfig(dir), config, new FakeClassifier(good), {
+        now: "2026-09-04T15:21:00.000Z",
+        log: () => {},
+      });
+
+      // `inference_fallback` is backfill's, not a live run's: nothing is inferred.
+      expect(
+        (database.query("SELECT COUNT(*) as count FROM quests").get() as { count: number }).count,
+      ).toBe(0);
+      const activity = database.query("SELECT quest_id as questId FROM activities").get() as {
+        questId: string | null;
+      };
+      expect(activity.questId).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

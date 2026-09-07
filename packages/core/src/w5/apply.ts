@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { askQuestion, assignActivity, recordTrace } from "../intent/api";
+import { currentDeclaredQuest, currentDeclaredQuestForSubagent } from "../intent/declarations";
 import type { Actor } from "../intent/events";
 import { newUlid } from "../intent/ids";
 import { applyIncremental } from "../intent/projections";
@@ -13,7 +14,12 @@ export interface AppliedSummary {
   questsProposed: number;
   branches: number;
   questionsWatching: number;
-  questConflicts: number;
+  /**
+   * Declared mode: segments the verifier doubted (`belongs: false`). Inference
+   * mode: the old quest-conflict count. A run is one mode or the other, so the
+   * two meanings never coexist in the same summary.
+   */
+  doubts: number;
   overlapDropped: number;
   unknownActivityIds: number;
   /**
@@ -27,6 +33,13 @@ export interface ApplyOptions {
   askingEnabled: boolean;
   now: string;
   log: (line: string) => void;
+  /**
+   * `"declared"` runs the verifier: quest identity comes from the session's own
+   * declaration and no quest is ever created, proposed, reassigned or branched
+   * here. `"inferred"` runs the pre-verifier logic unchanged, which backfill
+   * falls back to for a session that never declares anything.
+   */
+  mode?: "declared" | "inferred";
 }
 
 function requireHeroId(database: Database): string {
@@ -132,14 +145,16 @@ function resolveQuest(
   heroId: string,
   segment: ClassifierSegment,
 ): { questId: string | null; questCreated: boolean } {
-  if (segment.matchedQuest !== null) return { questId: segment.matchedQuest, questCreated: false };
-  if (segment.proposedQuest === null) return { questId: null, questCreated: false };
+  const matchedQuest = segment.matchedQuest ?? null;
+  const proposedQuest = segment.proposedQuest ?? null;
+  if (matchedQuest !== null) return { questId: matchedQuest, questCreated: false };
+  if (proposedQuest === null) return { questId: null, questCreated: false };
   return {
     questId: createQuest(store, database, {
       heroId,
-      title: segment.proposedQuest.title,
-      objective: segment.proposedQuest.objective,
-      commitment: segment.proposedQuest.commitment,
+      title: proposedQuest.title,
+      objective: proposedQuest.objective,
+      commitment: proposedQuest.commitment,
       confirmed: false,
     }),
     questCreated: true,
@@ -169,15 +184,16 @@ function reuseActivity(
   activityId: string,
   existingQuestId: string | null,
 ): ResolvedActivity {
-  const questConflict =
-    segment.matchedQuest !== null && segment.matchedQuest !== (existingQuestId ?? null);
+  const matchedQuest = segment.matchedQuest ?? null;
+  const proposedQuest = segment.proposedQuest ?? null;
+  const questConflict = matchedQuest !== null && matchedQuest !== (existingQuestId ?? null);
 
-  if (existingQuestId === null && segment.matchedQuest === null && segment.proposedQuest !== null) {
+  if (existingQuestId === null && matchedQuest === null && proposedQuest !== null) {
     const questId = createQuest(store, database, {
       heroId,
-      title: segment.proposedQuest.title,
-      objective: segment.proposedQuest.objective,
-      commitment: segment.proposedQuest.commitment,
+      title: proposedQuest.title,
+      objective: proposedQuest.objective,
+      commitment: proposedQuest.commitment,
       confirmed: false,
     });
     assignActivity(store, database, activityId, questId, "hook");
@@ -278,6 +294,127 @@ function resolveActivityForSegment(
   };
 }
 
+/**
+ * Declared mode's activity resolution. The three-way selector rule is unchanged,
+ * but every branch ends with the session's declared quest: there is no per-segment
+ * quest decision left to make, so nothing here creates, proposes, reassigns or
+ * branches a quest.
+ *
+ * Selectors arrive as aliases (`"A1"`). An alias the window never offered resolves
+ * to nothing and opens a new activity, exactly as a fabricated id did before.
+ */
+function resolveActivityForSegmentDeclared(
+  store: EventStore,
+  database: Database,
+  segment: ClassifierSegment,
+  openedAt: string,
+  declaredQuestId: string | null,
+  aliases: Record<string, string>,
+): ResolvedActivity {
+  let unknownActivityId = false;
+  const resolveAlias = (alias: string | null): string | null => {
+    if (alias === null) return null;
+    return aliases[alias] ?? null;
+  };
+
+  const matchedId = resolveAlias(segment.matchedActivity);
+  if (segment.matchedActivity !== null) {
+    if (matchedId === null) {
+      unknownActivityId = true;
+    } else {
+      const matched = readActivity(database, matchedId);
+      if (matched?.isOpen) {
+        // A matched activity keeps its own row; the declared quest is attached only
+        // when it has none, since reassignment is exactly what the verifier must
+        // never do.
+        if (matched.questId === null && declaredQuestId !== null) {
+          assignActivity(store, database, matchedId, declaredQuestId, "hook");
+        }
+        return {
+          activityId: matchedId,
+          questId: matched.questId ?? declaredQuestId,
+          activityOpened: false,
+          questCreated: false,
+          questConflict: false,
+          unknownActivityId: false,
+          questProposedOnMatched: false,
+        };
+      }
+      unknownActivityId = true;
+    }
+  }
+
+  let continues: string | null = null;
+  if (segment.continuesActivity !== null) {
+    const continuesId = resolveAlias(segment.continuesActivity);
+    if (continuesId === null) {
+      unknownActivityId = true;
+    } else {
+      const referenced = readActivity(database, continuesId);
+      if (referenced === null) {
+        unknownActivityId = true;
+      } else if (referenced.isOpen) {
+        if (referenced.questId === null && declaredQuestId !== null) {
+          assignActivity(store, database, continuesId, declaredQuestId, "hook");
+        }
+        return {
+          activityId: continuesId,
+          questId: referenced.questId ?? declaredQuestId,
+          activityOpened: false,
+          questCreated: false,
+          questConflict: false,
+          unknownActivityId: false,
+          questProposedOnMatched: false,
+        };
+      } else {
+        continues = continuesId;
+      }
+    }
+  }
+
+  const activityId = openActivityContinuing(store, database, {
+    quest: declaredQuestId ?? undefined,
+    objective: segment.what,
+    at: openedAt,
+    actor: "hook",
+    continues: continues ?? undefined,
+  });
+
+  return {
+    activityId,
+    questId: declaredQuestId,
+    activityOpened: true,
+    questCreated: false,
+    questConflict: false,
+    unknownActivityId,
+    questProposedOnMatched: false,
+  };
+}
+
+/**
+ * The `parent_session_id` on the session's latest declaration at `at`, or null
+ * when that declaration is session-scoped. `currentDeclaredQuest` only resolves
+ * session-scope declarations, so a subagent's parent has to be read from the
+ * event payload that carries it.
+ */
+function latestDeclaredParentSessionId(
+  database: Database,
+  sessionId: string,
+  at: string,
+): string | null {
+  const row = database
+    .query(
+      `SELECT payload FROM events
+        WHERE kind = 'quest.declared' AND json_extract(payload, '$.session_id') = ? AND at <= ?
+        ORDER BY at DESC, id DESC LIMIT 1`,
+    )
+    .get(sessionId, at) as { payload: string } | null;
+  if (row === null) return null;
+  const payload = JSON.parse(row.payload) as { scope?: string; parent_session_id?: string };
+  if (payload.scope !== "subagent") return null;
+  return payload.parent_session_id ?? null;
+}
+
 export function applyResult(
   store: EventStore,
   database: Database,
@@ -286,17 +423,51 @@ export function applyResult(
   options: ApplyOptions,
 ): AppliedSummary {
   const heroId = requireHeroId(database);
+  const declaredMode = (options.mode ?? "declared") === "declared";
   const summary: AppliedSummary = {
     traces: 0,
     activitiesOpened: 0,
     questsProposed: 0,
     branches: 0,
     questionsWatching: 0,
-    questConflicts: 0,
+    doubts: 0,
     overlapDropped: 0,
     unknownActivityIds: 0,
     questProposedOnMatched: 0,
   };
+
+  // Resolved once per window, not per segment: a re-declaration between two
+  // chunks is picked up by the next chunk's own `buildWindow` call.
+  let declaredQuestId: string | null = null;
+  // A subagent's doubt is addressed to whoever can answer it: the parent session.
+  let questionSessionId = window.sessionId;
+  if (declaredMode) {
+    const at = window.messages.at(-1)?.ts ?? options.now;
+    // The window already resolved the parent for the prompt; `parentDeclaredQuest`
+    // being set is exactly "this session is a subagent with a known parent".
+    const parentSessionId =
+      window.parentDeclaredQuest !== null
+        ? latestDeclaredParentSessionId(database, window.sessionId, at)
+        : null;
+    if (parentSessionId !== null) {
+      declaredQuestId =
+        currentDeclaredQuestForSubagent(database, {
+          sessionId: window.sessionId,
+          parentSessionId,
+          at,
+        })?.questId ?? null;
+      questionSessionId = parentSessionId;
+    } else {
+      declaredQuestId =
+        currentDeclaredQuest(database, { sessionId: window.sessionId, at })?.questId ?? null;
+    }
+  }
+
+  // A declared session with nothing declared *yet* records its work with no quest
+  // and asks to declare once for the whole window -- an undeclared window is one
+  // gap, not N.
+  const needsDeclaration = declaredMode && declaredQuestId === null;
+  let declareAsked = false;
 
   const overlapStart = window.overlapMessages[0]?.ts ?? null;
   const overlapEnd = window.overlapMessages.at(-1)?.ts ?? null;
@@ -344,7 +515,16 @@ export function applyResult(
       questConflict,
       unknownActivityId,
       questProposedOnMatched,
-    } = resolveActivityForSegment(store, database, heroId, segment, segment.startedAt);
+    } = declaredMode
+      ? resolveActivityForSegmentDeclared(
+          store,
+          database,
+          segment,
+          segment.startedAt,
+          declaredQuestId,
+          window.activityAliases ?? {},
+        )
+      : resolveActivityForSegment(store, database, heroId, segment, segment.startedAt);
 
     if (activityOpened) summary.activitiesOpened += 1;
     if (questCreated) summary.questsProposed += 1;
@@ -361,13 +541,14 @@ export function applyResult(
       );
     }
     if (questConflict) {
-      summary.questConflicts += 1;
+      summary.doubts += 1;
       options.log(
         `w5 quest conflict: activity ${activityId} keeps quest ${questId ?? "none"}, classifier said ${segment.matchedQuest ?? "none"}`,
       );
     }
 
     if (
+      !declaredMode &&
       segment.isSwitch &&
       questId !== null &&
       previous !== null &&
@@ -405,7 +586,43 @@ export function applyResult(
     });
     summary.traces += 1;
 
-    if (segment.questions.length > 0 && options.askingEnabled) {
+    if (declaredMode) {
+      // A doubt is recorded even when asking is disabled (backfill), so the run
+      // summary and `tempad review` still show it; only the hand-back is gated.
+      if (segment.belongs === false) {
+        summary.doubts += 1;
+        if (options.askingEnabled) {
+          askQuestion(store, database, {
+            trace: traceId,
+            sessionId: questionSessionId,
+            kind: "belongs",
+            // Internal only: the sentence the human sees is rendered fresh in
+            // `w5/hooks.ts` from kind + guess + the declared title.
+            text: "belongs",
+            guess: segment.guess,
+            isSwitch: segment.isSwitch,
+            actor: options.actor,
+          });
+          summary.questionsWatching += 1;
+        }
+      }
+
+      if (needsDeclaration && !declareAsked && options.askingEnabled) {
+        askQuestion(store, database, {
+          trace: traceId,
+          sessionId: questionSessionId,
+          kind: "declare",
+          text: "declare",
+          isSwitch: false,
+          actor: options.actor,
+        });
+        summary.questionsWatching += 1;
+        declareAsked = true;
+      }
+      continue;
+    }
+
+    if (segment.questions !== undefined && segment.questions.length > 0 && options.askingEnabled) {
       for (const kind of segment.questions) {
         askQuestion(store, database, {
           trace: traceId,
