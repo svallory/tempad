@@ -115,6 +115,9 @@ CREATE TABLE events (
 );
 CREATE INDEX events_subject ON events(subject, at);
 CREATE INDEX events_kind ON events(kind, at);
+CREATE INDEX events_quest_declared_session
+  ON events(json_extract(payload, '$.session_id'))
+  WHERE kind = 'quest.declared';
 CREATE TRIGGER events_no_update BEFORE UPDATE ON events BEGIN
   SELECT RAISE(ABORT, 'events are append-only');
 END;
@@ -174,3 +177,7 @@ CREATE TABLE w5_quiet (
 -- projection's CREATE TABLE) and `session_note TEXT` to `w5_runs`.
 --
 -- Migration 0008_declared_quests.sql added origin_kind TEXT NOT NULL DEFAULT 'inferred' to quests.
+--
+-- Migration 0009_declared_quests_index.sql added events_quest_declared_session, a partial index
+-- on json_extract(payload, '$.session_id') for kind = 'quest.declared' (mirrored above on the
+-- events table), so declarations.ts's per-session lookups don't scan every quest.declared event.

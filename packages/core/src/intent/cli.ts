@@ -401,6 +401,22 @@ function resolveExistingQuest(database: Database, id: string): string | null {
   return questExists(database, resolved) ? resolved : null;
 }
 
+export const QUEST_DECLARE_OPTIONS = {
+  session: { type: "string" },
+  parent: { type: "string" },
+  quest: { type: "string" },
+  new: { type: "string" },
+  objective: { type: "string" },
+  commitment: { type: "string", default: "personal" },
+  project: { type: "string" },
+  origin: { type: "string" },
+  trigger: { type: "string" },
+  kind: { type: "string" },
+  plan: { type: "string" },
+  by: { type: "string", default: "agent" },
+  at: { type: "string" },
+} as const;
+
 function runQuestCommand(args: string[], context: IntentContext): number {
   const [subcommand, ...rest] = args;
   const store = new EventStore(context.database);
@@ -763,21 +779,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
   if (subcommand === "declare") {
     const { values } = parseArgs({
       args: rest,
-      options: {
-        session: { type: "string" },
-        parent: { type: "string" },
-        quest: { type: "string" },
-        new: { type: "string" },
-        objective: { type: "string" },
-        commitment: { type: "string", default: "personal" },
-        project: { type: "string" },
-        origin: { type: "string" },
-        trigger: { type: "string" },
-        kind: { type: "string" },
-        plan: { type: "string" },
-        by: { type: "string", default: "agent" },
-        at: { type: "string" },
-      },
+      options: QUEST_DECLARE_OPTIONS,
       strict: true,
     });
 
