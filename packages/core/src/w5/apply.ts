@@ -40,6 +40,12 @@ export interface ApplyOptions {
    * falls back to for a session that never declares anything.
    */
   mode?: "declared" | "inferred";
+  /**
+   * A `declare` question is exactly as premature as a stint would be for the
+   * same stretch: below this many minutes of undeclared segment time, the
+   * window's "no declaration yet" gap is recorded but not asked about.
+   */
+  stintMinMinutes: number;
 }
 
 function requireHeroId(database: Database): string {
@@ -458,8 +464,19 @@ export function applyResult(
 
   // A declared session with nothing declared *yet* records its work with no quest
   // and asks to declare once for the whole window -- an undeclared window is one
-  // gap, not N.
+  // gap, not N. A `declare` question is exactly as premature as a stint would be
+  // for the same stretch, so it is only asked once the window's undeclared time
+  // meets stintMinMinutes; the doubt has nothing to dismiss below that (no stint
+  // or question was created), so there is no bookkeeping to suppress alongside it.
   const needsDeclaration = declaredMode && declaredQuestId === null;
+  const undeclaredMinutes = needsDeclaration
+    ? result.segments.reduce(
+        (sum, segment) =>
+          sum + (Date.parse(segment.endedAt) - Date.parse(segment.startedAt)) / 60_000,
+        0,
+      )
+    : 0;
+  const declarationDue = needsDeclaration && undeclaredMinutes >= options.stintMinMinutes;
   let declareAsked = false;
 
   const overlapStart = window.overlapMessages[0]?.ts ?? null;
@@ -600,7 +617,7 @@ export function applyResult(
         }
       }
 
-      if (needsDeclaration && !declareAsked && options.askingEnabled) {
+      if (declarationDue && !declareAsked && options.askingEnabled) {
         askQuestion(store, database, {
           trace: traceId,
           sessionId: questionSessionId,

@@ -197,3 +197,5 @@ CREATE TABLE w5_quiet (
 -- payload field names, and src/intent/legacy.ts translates them at the single
 -- read boundary in src/intent/store.ts. See
 -- docs/specs/2026-09-07-ubiquitous-language.md.
+--
+-- Migration 0012_stint_minimum.sql added dismissed_at TEXT to stints.

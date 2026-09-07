@@ -199,6 +199,21 @@ export function advanceQuestions(
       )
       .get(row.traceId) as { traceId: string; questId: string | null } | null;
 
+    if (row.kind === "belongs") {
+      const dismissed = database
+        .query(
+          `SELECT stints.dismissed_at as dismissedAt FROM traces
+             JOIN stints ON stints.id = traces.stint_id
+            WHERE traces.id = ?`,
+        )
+        .get(row.traceId) as { dismissedAt: string | null } | null;
+      if (dismissed?.dismissedAt !== null && dismissed?.dismissedAt !== undefined) {
+        expireQuestion(store, database, row.id, input.now);
+        expired.push({ ...row, state: "expired", turnsWatched: newTurnsWatched });
+        continue;
+      }
+    }
+
     if (row.kind === "why" && trace?.questId !== null && trace?.questId !== undefined) {
       expireQuestion(store, database, row.id, input.now);
       expired.push({ ...row, state: "expired", turnsWatched: newTurnsWatched });

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { openDatabase } from "../src/db/database.ts";
 
 describe("openDatabase", () => {
-  test("opening twice is idempotent, user_version is 11, tables exist", () => {
+  test("opening twice is idempotent, user_version is 12, tables exist", () => {
     const dir = mkdtempSync(join(tmpdir(), "tempad-db-test-"));
     const dbPath = join(dir, "tempad.db");
 
@@ -17,7 +17,7 @@ describe("openDatabase", () => {
 
       const version = (second.query("PRAGMA user_version;").get() as { user_version: number })
         .user_version;
-      expect(version).toBe(11);
+      expect(version).toBe(12);
 
       const tableNames = (
         second.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as {

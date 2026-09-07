@@ -465,7 +465,7 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
     .get(range.from, range.to) as { count: number };
   const stintCount = database
     .query(
-      "SELECT COUNT(*) as count FROM stints WHERE retracted_at IS NULL AND opened_at >= ? AND opened_at < ?",
+      "SELECT COUNT(*) as count FROM stints WHERE retracted_at IS NULL AND dismissed_at IS NULL AND opened_at >= ? AND opened_at < ?",
     )
     .get(range.from, range.to) as { count: number };
   const continuesCount = database

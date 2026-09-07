@@ -13,7 +13,8 @@ export const stintProjection: Projection = {
       revision INTEGER NOT NULL DEFAULT 1,
       retracted_at TEXT,
       continues TEXT,
-      close_reason TEXT
+      close_reason TEXT,
+      dismissed_at TEXT
     );
     CREATE TABLE IF NOT EXISTS traces (
       id TEXT PRIMARY KEY,
@@ -83,6 +84,11 @@ export const stintProjection: Projection = {
         database
           .query("UPDATE stints SET closed_at = ?, close_reason = ? WHERE id = ?")
           .run(event.at, payload.reason ? String(payload.reason) : null, event.subject);
+        return;
+      case "stint.dismissed":
+        database
+          .query("UPDATE stints SET dismissed_at = ? WHERE id = ?")
+          .run(event.at, event.subject);
         return;
       case "stint.assigned":
         database

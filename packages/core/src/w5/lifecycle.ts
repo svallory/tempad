@@ -8,6 +8,40 @@ export interface CloseIdleStintsInput {
   sessionId: string;
   windowStartedAt: string;
   idleMinutes: number;
+  stintMinMinutes: number;
+}
+
+/**
+ * Dismisses a stint whose live trace minutes are below `minMinutes`, appending
+ * `stint.dismissed` (reason `"below minimum"`). Called right after a
+ * `stint.closed` append, since a stint's total trace time is only known once
+ * no more traces are landing on it.
+ */
+function dismissIfBelowMinimum(
+  store: EventStore,
+  database: Database,
+  stintId: string,
+  closedAt: string,
+  minMinutes: number,
+): void {
+  const row = database
+    .query(
+      `SELECT
+         (SELECT SUM((julianday(traces.ended_at) - julianday(traces.started_at)) * 1440)
+            FROM traces WHERE traces.stint_id = ? AND traces.retracted_at IS NULL) as traceMinutes`,
+    )
+    .get(stintId) as { traceMinutes: number | null };
+  if ((row.traceMinutes ?? 0) >= minMinutes) return;
+  applyIncremental(
+    database,
+    store.append({
+      actor: "system",
+      kind: "stint.dismissed",
+      subject: stintId,
+      at: closedAt,
+      payload: { reason: "below minimum" },
+    }),
+  );
 }
 
 export function closeIdleStints(
@@ -45,6 +79,7 @@ export function closeIdleStints(
         payload: { reason: "idle" },
       }),
     );
+    dismissIfBelowMinimum(store, database, row.id, row.lastEndedAt, input.stintMinMinutes);
     closed.push(row.id);
   }
   return { closed };
@@ -53,7 +88,7 @@ export function closeIdleStints(
 export function closeSessionStints(
   store: EventStore,
   database: Database,
-  input: { sessionId: string; now: string },
+  input: { sessionId: string; now: string; stintMinMinutes: number },
 ): { closed: string[] } {
   const rows = database
     .query(
@@ -71,16 +106,18 @@ export function closeSessionStints(
 
   const closed: string[] = [];
   for (const row of rows) {
+    const closedAt = row.lastEndedAt ?? input.now;
     applyIncremental(
       database,
       store.append({
         actor: "hook",
         kind: "stint.closed",
         subject: row.id,
-        at: row.lastEndedAt ?? input.now,
+        at: closedAt,
         payload: { reason: "session_end" },
       }),
     );
+    dismissIfBelowMinimum(store, database, row.id, closedAt, input.stintMinMinutes);
     closed.push(row.id);
   }
   database

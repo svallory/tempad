@@ -75,6 +75,14 @@ function seedSourceDb(path: string): void {
        VALUES ('m1', 's1', '2026-09-01T10:00:00.000Z', 'user', 0, 'do the thing')`,
     )
     .run();
+  // A second message five minutes later so the resulting trace meets
+  // `stintMinMinutes` (default 5) and is not dismissed.
+  database
+    .query(
+      `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+       VALUES ('m2', 's1', '2026-09-01T10:05:00.000Z', 'user', 0, 'still on it')`,
+    )
+    .run();
   database.close();
 }
 
@@ -170,6 +178,61 @@ describe("w5 eval", () => {
     expect(Buffer.from(sourceBytesAfter).equals(Buffer.from(sourceBytesBefore))).toBe(true);
   });
 
+  test("the stints/traces ratio excludes dismissed stints from the denominator", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-dismissed-"));
+    const sourcePath = join(dir, "source.db");
+    const database = openDatabase(sourcePath);
+    ensureTables(database);
+    const store = new EventStore(database);
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "hero.created",
+        subject: "H1",
+        payload: { name: "Saulo" },
+      }),
+    );
+    database
+      .query(
+        `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, title, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+         VALUES ('s1', '/c', 'p', '/c/p/s1.jsonl', '/w/p', 'personal', 'p', 'p session', 'main', '2026-09-01T10:00:00.000Z', '2026-09-01T11:00:00.000Z', 2, 0, '[]', 'host', '2026-09-01T11:00:00.000Z')`,
+      )
+      .run();
+    // Two messages an hour apart, well past a chunk boundary (throttleMinutes *
+    // 3 = 30 minutes): each becomes its own window with a single-message, 0-minute
+    // segment. The second window's own closeIdleStints call idle-closes the
+    // first window's stint, whose live trace minutes (0) are below the default
+    // 5-minute stintMinMinutes, so it is dismissed.
+    database
+      .query(
+        `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+         VALUES ('m1', 's1', '2026-09-01T10:00:00.000Z', 'user', 0, 'do the thing')`,
+      )
+      .run();
+    database
+      .query(
+        `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+         VALUES ('m2', 's1', '2026-09-01T11:00:00.000Z', 'user', 0, 'do a second thing')`,
+      )
+      .run();
+    database.close();
+
+    const metrics = await runEval({
+      from: "2026-09-01",
+      to: "2026-09-02",
+      sourceDbPath: sourcePath,
+      scratchDir: dir,
+      now: "2026-09-02T00:00:00.000Z",
+      classifier: new FakeClassifier(),
+      log: () => {},
+    });
+
+    expect(metrics.traces).toBe(2);
+    expect(metrics.stints).toBe(1);
+    expect(metrics.ratio).toBe(0.5);
+  });
+
   test("rejects a malformed --from/--to before touching the source database", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tempad-eval-bad-range-"));
     const sourcePath = join(dir, "source.db");
@@ -238,6 +301,14 @@ describe("w5 eval", () => {
       .query(
         `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
          VALUES ('m1', 's1', '2026-09-01T10:00:00.000Z', 'user', 0, 'do the thing')`,
+      )
+      .run();
+    // A second message five minutes later so the resulting trace meets
+    // `stintMinMinutes` (default 5) and is not dismissed.
+    database
+      .query(
+        `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+         VALUES ('m2', 's1', '2026-09-01T10:05:00.000Z', 'user', 0, 'still on it')`,
       )
       .run();
     // Leave the source connection open (WAL mode, from openDatabase) rather than
@@ -681,6 +752,14 @@ describe("w5 eval", () => {
          VALUES ('m1', 's1', '2026-09-01T10:00:00.000Z', 'user', 0, 'do the thing')`,
       )
       .run();
+    // A second message five minutes later so the resulting trace meets
+    // `stintMinMinutes` (default 5) and is not dismissed.
+    database
+      .query(
+        `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+         VALUES ('m2', 's1', '2026-09-01T10:05:00.000Z', 'user', 0, 'still on it')`,
+      )
+      .run();
     database
       .query(
         "INSERT INTO w5_runs (session_id, last_run_at, last_message_ts, session_note) VALUES ('s1', '2026-09-01T09:10:00.000Z', '2026-09-01T09:10:00.000Z', 'touched note')",
@@ -835,6 +914,14 @@ describe("w5 eval", () => {
       .query(
         `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
          VALUES ('m1', 's1', '2026-09-02T09:00:00.000Z', 'user', 0, 'do the thing')`,
+      )
+      .run();
+    // A second message five minutes later so the resulting trace meets
+    // `stintMinMinutes` (default 5) and is not dismissed.
+    database
+      .query(
+        `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+         VALUES ('m2', 's1', '2026-09-02T09:05:00.000Z', 'user', 0, 'still on it')`,
       )
       .run();
     database.close();

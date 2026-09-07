@@ -158,6 +158,33 @@ describe("window builder", () => {
     ]);
   });
 
+  test("buildWindow never offers a dismissed stint as a candidate", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    seedSession(database);
+    seedOpenStint(database);
+    database
+      .query(
+        "INSERT INTO stints (id, quest_id, outcome, opened_at, revision, dismissed_at) VALUES ('A-dismissed', 'Q1', 'a quick check', '2026-09-04T14:05:00.000Z', 1, '2026-09-04T14:08:00.000Z')",
+      )
+      .run();
+    database
+      .query(
+        `INSERT INTO traces (id, stint_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+         VALUES ('T2', 'A-dismissed', 'claude-code', 'personal/marko-ui', 'session', '2026-09-04T14:05:00.000Z', '2026-09-04T14:08:00.000Z', 'hero', 'a quick check', 'ship', 'personal/marko-ui', 'claude-code', 0.9, 'assistant', 's1', '2026-09-04T14:08:00.000Z')`,
+      )
+      .run();
+
+    const window = buildWindow(database, {
+      sessionId: "s1",
+      sinceTs: "2026-09-04T14:30:00.000Z",
+      ...memoryInput,
+    });
+
+    expect(window.sessionOpenStints.map((s) => s.stintId)).toEqual(["A1"]);
+    expect(Object.values(window.stintAliases)).not.toContain("A-dismissed");
+  });
+
   test("recentActivities carries a closed stint from an earlier session in the same project", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);

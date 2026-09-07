@@ -256,6 +256,7 @@ export async function backfill(
       sessionId: session.id,
       windowStartedAt: startedAt,
       idleMinutes: intentConfig.stintIdleMinutes,
+      stintMinMinutes: intentConfig.stintMinMinutes,
     });
 
     // The slice is rebuilt per chunk, after the previous chunk's applyResult and
@@ -292,6 +293,7 @@ export async function backfill(
         now: options.now,
         log: options.log,
         mode: modeFor(session.id),
+        stintMinMinutes: intentConfig.stintMinMinutes,
       });
       doubts += applied.doubts;
       unknownStintIds += applied.unknownStintIds;
