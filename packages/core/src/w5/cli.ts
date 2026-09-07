@@ -4,12 +4,18 @@ import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import type { Config } from "../config/env";
 import type { IntentConfig } from "../intent/config";
+import { currentDeclaredQuest } from "../intent/declarations";
 import { backfill } from "./backfill";
 import { AnthropicClassifier, type Classifier } from "./classifier";
 import { ClaudeCliClassifier } from "./classifier-cli";
 import { dedupe } from "./dedupe";
 import { InvalidEvalRangeError, runEval, validateEvalRange } from "./eval";
-import { buildAdditionalContext, installHooks, uninstallHooks } from "./hooks";
+import {
+  buildAdditionalContext,
+  buildDeclarationLine,
+  installHooks,
+  uninstallHooks,
+} from "./hooks";
 import { enqueueJob } from "./jobs";
 import type { QuestionRow } from "./questions";
 import { drain } from "./runner";
@@ -137,6 +143,12 @@ function runContext(args: string[], context: W5Context): number {
   });
   if (!values.session) return 0;
 
+  const declared = currentDeclaredQuest(context.database, {
+    sessionId: values.session,
+    at: new Date().toISOString(),
+  });
+  const declarationLine = buildDeclarationLine(declared, values.session);
+
   const rows = context.database
     .query(
       `SELECT id, trace_id as traceId, session_id as sessionId, kind, state, turns_watched as turnsWatched,
@@ -144,11 +156,11 @@ function runContext(args: string[], context: W5Context): number {
          FROM questions WHERE session_id = ? AND state = 'asked' ORDER BY asked_at DESC`,
     )
     .all(values.session) as (Omit<QuestionRow, "isSwitch"> & { isSwitch: number })[];
-  if (rows.length === 0) return 0;
 
   const questions: QuestionRow[] = rows.map((row) => ({ ...row, isSwitch: row.isSwitch === 1 }));
   const text = buildAdditionalContext(questions);
-  if (text.length > 0) context.stdout(text);
+  const parts = [declarationLine, text].filter((part) => part.length > 0);
+  if (parts.length > 0) context.stdout(parts.join("\n"));
   return 0;
 }
 

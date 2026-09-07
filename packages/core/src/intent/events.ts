@@ -22,6 +22,7 @@ export const EVENT_KINDS = [
   "quest.lifecycle",
   "quest.branched",
   "quest.returned",
+  "quest.declared",
   "activity.opened",
   "activity.reworded",
   "activity.closed",

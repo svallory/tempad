@@ -172,3 +172,5 @@ CREATE TABLE w5_quiet (
 -- Migration 0007_activity_lifecycle.sql added `close_reason TEXT` and
 -- `continues TEXT` to `activities` (mirrored above in the `activities`
 -- projection's CREATE TABLE) and `session_note TEXT` to `w5_runs`.
+--
+-- Migration 0008_declared_quests.sql added origin_kind TEXT NOT NULL DEFAULT 'inferred' to quests.

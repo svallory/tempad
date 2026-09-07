@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runSync } from "../src/cli.ts";
+import { runSkillCommand, runSync } from "../src/cli.ts";
 import type { Collector, SyncSummary } from "../src/collect/types.ts";
 import { openDatabase } from "../src/db/database.ts";
 import { getSyncState, setSyncState } from "../src/db/sync-state.ts";
@@ -216,5 +216,45 @@ describe("cli process", () => {
     });
     const exitCode = await proc.exited;
     expect(exitCode).toBe(2);
+  });
+});
+
+describe("tempad skill install", () => {
+  test("--scope user copies the skill into a temporary HOME's ~/.claude/skills, never the real one", () => {
+    const tempHome = mkdtempSync(join(tmpdir(), "tempad-skill-home-"));
+    const previousHome = process.env.HOME;
+    process.env.HOME = tempHome;
+    try {
+      const exitCode = runSkillCommand(["install", "--scope", "user"]);
+      expect(exitCode).toBe(0);
+      const destination = join(tempHome, ".claude", "skills", "tempad-quest", "SKILL.md");
+      expect(existsSync(destination)).toBe(true);
+      const content = readFileSync(destination, "utf8");
+      expect(content).toContain("name: tempad-quest");
+      expect(content).toContain("tempad quest declare");
+    } finally {
+      process.env.HOME = previousHome;
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  test("--scope project copies the skill into .claude/skills under the current working directory", () => {
+    const tempHome = mkdtempSync(join(tmpdir(), "tempad-skill-home-"));
+    const projectDir = mkdtempSync(join(tmpdir(), "tempad-skill-project-"));
+    const previousHome = process.env.HOME;
+    const previousCwd = process.cwd();
+    process.env.HOME = tempHome;
+    process.chdir(projectDir);
+    try {
+      const exitCode = runSkillCommand(["install", "--scope", "project"]);
+      expect(exitCode).toBe(0);
+      const destination = join(projectDir, ".claude", "skills", "tempad-quest", "SKILL.md");
+      expect(existsSync(destination)).toBe(true);
+    } finally {
+      process.chdir(previousCwd);
+      process.env.HOME = previousHome;
+      rmSync(tempHome, { recursive: true, force: true });
+      rmSync(projectDir, { recursive: true, force: true });
+    }
   });
 });

@@ -108,6 +108,14 @@ export function uninstallHooks(settingsPath: string): void {
   writeSettings(settingsPath, { ...settings, hooks });
 }
 
+export function buildDeclarationLine(
+  declared: { title: string } | null,
+  sessionId: string,
+): string {
+  const quest = declared ? declared.title : "none";
+  return `tempad: session ${sessionId}, declared quest: ${quest}. Declare with the tempad-quest skill if this prompt starts a different objective.`;
+}
+
 export function buildAdditionalContext(questions: QuestionRow[]): string {
   if (questions.length === 0) return "";
 

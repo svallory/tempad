@@ -5,8 +5,11 @@ import { join } from "node:path";
 import type { Config } from "../../src/config/env";
 import { openDatabase } from "../../src/db/database";
 import { defaultIntentConfig } from "../../src/intent/config";
-import { ensureTables } from "../../src/intent/projections";
+import { declareQuest } from "../../src/intent/declarations";
+import { newUlid } from "../../src/intent/ids";
+import { applyIncremental, ensureTables } from "../../src/intent/projections";
 import { registerAllProjections } from "../../src/intent/projections/register";
+import { EventStore } from "../../src/intent/store";
 import type { SpawnFn } from "../../src/w5/cli";
 import { runW5Command } from "../../src/w5/cli";
 
@@ -301,5 +304,59 @@ describe("w5 run without ANTHROPIC_API_KEY", () => {
       if (previousKey !== undefined) process.env.ANTHROPIC_API_KEY = previousKey;
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("w5 context", () => {
+  test("prints the declaration line before any question lines", async () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    const store = new EventStore(database);
+    const heroId = newUlid();
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "hero.created",
+        subject: heroId,
+        payload: { name: "S" },
+      }),
+    );
+    declareQuest(store, database, {
+      sessionId: "s1",
+      newQuest: { title: "Ship X", objective: "ship it", commitment: "personal" },
+      plan: [],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-07T09:00:00.000Z",
+      heroId,
+    });
+
+    const lines: string[] = [];
+    const code = await runW5Command(["context", "--session", "s1"], {
+      database,
+      config: makeConfig(mkdtempSync(join(tmpdir(), "tempad-cli-test-"))),
+      intentConfig: defaultIntentConfig(),
+      stdout: (line) => lines.push(line),
+    });
+    expect(code).toBe(0);
+    expect(lines.length).toBeGreaterThan(0);
+    const output = lines.join("\n").split("\n");
+    expect(output[0]).toMatch(/^tempad: session s1, declared quest: /);
+  });
+
+  test("prints 'declared quest: none' with no declaration", async () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+
+    const lines: string[] = [];
+    const code = await runW5Command(["context", "--session", "s1"], {
+      database,
+      config: makeConfig(mkdtempSync(join(tmpdir(), "tempad-cli-test-"))),
+      intentConfig: defaultIntentConfig(),
+      stdout: (line) => lines.push(line),
+    });
+    expect(code).toBe(0);
+    expect(lines.join("\n")).toContain("tempad: session s1, declared quest: none.");
   });
 });

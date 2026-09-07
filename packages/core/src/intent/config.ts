@@ -17,6 +17,8 @@ export interface W5Config {
   memoryHours: number;
   memoryActivities: number;
   overlapMessages: number;
+  mode: "declared" | "inferred";
+  inferenceFallback: boolean;
 }
 
 export interface IntentConfig {
@@ -45,12 +47,19 @@ export function defaultIntentConfig(): IntentConfig {
       memoryHours: 8,
       memoryActivities: 10,
       overlapMessages: 3,
+      mode: "declared",
+      inferenceFallback: true,
     },
   };
 }
 
 function parseBackend(value: unknown, fallback: W5Backend): W5Backend {
   if (value === "claude-cli" || value === "api") return value;
+  return fallback;
+}
+
+function parseMode(value: unknown, fallback: "declared" | "inferred"): "declared" | "inferred" {
+  if (value === "declared" || value === "inferred") return value;
   return fallback;
 }
 
@@ -92,6 +101,8 @@ export function loadIntentConfig(tomlPath: string): IntentConfig {
   if (w5) {
     const number = (key: string, fallback: number) =>
       typeof w5[key] === "number" ? (w5[key] as number) : fallback;
+    const boolean = (key: string, fallback: boolean) =>
+      typeof w5[key] === "boolean" ? (w5[key] as boolean) : fallback;
     config.w5 = {
       model: typeof w5.model === "string" ? w5.model : config.w5.model,
       throttleMinutes: number("throttle_minutes", config.w5.throttleMinutes),
@@ -108,6 +119,8 @@ export function loadIntentConfig(tomlPath: string): IntentConfig {
       memoryHours: number("memory_hours", config.w5.memoryHours),
       memoryActivities: number("memory_activities", config.w5.memoryActivities),
       overlapMessages: number("overlap_messages", config.w5.overlapMessages),
+      mode: parseMode(w5.mode, config.w5.mode),
+      inferenceFallback: boolean("inference_fallback", config.w5.inferenceFallback),
     };
   }
   return config;

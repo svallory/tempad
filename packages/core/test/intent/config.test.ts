@@ -120,4 +120,26 @@ claude_command = "/opt/bin/claude"
     const config = loadIntentConfig(path);
     expect(config).toEqual(defaultIntentConfig());
   });
+
+  test("parses w5 mode and inference_fallback", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tempad-intent-"));
+    const path = join(directory, "tempad.toml");
+    writeFileSync(
+      path,
+      `
+[w5]
+mode = "inferred"
+inference_fallback = false
+`,
+    );
+    const config = loadIntentConfig(path);
+    expect(config.w5.mode).toBe("inferred");
+    expect(config.w5.inferenceFallback).toBe(false);
+  });
+
+  test("defaultIntentConfig().w5 defaults to declared mode with inference fallback on", () => {
+    const config = defaultIntentConfig();
+    expect(config.w5.mode).toBe("declared");
+    expect(config.w5.inferenceFallback).toBe(true);
+  });
 });

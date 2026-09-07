@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildAdditionalContext,
+  buildDeclarationLine,
   installHooks,
   promptHookScriptPath,
   renderHookSettings,
@@ -130,6 +131,17 @@ describe("buildAdditionalContext", () => {
 
   test("returns empty string for no questions", () => {
     expect(buildAdditionalContext([])).toBe("");
+  });
+});
+
+describe("buildDeclarationLine", () => {
+  test("renders the quest title or 'none'", () => {
+    expect(buildDeclarationLine({ title: "Ship X" }, "s1")).toBe(
+      "tempad: session s1, declared quest: Ship X. Declare with the tempad-quest skill if this prompt starts a different objective.",
+    );
+    expect(buildDeclarationLine(null, "s1")).toBe(
+      "tempad: session s1, declared quest: none. Declare with the tempad-quest skill if this prompt starts a different objective.",
+    );
   });
 });
 
