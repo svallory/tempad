@@ -487,6 +487,9 @@ async function runEvalCommand(args: string[], context: W5Context): Promise<numbe
   context.stdout(`selector_ambiguous=${metrics.selectorAmbiguous}`);
   context.stdout(`sessions_declared=${metrics.sessionsDeclared}`);
   context.stdout(`sessions_inferred=${metrics.sessionsInferred}`);
+  context.stdout(`stints_dismissed=${metrics.stintsDismissed}`);
+  context.stdout(`plan_stints_hit=${metrics.planStintsHit}`);
+  context.stdout(`stints_new=${metrics.stintsNew}`);
   for (const stint of metrics.sample) {
     context.stdout(
       `sample: what=${JSON.stringify(stint.what)} why=${JSON.stringify(stint.why)} quest=${

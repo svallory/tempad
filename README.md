@@ -28,7 +28,9 @@ TemPad is a self-awareness tool, not a surveillance tool. It exists to show what
 
 - **Saga**: a direction, open-ended, owned by the hero or a party. A quest _serves_ a saga.
 - **Quest**: planned work with an outcome. A quest may _advance_ another quest (contributing work) or _deviate from_ one; a quest that deviates is a side quest and carries the nexus event. Never both.
-- **Stint**: a stretch of your attention pursuing one quest. It starts when you begin pursuing an outcome and ends when that outcome is delivered, abandoned or handed off, or after an idle gap. Stints interleave. A stint contains one or more maneuvers. Test: would it be its own line in a standup or a timesheet?
+- **Stint**: a stretch of the user's attention pursuing one quest. It starts when you begin pursuing an outcome and ends when that outcome is delivered, abandoned or handed off, or after an idle gap. Stints interleave. It lasts at least `stint_min_minutes` (default 5); shorter stretches are maneuvers, and their time is counted under the quest without a stint.
+
+  Three tests: **the report test** (would it be its own line in a standup or timesheet?), **the same-answer test** (while it lasts, the answer to "what am I trying to finish" does not change), **the handoff test** (when the outcome leaves your hands, it is over; waiting is not a stint, checking on someone is a maneuver of the stint that handed off).
 - **Maneuver**: anything done inside a stint: read a file, run tests, rebase, check on a dev, answer a clarifying question. Never reported on its own.
 - **Trace**: evidence of a stint, from a tool at a place at a time.
 - **Declaration**: the executor stating which quest the coming work pursues.

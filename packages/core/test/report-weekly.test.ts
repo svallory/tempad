@@ -53,6 +53,35 @@ describe("weeklyReport", () => {
     database.close();
   });
 
+  test("the weekly table gains a short work column sourced from dismissed-stint minutes", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(
+      `INSERT INTO stints (id, quest_id, outcome, opened_at, closed_at, dismissed_at, revision)
+       VALUES ('stint-dismissed', 'quest-1', 'quick check', '2026-09-01T14:00:00.000Z', '2026-09-01T14:02:00.000Z', '2026-09-01T14:02:00.000Z', 1)`,
+    );
+    database.exec(
+      `INSERT INTO traces (id, stint_id, tool, place, source, source_ref, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+       VALUES ('trace-dismissed', 'stint-dismissed', 'edit', '/Users/octocat/work/acme/widgets', 'session', 'session-1', '2026-09-01T14:00:00.000Z', '2026-09-01T14:02:00.000Z', 'hero-1', 'quick check', 'below minimum', '/Users/octocat/work/acme/widgets', 'assistant edit', 0.9, 'model', 'session-1', '2026-09-01T14:02:00.000Z')`,
+    );
+    database.exec(
+      `INSERT INTO trace_links (trace_id, stint_id, linked_at, superseded_at, reason)
+       VALUES ('trace-dismissed', 'stint-dismissed', '2026-09-01T14:02:00.000Z', NULL, NULL)`,
+    );
+
+    const output = weeklyReport.render(database, REPORT_CONFIG, {
+      from: "2026-08-31",
+      to: "2026-09-04",
+    });
+
+    expect(output).toContain("short work");
+    const row = output.split("\n").find((line) => line.includes("acme/widgets"));
+    expect(row).toContain("0h 2m");
+
+    database.close();
+  });
+
   test("a weekday with no evidence prints no evidence, an empty weekend day is skipped", () => {
     const database = openDatabase(join(dir, "tempad.db"));
 

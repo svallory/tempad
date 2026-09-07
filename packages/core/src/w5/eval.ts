@@ -97,11 +97,13 @@ interface DeclareFileEntry {
     outcome: string;
     commitment: "promised" | "personal" | "exploratory";
     project?: string;
+    plan?: string[];
   };
   new_ref?: string;
   scope?: "session" | "subagent";
   parent_session_id?: string;
   declared_by?: "agent" | "hero";
+  plan?: string[];
 }
 
 export interface DeclareFileResult {
@@ -217,7 +219,7 @@ async function applyDeclareFile(
             project: entry.new.project,
           }
         : undefined,
-      plan: [],
+      plan: entry.new?.plan ?? entry.plan ?? [],
       scope: entry.scope ?? "session",
       declaredBy: entry.declared_by ?? "hero",
       at: entry.at,
@@ -266,6 +268,9 @@ export interface EvalMetrics {
   selectorAmbiguous: number;
   sessionsDeclared: number;
   sessionsInferred: number;
+  stintsDismissed: number;
+  planStintsHit: number;
+  stintsNew: number;
   sample: EvalSampleStint[];
 }
 
@@ -489,6 +494,32 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
          AND t.started_at >= ? AND t.started_at < ?`,
     )
     .get(range.from, range.to) as { count: number };
+  const stintsDismissedCount = database
+    .query(
+      `SELECT COUNT(*) as count FROM stints
+       WHERE dismissed_at IS NOT NULL AND opened_at >= ? AND opened_at < ?`,
+    )
+    .get(range.from, range.to) as { count: number };
+  const planStintsHitCount = database
+    .query(
+      `SELECT COUNT(*) as count FROM traces t
+       JOIN stints s ON s.id = t.stint_id
+       WHERE t.retracted_at IS NULL AND s.plan_index IS NOT NULL
+         AND t.started_at >= ? AND t.started_at < ?`,
+    )
+    .get(range.from, range.to) as { count: number };
+  const stintsNewCount = database
+    .query(
+      `SELECT COUNT(*) as count FROM stints s
+       WHERE s.retracted_at IS NULL AND s.plan_index IS NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM stints origin
+            WHERE origin.id = s.continues
+              AND (origin.dismissed_at IS NOT NULL OR origin.plan_index IS NOT NULL)
+         )
+         AND s.opened_at >= ? AND s.opened_at < ?`,
+    )
+    .get(range.from, range.to) as { count: number };
 
   const durationRows = database
     .query(
@@ -563,6 +594,9 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
     selectorAmbiguous: backfillResult.selectorAmbiguous,
     sessionsDeclared: backfillResult.sessionsDeclared,
     sessionsInferred: backfillResult.sessionsInferred,
+    stintsDismissed: stintsDismissedCount.count,
+    planStintsHit: planStintsHitCount.count,
+    stintsNew: stintsNewCount.count,
     sample,
   };
 }

@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDatabase } from "../../src/db/database";
+import { activeDeclaredQuests } from "../../src/intent/declarations";
 import { applyIncremental, ensureTables } from "../../src/intent/projections";
 import { registerAllProjections } from "../../src/intent/projections/register";
 import { EventStore } from "../../src/intent/store";
@@ -1397,5 +1398,213 @@ describe("w5 eval", () => {
         declareFile,
       }),
     ).rejects.toBeInstanceOf(InvalidDeclareFileError);
+  });
+
+  test("--declare's new.plan and top-level plan populate the declared quest's plan", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-declare-plan-"));
+    const sourcePath = join(dir, "source.db");
+    seedSourceDb(sourcePath);
+    const declareFile = join(dir, "declare.json");
+    writeFileSync(
+      declareFile,
+      JSON.stringify([
+        {
+          session_id: "s1",
+          at: "2026-09-01T09:00:00.000Z",
+          new: {
+            title: "Ship p",
+            outcome: "ship it",
+            commitment: "personal",
+            plan: ["Refactor the window builder and ship it as a PR"],
+          },
+        },
+      ]),
+    );
+
+    const metrics = await runEval({
+      from: "2026-09-01",
+      to: "2026-09-02",
+      sourceDbPath: sourcePath,
+      scratchDir: dir,
+      now: "2026-09-02T00:00:00.000Z",
+      classifier: new FakeClassifier(),
+      log: () => {},
+      declareFile,
+    });
+
+    const copied = openDatabase(metrics.copiedDbPath);
+    const active = activeDeclaredQuests(copied, {
+      sessionId: "s1",
+      at: "2026-09-01T09:30:00.000Z",
+    });
+    expect(active.length).toBe(1);
+    expect(active[0]?.plan).toEqual(["Refactor the window builder and ship it as a PR"]);
+    copied.close();
+  });
+
+  test("--declare's top-level plan amends an existing quest's plan", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-declare-plan-amend-"));
+    const sourcePath = join(dir, "source.db");
+    seedSourceDb(sourcePath);
+    const declareFile = join(dir, "declare.json");
+    writeFileSync(
+      declareFile,
+      JSON.stringify([
+        {
+          session_id: "s1",
+          at: "2026-09-01T09:00:00.000Z",
+          new: { title: "Ship p", outcome: "ship it", commitment: "personal" },
+          new_ref: "p",
+        },
+        {
+          session_id: "s1",
+          at: "2026-09-01T09:15:00.000Z",
+          quest_ref: "p",
+          plan: ["Refactor the window builder and ship it as a PR"],
+        },
+      ]),
+    );
+
+    const metrics = await runEval({
+      from: "2026-09-01",
+      to: "2026-09-02",
+      sourceDbPath: sourcePath,
+      scratchDir: dir,
+      now: "2026-09-02T00:00:00.000Z",
+      classifier: new FakeClassifier(),
+      log: () => {},
+      declareFile,
+    });
+
+    const copied = openDatabase(metrics.copiedDbPath);
+    const active = activeDeclaredQuests(copied, {
+      sessionId: "s1",
+      at: "2026-09-01T09:30:00.000Z",
+    });
+    expect(active.length).toBe(1);
+    expect(active[0]?.plan).toEqual(["Refactor the window builder and ship it as a PR"]);
+    copied.close();
+  });
+
+  test("eval metrics report stintsDismissed, planStintsHit, and stintsNew", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-plan-metrics-"));
+    const sourcePath = join(dir, "source.db");
+    const database = openDatabase(sourcePath);
+    ensureTables(database);
+    const store = new EventStore(database);
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "hero.created",
+        subject: "H1",
+        payload: { name: "Saulo" },
+      }),
+    );
+    database
+      .query(
+        `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, title, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+         VALUES ('s1', '/c', 'p', '/c/p/s1.jsonl', '/w/p', 'personal', 'p', 'p session', 'main', '2026-09-01T10:00:00.000Z', '2026-09-01T13:00:00.000Z', 4, 0, '[]', 'host', '2026-09-01T13:00:00.000Z')`,
+      )
+      .run();
+    // m1 alone, an hour before m2 (past the default 45-minute
+    // stintIdleMinutes and the 30-minute chunk boundary): its stint is
+    // idle-closed with 0 live trace minutes, below the default 5-minute
+    // stintMinMinutes, so it is dismissed (stintsDismissed) -- and, having
+    // no plan_index, also counts toward stintsNew. m2/m3 are six minutes
+    // apart within the same window and both land on the declared plan item,
+    // giving that stint 6 live trace minutes, clear of the minimum, so it
+    // survives (planStintsHit counts the resulting trace). m4, another hour
+    // later, opens a plain new stint outside the plan, still open at query
+    // time -- it also has no plan_index, so it counts toward stintsNew too.
+    database
+      .query(
+        `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+         VALUES ('m1', 's1', '2026-09-01T10:00:00.000Z', 'user', 0, 'do the thing')`,
+      )
+      .run();
+    database
+      .query(
+        `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+         VALUES ('m2', 's1', '2026-09-01T11:00:00.000Z', 'user', 0, 'work the plan item')`,
+      )
+      .run();
+    database
+      .query(
+        `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+         VALUES ('m3', 's1', '2026-09-01T11:06:00.000Z', 'user', 0, 'still working the plan item')`,
+      )
+      .run();
+    database
+      .query(
+        `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+         VALUES ('m4', 's1', '2026-09-01T12:05:00.000Z', 'user', 0, 'something unplanned')`,
+      )
+      .run();
+    database.close();
+
+    const declareFile = join(dir, "declare.json");
+    writeFileSync(
+      declareFile,
+      JSON.stringify([
+        {
+          session_id: "s1",
+          at: "2026-09-01T09:00:00.000Z",
+          new: {
+            title: "Ship p",
+            outcome: "ship it",
+            commitment: "personal",
+            plan: ["Refactor the window builder and ship it as a PR"],
+          },
+        },
+      ]),
+    );
+
+    class PlanGrainClassifier implements Classifier {
+      async classify(window: ClassifierWindow): Promise<ClassifierResult> {
+        const first = window.messages[0]?.ts ?? "2026-09-01T10:00:00.000Z";
+        const last = window.messages.at(-1)?.ts ?? first;
+        const alias = window.activeQuests[0]?.alias ?? null;
+        const stint =
+          first === "2026-09-01T11:00:00.000Z"
+            ? "P1.1"
+            : first === "2026-09-01T12:05:00.000Z"
+              ? "new: something unplanned"
+              : "new: first work of the window";
+        return {
+          segments: [
+            {
+              startedAt: first,
+              endedAt: last,
+              what: "work",
+              why: "ship",
+              belongs: true,
+              guess: null,
+              quest: alias,
+              stint,
+              isSwitch: false,
+              trigger: null,
+              confidence: 0.9,
+            },
+          ],
+          sessionNote: null,
+        };
+      }
+    }
+
+    const metrics = await runEval({
+      from: "2026-09-01",
+      to: "2026-09-02",
+      sourceDbPath: sourcePath,
+      scratchDir: dir,
+      now: "2026-09-02T00:00:00.000Z",
+      classifier: new PlanGrainClassifier(),
+      log: () => {},
+      declareFile,
+    });
+
+    expect(metrics.stintsDismissed).toBe(1);
+    expect(metrics.planStintsHit).toBe(1);
+    expect(metrics.stintsNew).toBe(2);
   });
 });

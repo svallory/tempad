@@ -254,6 +254,47 @@ describe("dailyReport", () => {
     database.close();
   });
 
+  test("a quest with a dismissed stint gains a short work line under its heading", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(
+      `INSERT INTO stints (id, quest_id, outcome, opened_at, closed_at, dismissed_at, revision)
+       VALUES ('stint-dismissed', 'quest-1', 'quick check', '2026-09-01T14:00:00.000Z', '2026-09-01T14:02:00.000Z', '2026-09-01T14:02:00.000Z', 1)`,
+    );
+    database.exec(
+      `INSERT INTO traces (id, stint_id, tool, place, source, source_ref, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+       VALUES ('trace-dismissed', 'stint-dismissed', 'edit', '/Users/octocat/work/acme/widgets', 'session', 'session-1', '2026-09-01T14:00:00.000Z', '2026-09-01T14:02:00.000Z', 'hero-1', 'quick check', 'below minimum', '/Users/octocat/work/acme/widgets', 'assistant edit', 0.9, 'model', 'session-1', '2026-09-01T14:02:00.000Z')`,
+    );
+    database.exec(
+      `INSERT INTO trace_links (trace_id, stint_id, linked_at, superseded_at, reason)
+       VALUES ('trace-dismissed', 'stint-dismissed', '2026-09-01T14:02:00.000Z', NULL, NULL)`,
+    );
+
+    const output = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+    });
+
+    expect(output).toContain("  - short work: 2 min");
+
+    database.close();
+  });
+
+  test("a quest with no dismissed stints renders no short work line", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    const output = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+    });
+
+    expect(output).not.toContain("short work");
+
+    database.close();
+  });
+
   test("a weekday with nothing prints no evidence, a weekend with nothing is omitted", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     // no seed: empty database
