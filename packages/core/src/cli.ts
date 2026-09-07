@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import type { Database } from "bun:sqlite";
-import { join } from "node:path";
+import { copyFileSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { collectors } from "./collect/index.ts";
 import type { Collector, SyncSummary } from "./collect/types.ts";
@@ -46,6 +47,7 @@ function printUsage(): void {
   console.error("  tempad trace list [--since <iso>] [--activity <id>]");
   console.error('  tempad answer <question-id> --quest <id|new:"title"> [--why "..."]');
   console.error("  tempad rebuild [--until <iso>]");
+  console.error("  tempad skill install [--scope user|project]");
 }
 
 export async function runSync(
@@ -170,6 +172,34 @@ async function runReportCommand(args: string[]): Promise<number> {
   return 0;
 }
 
+const SKILL_SOURCE_PATH = join(import.meta.dir, "..", "skills", "tempad-quest", "SKILL.md");
+
+function skillDestinationFor(scope: string): string {
+  const home = process.env.HOME ?? "";
+  if (scope === "project")
+    return join(process.cwd(), ".claude", "skills", "tempad-quest", "SKILL.md");
+  return join(home, ".claude", "skills", "tempad-quest", "SKILL.md");
+}
+
+export function runSkillCommand(args: string[]): number {
+  const [action, ...rest] = args;
+  if (action !== "install") {
+    printUsage();
+    return 2;
+  }
+  const { values } = parseArgs({
+    args: rest,
+    options: { scope: { type: "string", default: "user" } },
+    strict: true,
+  });
+  const scope = values.scope === "project" ? "project" : "user";
+  const destination = skillDestinationFor(scope);
+  mkdirSync(dirname(destination), { recursive: true });
+  copyFileSync(SKILL_SOURCE_PATH, destination);
+  console.log(`installed tempad-quest skill to ${destination}`);
+  return 0;
+}
+
 async function runIntentDispatch(command: string, rest: string[]): Promise<number> {
   const config = loadConfig();
   const database = openDatabase(join(config.home, "tempad.db"));
@@ -208,6 +238,9 @@ async function main(): Promise<number> {
   }
   if (command === "w5" || command === "quiet" || command === "review") {
     return runW5Dispatch(command, rest);
+  }
+  if (command === "skill") {
+    return runSkillCommand(rest);
   }
 
   printUsage();

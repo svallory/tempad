@@ -3,6 +3,7 @@ import { parseArgs } from "node:util";
 import type { Config } from "../config/env";
 import { answerQuestion, assignActivity } from "./api";
 import type { IntentConfig } from "./config";
+import { type BranchKind, type Commitment, declareQuest } from "./declarations";
 import { assertEditIntent } from "./edit-intent";
 import { newUlid } from "./ids";
 import { applyIncremental, ensureTables, rebuildAll } from "./projections";
@@ -758,8 +759,88 @@ function runQuestCommand(args: string[], context: IntentContext): number {
     return 0;
   }
 
+  if (subcommand === "declare") {
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        session: { type: "string" },
+        parent: { type: "string" },
+        quest: { type: "string" },
+        new: { type: "string" },
+        objective: { type: "string" },
+        commitment: { type: "string", default: "personal" },
+        project: { type: "string" },
+        origin: { type: "string" },
+        trigger: { type: "string" },
+        kind: { type: "string" },
+        plan: { type: "string" },
+        by: { type: "string", default: "agent" },
+        at: { type: "string" },
+      },
+      strict: true,
+    });
+
+    const usage =
+      'usage: tempad quest declare --session <id> [--parent <id>] (--quest <id> | --new "<title>" --objective "<text>" [--commitment promised|personal|exploratory] [--project <slug>] [--origin <quest id> --trigger "<sentence>" --kind waiting|blocker|curiosity|unknown]) [--plan "a; b; c"] [--by agent|hero] [--at <iso>]';
+
+    if (!values.session) {
+      console.error(usage);
+      return 2;
+    }
+    if ((values.quest && values.new) || (!values.quest && !values.new)) {
+      console.error(usage);
+      return 2;
+    }
+    if (values.new && !values.objective) {
+      console.error(usage);
+      return 2;
+    }
+    if (values.origin && (!values.trigger || !values.kind)) {
+      console.error(usage);
+      return 2;
+    }
+    const heroRow = context.database.query("SELECT id FROM heroes LIMIT 1").get() as {
+      id: string;
+    } | null;
+    if (!heroRow) {
+      console.error("run `tempad hero init` first");
+      return 1;
+    }
+
+    const plan = values.plan
+      ? values.plan
+          .split(";")
+          .map((part) => part.trim())
+          .filter((part) => part.length > 0)
+      : [];
+
+    const result = declareQuest(store, context.database, {
+      sessionId: values.session,
+      parentSessionId: values.parent,
+      questId: values.quest,
+      newQuest: values.new
+        ? {
+            title: values.new,
+            objective: values.objective as string,
+            commitment: (values.commitment as Commitment) ?? "personal",
+            project: values.project,
+            origin: values.origin,
+            trigger: values.trigger,
+            kind: values.kind as BranchKind | undefined,
+          }
+        : undefined,
+      plan,
+      scope: values.parent ? "subagent" : "session",
+      declaredBy: values.by === "hero" ? "hero" : "agent",
+      at: values.at ?? new Date().toISOString(),
+      heroId: heroRow.id,
+    });
+    context.stdout(`declared ${result.questId}${result.created ? " (new)" : ""}`);
+    return 0;
+  }
+
   console.error(
-    "usage: tempad quest add|reword|replace|end|edit|confirm|merge|pause|resume|done|abandon|branch|return|list ...",
+    "usage: tempad quest add|reword|replace|end|edit|confirm|merge|pause|resume|done|abandon|branch|return|list|declare ...",
   );
   return 2;
 }

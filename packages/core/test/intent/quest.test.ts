@@ -328,4 +328,47 @@ describe("quests", () => {
     expect(await run(["rebuild"])).toBe(0);
     expect(lines.length).toBe(0);
   });
+
+  test("quest declare with --new creates and declares a quest, printed as 'declared <id> (new)'", async () => {
+    const { run, lines } = harness();
+    await run(["hero", "init", "S"]);
+    lines.length = 0;
+    const exitCode = await run([
+      "quest",
+      "declare",
+      "--session",
+      "s1",
+      "--new",
+      "Ship the thing",
+      "--objective",
+      "get it out",
+    ]);
+    expect(exitCode).toBe(0);
+    expect(lines.at(-1)).toMatch(/^declared .+ \(new\)$/);
+  });
+
+  test("quest declare requires exactly one of --quest or --new", async () => {
+    const { run } = harness();
+    await run(["hero", "init", "S"]);
+    const exitCode = await run(["quest", "declare", "--session", "s1"]);
+    expect(exitCode).toBe(2);
+  });
+
+  test("quest declare --origin requires --trigger and --kind", async () => {
+    const { run } = harness();
+    await run(["hero", "init", "S"]);
+    const exitCode = await run([
+      "quest",
+      "declare",
+      "--session",
+      "s1",
+      "--new",
+      "Side thing",
+      "--objective",
+      "investigate",
+      "--origin",
+      "some-quest-id",
+    ]);
+    expect(exitCode).toBe(2);
+  });
 });

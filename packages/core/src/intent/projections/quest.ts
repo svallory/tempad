@@ -16,6 +16,7 @@ export const questProjection: Projection = {
       due TEXT,
       budget_minutes INTEGER,
       commitment TEXT,
+      origin_kind TEXT NOT NULL DEFAULT 'inferred',
       confirmed INTEGER NOT NULL DEFAULT 0,
       revision INTEGER NOT NULL,
       state TEXT NOT NULL DEFAULT 'started',
@@ -40,8 +41,8 @@ export const questProjection: Projection = {
         database
           .query(
             `INSERT OR REPLACE INTO quests
-              (id, owner_kind, owner_id, goal_id, title, objective, done_condition, due, budget_minutes, commitment, confirmed, revision, state, created_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'started', ?)`,
+              (id, owner_kind, owner_id, goal_id, title, objective, done_condition, due, budget_minutes, commitment, confirmed, origin_kind, revision, state, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'started', ?)`,
           )
           .run(
             event.subject,
@@ -55,6 +56,7 @@ export const questProjection: Projection = {
             payload.budget_minutes !== undefined ? Number(payload.budget_minutes) : null,
             payload.commitment ? String(payload.commitment) : null,
             payload.confirmed === false ? 0 : 1,
+            payload.origin_kind ? String(payload.origin_kind) : "inferred",
             event.at,
           );
         return;

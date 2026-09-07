@@ -46,6 +46,8 @@ const config: W5Config = {
   memoryHours: 8,
   memoryActivities: 10,
   overlapMessages: 3,
+  mode: "declared",
+  inferenceFallback: true,
 };
 
 const good: ClassifierResult = {
