@@ -281,6 +281,56 @@ describe("dailyReport", () => {
     database.close();
   });
 
+  test("short work sums dismissed minutes across every quest sharing a title, not just the first stint's quest", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    // A second, distinct quest with the same title as quest-1 -- groupByQuest
+    // merges them into one report group keyed by title. Its own normal stint
+    // sorts before the dismissed one (dismissed stints are excluded from
+    // dayStints, so quest-1's stint-1 is still first by opened_at), so a
+    // lookup keyed on `questStints[0]?.questId` would miss this quest's
+    // dismissed minutes entirely.
+    database.exec(
+      `INSERT INTO quests (id, owner_kind, owner_id, title, outcome, confirmed, revision, state, created_at)
+       VALUES ('quest-1-dup', 'hero', 'hero-1', 'Polish the report output', 'a second quest, same title', 1, 1, 'started', '2026-09-01T13:50:00.000Z')`,
+    );
+    database.exec(
+      `INSERT INTO stints (id, quest_id, outcome, opened_at, closed_at, revision)
+       VALUES ('stint-dup', 'quest-1-dup', 'second quest normal work', '2026-09-01T13:50:00.000Z', '2026-09-01T13:55:00.000Z', 1)`,
+    );
+    database.exec(
+      `INSERT INTO traces (id, stint_id, tool, place, source, source_ref, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+       VALUES ('trace-dup', 'stint-dup', 'edit', '/Users/octocat/work/acme/widgets', 'session', 'session-1', '2026-09-01T13:50:00.000Z', '2026-09-01T13:55:00.000Z', 'hero-1', 'second quest work', 'normal work', '/Users/octocat/work/acme/widgets', 'assistant edit', 0.9, 'model', 'session-1', '2026-09-01T13:55:00.000Z')`,
+    );
+    database.exec(
+      `INSERT INTO trace_links (trace_id, stint_id, linked_at, superseded_at, reason)
+       VALUES ('trace-dup', 'stint-dup', '2026-09-01T13:55:00.000Z', NULL, NULL)`,
+    );
+    // The dismissed stint belongs to quest-1-dup, not quest-1.
+    database.exec(
+      `INSERT INTO stints (id, quest_id, outcome, opened_at, closed_at, dismissed_at, revision)
+       VALUES ('stint-dismissed-dup', 'quest-1-dup', 'quick check', '2026-09-01T14:00:00.000Z', '2026-09-01T14:03:00.000Z', '2026-09-01T14:03:00.000Z', 1)`,
+    );
+    database.exec(
+      `INSERT INTO traces (id, stint_id, tool, place, source, source_ref, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+       VALUES ('trace-dismissed-dup', 'stint-dismissed-dup', 'edit', '/Users/octocat/work/acme/widgets', 'session', 'session-1', '2026-09-01T14:00:00.000Z', '2026-09-01T14:03:00.000Z', 'hero-1', 'quick check', 'below minimum', '/Users/octocat/work/acme/widgets', 'assistant edit', 0.9, 'model', 'session-1', '2026-09-01T14:03:00.000Z')`,
+    );
+    database.exec(
+      `INSERT INTO trace_links (trace_id, stint_id, linked_at, superseded_at, reason)
+       VALUES ('trace-dismissed-dup', 'stint-dismissed-dup', '2026-09-01T14:03:00.000Z', NULL, NULL)`,
+    );
+
+    const output = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+    });
+
+    expect(output).toContain("  - short work: 3 min");
+
+    database.close();
+  });
+
   test("a quest with no dismissed stints renders no short work line", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     seedReportFixtures(database);
