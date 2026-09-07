@@ -1499,6 +1499,140 @@ describe("applyResult in declared mode", () => {
     ).toBe(before);
   });
 
+  test("an amended plan item opens a new stint instead of reusing the old alias's", () => {
+    const database = openDatabase(":memory:");
+    const { store, heroId, questId } = seedDeclared(database);
+
+    const windowFor = (planItem: string): ClassifierWindow => ({
+      ...declaredWindow,
+      activeQuests: [
+        { alias: "Q1", title: "Ship marko-ui", outcome: "86 components", plan: [planItem] },
+      ],
+      planAliases: { "P1.1": planItem },
+    });
+
+    applyResult(
+      store,
+      database,
+      windowFor("walk order"),
+      { segments: [segment({ quest: "Q1", stint: "P1.1" })], sessionNote: null },
+      declaredOptions,
+    );
+
+    const first = database
+      .query("SELECT id, outcome FROM stints WHERE plan_index = 'P1.1'")
+      .get() as { id: string; outcome: string };
+    expect(first.outcome).toBe("walk order");
+
+    // The executor amends the plan: P1.1 now names a different outcome, so the
+    // stint standing for the old item must not absorb the new one's traces.
+    declareQuest(store, database, {
+      sessionId: "s1",
+      questId,
+      plan: ["quarantine the flaky test"],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-04T15:19:00.000Z",
+      heroId,
+    });
+
+    const summary = applyResult(
+      store,
+      database,
+      windowFor("quarantine the flaky test"),
+      {
+        segments: [
+          segment({
+            startedAt: "2026-09-04T15:20:00.000Z",
+            endedAt: "2026-09-04T15:20:00.000Z",
+            quest: "Q1",
+            stint: "P1.1",
+          }),
+        ],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+
+    expect(summary.stintsOpened).toBe(1);
+    const stints = database
+      .query(
+        "SELECT id, outcome, closed_at as closedAt FROM stints WHERE plan_index = 'P1.1' ORDER BY opened_at ASC",
+      )
+      .all() as { id: string; outcome: string; closedAt: string | null }[];
+    expect(stints.map((stint) => stint.outcome)).toEqual([
+      "walk order",
+      "quarantine the flaky test",
+    ]);
+
+    // The old stint is left exactly as it was -- not closed, not reworded.
+    expect(stints[0]?.id).toBe(first.id);
+    expect(stints[0]?.closedAt).toBeNull();
+    const oldTraces = database
+      .query("SELECT COUNT(*) as count FROM traces WHERE stint_id = ?")
+      .get(first.id) as { count: number };
+    expect(oldTraces.count).toBe(1);
+  });
+
+  test("a plan item still reuses its stint when the plan is re-declared unchanged", () => {
+    const database = openDatabase(":memory:");
+    const { store, heroId, questId } = seedDeclared(database);
+
+    const planWindow: ClassifierWindow = {
+      ...declaredWindow,
+      activeQuests: [
+        { alias: "Q1", title: "Ship marko-ui", outcome: "86 components", plan: ["walk order"] },
+      ],
+      planAliases: { "P1.1": "walk order" },
+    };
+
+    applyResult(
+      store,
+      database,
+      planWindow,
+      { segments: [segment({ quest: "Q1", stint: "P1.1" })], sessionNote: null },
+      declaredOptions,
+    );
+
+    // Re-declared with the same plan: an amendment elsewhere, not to this item.
+    declareQuest(store, database, {
+      sessionId: "s1",
+      questId,
+      plan: ["walk order"],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-04T15:19:00.000Z",
+      heroId,
+    });
+
+    const summary = applyResult(
+      store,
+      database,
+      planWindow,
+      {
+        segments: [
+          segment({
+            startedAt: "2026-09-04T15:20:00.000Z",
+            endedAt: "2026-09-04T15:20:00.000Z",
+            quest: "Q1",
+            stint: "P1.1",
+          }),
+        ],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+
+    expect(summary.stintsOpened).toBe(0);
+    expect(
+      (
+        database.query("SELECT COUNT(*) as count FROM stints WHERE plan_index = 'P1.1'").get() as {
+          count: number;
+        }
+      ).count,
+    ).toBe(1);
+  });
+
   test("the latest plan declared for a quest in the session is the one that is offered", () => {
     const database = openDatabase(":memory:");
     const { store, heroId, questId } = seedDeclared(database);

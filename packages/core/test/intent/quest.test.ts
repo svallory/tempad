@@ -432,6 +432,21 @@ describe("quests", () => {
     ).toEqual([]);
   });
 
+  test("quest declare --done rejects a quest that is not active in the session, exit 1", async () => {
+    const { run, database } = harness();
+    await run(["hero", "init", "S"]);
+    await run(["quest", "add", "--owner", "hero", "Existing"]);
+    const quest = database.query("SELECT id FROM quests").get() as { id: string };
+
+    // Never declared in s1: there is nothing for --done to end.
+    expect(await run(["quest", "declare", "--session", "s1", "--done", quest.id])).toBe(1);
+
+    // Nor after it has already been ended once.
+    await run(["quest", "declare", "--session", "s1", "--quest", quest.id]);
+    expect(await run(["quest", "declare", "--session", "s1", "--done", quest.id])).toBe(0);
+    expect(await run(["quest", "declare", "--session", "s1", "--done", quest.id])).toBe(1);
+  });
+
   test("quest declare --done rejects an unknown quest id, exit 1", async () => {
     const { run } = harness();
     await run(["hero", "init", "S"]);
