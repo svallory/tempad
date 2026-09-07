@@ -286,6 +286,88 @@ describe("attributeNonClaudeEvidence", () => {
 
     database.close();
   });
+
+  test("a commit inside an overlapping session's window is unattributed when that session never declared", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    // session-1 overlaps this commit's authored_at (12:30Z, inside 12:15-13:45Z)
+    // but has no quest.declared event at all, so attribution must stay null.
+    database.exec(
+      `INSERT INTO gh_commits (sha, repo, branches, author_name, author_email, authored_at, committed_at, subject, body, files_changed, insertions, deletions)
+       VALUES ('ddddddd8888888888888888888888888888888', 'acme/widgets', '["feature/report-polish"]', 'Octo Cat', 'octocat@example.com', '2026-09-01T12:30:00.000Z', '2026-09-01T12:30:00.000Z', 'feat(widgets): no declaration yet', NULL, 1, 1, 1)`,
+    );
+
+    const rows = attributeNonClaudeEvidence(database, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+      timeZone: REPORT_CONFIG.tz,
+    });
+
+    const row = rows.find((r) => r.id === "ddddddd8888888888888888888888888888888");
+    expect(row?.questId).toBeNull();
+    expect(row?.questTitle).toBeNull();
+
+    database.close();
+  });
+
+  test("tie rule: when two sessions in the same org/project overlap a commit, the latest-started session's declaration wins", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    // session-1 (seeded) runs 12:15Z-13:45Z. Add a second, later-started
+    // session in the same org/project that also overlaps 12:30Z.
+    database.exec(
+      `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, path_meta, title, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+       VALUES ('session-later', '~/.claude', 'dir', '/tmp/session-later.jsonl', NULL, 'acme', 'widgets', NULL, 'later session', NULL, '2026-09-01T12:20:00.000Z', '2026-09-01T13:00:00.000Z', 1, 0, '[]', 'test-host', '2026-09-01T13:00:00.000Z')`,
+    );
+
+    const store = new EventStore(database);
+    const heroId = newUlid();
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "hero.created",
+        subject: heroId,
+        payload: { name: "Saulo" },
+      }),
+    );
+    declareQuest(store, database, {
+      sessionId: "session-1",
+      newQuest: { title: "Early quest", objective: "early", commitment: "personal" },
+      plan: [],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-01T12:00:00.000Z",
+      heroId,
+    });
+    declareQuest(store, database, {
+      sessionId: "session-later",
+      newQuest: { title: "Late quest", objective: "late", commitment: "personal" },
+      plan: [],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-01T12:21:00.000Z",
+      heroId,
+    });
+
+    database.exec(
+      `INSERT INTO gh_commits (sha, repo, branches, author_name, author_email, authored_at, committed_at, subject, body, files_changed, insertions, deletions)
+       VALUES ('eeeeeee7777777777777777777777777777777', 'acme/widgets', '["feature/report-polish"]', 'Octo Cat', 'octocat@example.com', '2026-09-01T12:30:00.000Z', '2026-09-01T12:30:00.000Z', 'feat(widgets): tied overlap', NULL, 1, 1, 1)`,
+    );
+
+    const rows = attributeNonClaudeEvidence(database, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+      timeZone: REPORT_CONFIG.tz,
+    });
+
+    const row = rows.find((r) => r.id === "eeeeeee7777777777777777777777777777777");
+    expect(row?.questTitle).toBe("Late quest");
+
+    database.close();
+  });
 });
 
 describe("querySideQuestDoubts", () => {

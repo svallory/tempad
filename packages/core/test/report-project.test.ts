@@ -3,6 +3,10 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDatabase } from "../src/db/database.ts";
+import { declareQuest } from "../src/intent/declarations.ts";
+import { newUlid } from "../src/intent/ids.ts";
+import { applyIncremental } from "../src/intent/projections/index.ts";
+import { EventStore } from "../src/intent/store.ts";
 import { projectReport } from "../src/report/project.ts";
 import { REPORT_CONFIG, seedReportFixtures } from "./fixtures/report-golden/seed.ts";
 
@@ -155,6 +159,90 @@ describe("projectReport", () => {
     });
 
     expect(output).toContain("| PR #88 Fix the orphaned ref bug |");
+
+    database.close();
+  });
+
+  test("a branch row shows the attributed quest for a commit inside a declared session's window", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    // session-1 runs 2026-09-01T12:15Z-13:45Z; add a commit on its own branch
+    // authored inside that window so it resolves to the declared quest, and
+    // leave "main" (authored 2026-08-31T23:30Z, well outside) unattributed.
+    database.exec(
+      `INSERT INTO gh_commits (sha, repo, branches, author_name, author_email, authored_at, committed_at, subject, body, files_changed, insertions, deletions)
+       VALUES ('ccccccc9999999999999999999999999999999', 'acme/widgets', '["feature/inside-window"]', 'Octo Cat', 'octocat@example.com', '2026-09-01T12:30:00.000Z', '2026-09-01T12:30:00.000Z', 'feat(widgets): inside declared window', NULL, 1, 1, 1)`,
+    );
+
+    const store = new EventStore(database);
+    const heroId = newUlid();
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "hero.created",
+        subject: heroId,
+        payload: { name: "Saulo" },
+      }),
+    );
+    declareQuest(store, database, {
+      sessionId: "session-1",
+      newQuest: { title: "Ship p", objective: "ship it", commitment: "personal" },
+      plan: [],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-01T12:00:00.000Z",
+      heroId,
+    });
+
+    const output = projectReport.render(database, REPORT_CONFIG, {
+      from: "2026-08-31",
+      to: "2026-09-02",
+      project: "widgets",
+    });
+
+    expect(output).toContain("| feature/inside-window — Ship p |");
+    expect(output).not.toContain("| main — Ship p |");
+
+    database.close();
+  });
+
+  test("a Monday item row shows the attributed quest when its org/project session has one declared", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(
+      `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, path_meta, title, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+       VALUES ('session-monday', '~/.claude', 'dir', '/tmp/session-monday.jsonl', NULL, 'monday', 'beta-project', NULL, 'monday work', NULL, '2026-09-01T15:00:00.000Z', '2026-09-01T17:00:00.000Z', 1, 0, '[]', 'test-host', '2026-09-01T17:00:00.000Z')`,
+    );
+    const store = new EventStore(database);
+    const heroId = newUlid();
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "hero.created",
+        subject: heroId,
+        payload: { name: "Saulo" },
+      }),
+    );
+    declareQuest(store, database, {
+      sessionId: "session-monday",
+      newQuest: { title: "Ship beta", objective: "ship it", commitment: "personal" },
+      plan: [],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-01T15:30:00.000Z",
+      heroId,
+    });
+
+    const output = projectReport.render(database, REPORT_CONFIG, {
+      from: "2026-08-31",
+      to: "2026-09-02",
+    });
+
+    expect(output).toContain("| Ship report polish — Ship beta |");
 
     database.close();
   });

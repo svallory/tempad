@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
 import {
   type ActivityRow,
+  attributeNonClaudeEvidence,
   queryActivities,
   queryOpenQuestions,
   querySideQuests,
@@ -70,6 +71,9 @@ function render(database: Database, config: Config, options: ReportOptions): str
     };
     const dayActivities = queryActivities(intentDatabase, dayRangeOptions);
     const daySideQuests = querySideQuests(intentDatabase, dayRangeOptions);
+    const dayAttribution = new Map(
+      attributeNonClaudeEvidence(intentDatabase, dayRangeOptions).map((row) => [row.id, row]),
+    );
 
     const hasEvidence =
       dayCommits.length > 0 ||
@@ -105,7 +109,11 @@ function render(database: Database, config: Config, options: ReportOptions): str
       const keyCommits = dayCommits.filter((row) => matchesKey(row, key));
       for (const group of groupDuplicateCommits(keyCommits)) {
         const suffix = group.count > 1 ? ` (x${group.count})` : "";
-        lines.push(`- ${group.sha.slice(0, 7)} ${group.subject} (${group.repo})${suffix}`);
+        const quest = dayAttribution.get(group.sha)?.questTitle;
+        const attribution = quest ? ` — ${quest}` : "";
+        lines.push(
+          `- ${group.sha.slice(0, 7)} ${group.subject} (${group.repo})${suffix}${attribution}`,
+        );
       }
 
       const keySessions = daySessions.filter((row) => matchesKey(row, key));
@@ -131,7 +139,11 @@ function render(database: Database, config: Config, options: ReportOptions): str
           item.timelineStart && item.timelineEnd
             ? `${item.timelineStart} to ${item.timelineEnd}`
             : "no timeline";
-        lines.push(`- [${item.status ?? "no status"}] ${item.name}, timeline ${timeline}`);
+        const quest = dayAttribution.get(String(item.id))?.questTitle;
+        const attribution = quest ? ` — ${quest}` : "";
+        lines.push(
+          `- [${item.status ?? "no status"}] ${item.name}, timeline ${timeline}${attribution}`,
+        );
       }
       for (const pr of dayPullRequests.filter((row) => matchesKey(row, key))) {
         const action = prAction(pr, day, timeZone);

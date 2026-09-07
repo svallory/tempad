@@ -589,13 +589,21 @@ export function attributeNonClaudeEvidence(
   return rows;
 }
 
+export interface DoubtRow {
+  id: string;
+  org: string | null;
+  project: string | null;
+}
+
 /**
- * Doubts (`belongs: false` verifier segments recorded as `belongs`-kind
- * questions) tied to a trace/session in range, scoped by org/project/client
- * the same way `queryTraceIntervals` scopes traces.
+ * One row per doubt (`belongs`-kind question) tied to a trace/session in
+ * range, with the org/project it belongs to -- lets a caller like
+ * `weekly.ts` fetch once per day and filter per project key in-memory, the
+ * same way it already does for `queryActivities`/`queryQuests`/`querySideQuests`,
+ * instead of re-querying per (day x project) pair.
  */
-export function querySideQuestDoubts(database: Database, range: DateRange): number {
-  if (!hasIntentTables(database)) return 0;
+export function queryDoubtRows(database: Database, range: DateRange): DoubtRow[] {
+  if (!hasIntentTables(database)) return [];
   const { start, end } = toDayBounds(range);
   const conditions = [
     "qu.kind = 'belongs'",
@@ -605,26 +613,32 @@ export function querySideQuestDoubts(database: Database, range: DateRange): numb
   ];
   const params: (string | number)[] = [start, end];
 
-  if (range.org) {
-    conditions.push("LOWER(s.org) = ?");
-    params.push(range.org.toLowerCase());
-  }
-  if (range.project) {
-    conditions.push("LOWER(s.project) = ?");
-    params.push(range.project.toLowerCase());
-  }
-
   const client = clientCondition("s.path_meta", range.client);
   if (client.param) params.push(client.param);
 
-  const row = database
+  return database
     .query(
-      `SELECT COUNT(DISTINCT qu.id) as count
+      `SELECT DISTINCT qu.id as id, s.org as org, s.project as project
        FROM questions qu
        JOIN traces t ON t.id = qu.trace_id
        LEFT JOIN claude_sessions s ON s.id = t.session_id
        WHERE ${conditions.join(" AND ")}${client.sql}`,
     )
-    .get(...params) as { count: number };
-  return row.count;
+    .all(...params) as DoubtRow[];
+}
+
+/**
+ * Doubts (`belongs: false` verifier segments recorded as `belongs`-kind
+ * questions) tied to a trace/session in range, scoped by org/project/client
+ * the same way `queryTraceIntervals` scopes traces.
+ */
+export function querySideQuestDoubts(database: Database, range: DateRange): number {
+  const rows = queryDoubtRows(database, range);
+  const org = range.org?.toLowerCase();
+  const project = range.project?.toLowerCase();
+  return rows.filter(
+    (row) =>
+      (!org || row.org?.toLowerCase() === org) &&
+      (!project || row.project?.toLowerCase() === project),
+  ).length;
 }

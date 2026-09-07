@@ -3,6 +3,10 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDatabase } from "../src/db/database.ts";
+import { declareQuest } from "../src/intent/declarations.ts";
+import { newUlid } from "../src/intent/ids.ts";
+import { applyIncremental } from "../src/intent/projections/index.ts";
+import { EventStore } from "../src/intent/store.ts";
 import { dailyReport } from "../src/report/daily.ts";
 import { REPORT_CONFIG, seedReportFixtures } from "./fixtures/report-golden/seed.ts";
 
@@ -205,6 +209,47 @@ describe("dailyReport", () => {
 
     expect(output).toContain("Polish the report output (inferred): ");
     expect(output).not.toContain("Investigate flaky commit grouping [unconfirmed] (inferred)");
+
+    database.close();
+  });
+
+  test("a commit line shows the attributed quest when authored inside a declared session's window", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(
+      `INSERT INTO gh_commits (sha, repo, branches, author_name, author_email, authored_at, committed_at, subject, body, files_changed, insertions, deletions)
+       VALUES ('ccccccc9999999999999999999999999999999', 'acme/widgets', '["feature/inside-window"]', 'Octo Cat', 'octocat@example.com', '2026-09-01T12:30:00.000Z', '2026-09-01T12:30:00.000Z', 'feat(widgets): inside declared window', NULL, 1, 1, 1)`,
+    );
+
+    const store = new EventStore(database);
+    const heroId = newUlid();
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "hero.created",
+        subject: heroId,
+        payload: { name: "Saulo" },
+      }),
+    );
+    declareQuest(store, database, {
+      sessionId: "session-1",
+      newQuest: { title: "Ship p", objective: "ship it", commitment: "personal" },
+      plan: [],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-01T12:00:00.000Z",
+      heroId,
+    });
+
+    const output = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-01",
+      to: "2026-09-01",
+    });
+
+    expect(output).toContain("feat(widgets): inside declared window (acme/widgets) — Ship p");
+    expect(output).not.toContain("polish report output — Ship p");
 
     database.close();
   });
