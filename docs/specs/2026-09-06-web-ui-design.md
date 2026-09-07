@@ -1,5 +1,7 @@
 # Web UI design
 
+> Vocabulary renamed on 2026-09-07, see docs/specs/2026-09-07-ubiquitous-language.md.
+
 Status: not started. Date: 2026-09-06. Builds on `2026-09-05-intent-model-and-w5-hook-design.md` (event store, projections, api.ts) and `2026-09-06-activity-continuity-design.md` (activity lifecycle, classifier memory). Docs only; no feature code in this change.
 
 ## Purpose

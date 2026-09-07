@@ -1,5 +1,7 @@
 # TemPad core: collectors, schema, reports
 
+> Vocabulary renamed on 2026-09-07, see docs/specs/2026-09-07-ubiquitous-language.md.
+
 Status: draft for review. Date: 2026-09-04.
 
 ## Goal

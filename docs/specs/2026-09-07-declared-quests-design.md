@@ -1,5 +1,7 @@
 # Declared quests
 
+> Vocabulary renamed on 2026-09-07, see docs/specs/2026-09-07-ubiquitous-language.md.
+
 Status: not started. Date: 2026-09-07. Extends `docs/specs/2026-09-05-intent-model-and-w5-hook-design.md` (domain language, event catalog, w5 hook wiring) and `docs/specs/2026-09-06-activity-continuity-design.md` (activity lifecycle, classifier memory slice, `matchedActivity`/`continuesActivity`/`newActivityReason`, `w5 eval`) — read both first; this spec does not repeat their event catalogs, lifecycle rules, or memory-slice mechanics, only what changes.
 
 ## Principle

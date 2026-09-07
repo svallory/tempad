@@ -1,5 +1,7 @@
 # Activity continuity
 
+> Vocabulary renamed on 2026-09-07, see docs/specs/2026-09-07-ubiquitous-language.md.
+
 Status: not started. Date: 2026-09-06. Extends `docs/specs/2026-09-05-intent-model-and-w5-hook-design.md` ("Domain language", "Event catalog", "The w5 hook", "Backfill") — read that first; this spec does not repeat its event catalog or hook wiring, only what changes.
 
 ## Goal

@@ -276,7 +276,7 @@ function runSagaCommand(args: string[], context: IntentContext): number {
       .query("SELECT owner_kind, owner_id FROM sagas WHERE id = ?")
       .get(id) as { owner_kind: "hero" | "party"; owner_id: string } | null;
     if (!old) {
-      console.error(`unknown goal: ${id}`);
+      console.error(`unknown saga: `);
       return 1;
     }
     assertEditIntent(context.database, "saga", id, "replace");
@@ -936,7 +936,7 @@ function runTraceCommand(args: string[], context: IntentContext): number {
     }
     return 0;
   }
-  console.error("usage: tempad trace list [--since <iso>] [--activity <id>]");
+  console.error("usage: tempad trace list [--since <iso>] [--stint <id>]");
   return 2;
 }
 
