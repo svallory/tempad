@@ -866,6 +866,65 @@ describe("w5 eval", () => {
     copied.close();
   });
 
+  test("doubtsAnswered excludes an answered belongs/declare question sitting on a retracted trace", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-doubts-retracted-"));
+    const sourcePath = join(dir, "source.db");
+    const database = openDatabase(sourcePath);
+    ensureTables(database);
+    const store = new EventStore(database);
+    applyIncremental(
+      database,
+      store.append({
+        actor: "hero",
+        kind: "hero.created",
+        subject: "H1",
+        payload: { name: "Saulo" },
+      }),
+    );
+    database
+      .query(
+        `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, title, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+         VALUES ('s1', '/c', 'p', '/c/p/s1.jsonl', '/w/p', 'personal', 'p', 'p session', 'main', '2026-09-01T10:00:00.000Z', '2026-09-01T10:30:00.000Z', 1, 0, '[]', 'host', '2026-09-01T10:30:00.000Z')`,
+      )
+      .run();
+    database
+      .query(
+        `INSERT INTO claude_messages (uuid, session_id, ts, role, is_sidechain, text_preview)
+         VALUES ('m1', 's1', '2026-09-01T10:00:00.000Z', 'user', 0, 'do the thing')`,
+      )
+      .run();
+    // A pre-existing activity/trace/answered-belongs-question from an earlier
+    // eval/backfill run of this same range -- resetRange (via runEval below)
+    // retracts this trace as old-cohort, and doubtsAnswered must not count
+    // its question once the trace it's tied to is gone.
+    database.exec(
+      `INSERT INTO activities (id, quest_id, objective, opened_at, closed_at, outcome, revision)
+       VALUES ('activity-old', NULL, 'old work', '2026-09-01T10:00:00.000Z', '2026-09-01T10:10:00.000Z', NULL, 1)`,
+    );
+    database.exec(
+      `INSERT INTO traces (id, activity_id, tool, place, source, source_ref, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+       VALUES ('trace-old', 'activity-old', 'edit', '/w/p', 'session', 's1', '2026-09-01T10:00:00.000Z', '2026-09-01T10:10:00.000Z', 'H1', 'old edit', 'old reason', '/w/p', 'assistant edit', 0.9, 'model', 's1', '2026-09-01T10:10:00.000Z')`,
+    );
+    database.exec(
+      `INSERT INTO questions (id, trace_id, session_id, text, kind, state, asked_at, answered_at, answer, answered_by, turns_watched)
+       VALUES ('question-old', 'trace-old', 's1', 'does this belong?', 'belongs', 'answered', '2026-09-01T10:05:00.000Z', '2026-09-01T10:06:00.000Z', 'yes', 'hero', 1)`,
+    );
+    database.close();
+
+    const metrics = await runEval({
+      from: "2026-09-01",
+      to: "2026-09-02",
+      sourceDbPath: sourcePath,
+      scratchDir: dir,
+      now: "2026-09-02T00:00:00.000Z",
+      classifier: new FakeClassifier(),
+      log: () => {},
+    });
+
+    expect(metrics.resetTraces).toBeGreaterThan(0);
+    expect(metrics.doubtsAnswered).toBe(0);
+  });
+
   test("--declare leaves traces unattributed when the session never declares in that window", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tempad-eval-undeclared-"));
     const sourcePath = join(dir, "source.db");
@@ -1115,6 +1174,92 @@ describe("w5 eval", () => {
           session_id: "s1",
           at: "2026-09-01T09:00:00.000Z",
           quest_ref: "does-not-exist",
+        },
+      ]),
+    );
+
+    await expect(
+      runEval({
+        from: "2026-09-01",
+        to: "2026-09-02",
+        sourceDbPath: sourcePath,
+        scratchDir: dir,
+        now: "2026-09-02T00:00:00.000Z",
+        classifier: new FakeClassifier(),
+        log: () => {},
+        declareFile,
+      }),
+    ).rejects.toBeInstanceOf(InvalidDeclareFileError);
+  });
+
+  test("--declare rejects an entry with none of quest/quest_ref/new", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-refs-none-"));
+    const sourcePath = join(dir, "source.db");
+    seedSourceDb(sourcePath);
+    const declareFile = join(dir, "declare.json");
+    writeFileSync(
+      declareFile,
+      JSON.stringify([{ session_id: "s1", at: "2026-09-01T09:00:00.000Z" }]),
+    );
+
+    await expect(
+      runEval({
+        from: "2026-09-01",
+        to: "2026-09-02",
+        sourceDbPath: sourcePath,
+        scratchDir: dir,
+        now: "2026-09-02T00:00:00.000Z",
+        classifier: new FakeClassifier(),
+        log: () => {},
+        declareFile,
+      }),
+    ).rejects.toBeInstanceOf(InvalidDeclareFileError);
+  });
+
+  test("--declare rejects an entry with more than one of quest/quest_ref/new", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-refs-multiple-"));
+    const sourcePath = join(dir, "source.db");
+    seedSourceDb(sourcePath);
+    const declareFile = join(dir, "declare.json");
+    writeFileSync(
+      declareFile,
+      JSON.stringify([
+        {
+          session_id: "s1",
+          at: "2026-09-01T09:00:00.000Z",
+          quest: "some-quest-id",
+          new: { title: "Ship p", objective: "ship it", commitment: "personal" },
+        },
+      ]),
+    );
+
+    await expect(
+      runEval({
+        from: "2026-09-01",
+        to: "2026-09-02",
+        sourceDbPath: sourcePath,
+        scratchDir: dir,
+        now: "2026-09-02T00:00:00.000Z",
+        classifier: new FakeClassifier(),
+        log: () => {},
+        declareFile,
+      }),
+    ).rejects.toBeInstanceOf(InvalidDeclareFileError);
+  });
+
+  test("--declare rejects new_ref given without new", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-refs-orphan-newref-"));
+    const sourcePath = join(dir, "source.db");
+    seedSourceDb(sourcePath);
+    const declareFile = join(dir, "declare.json");
+    writeFileSync(
+      declareFile,
+      JSON.stringify([
+        {
+          session_id: "s1",
+          at: "2026-09-01T09:00:00.000Z",
+          quest: "some-quest-id",
+          new_ref: "orphan",
         },
       ]),
     );

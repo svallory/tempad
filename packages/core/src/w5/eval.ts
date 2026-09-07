@@ -167,12 +167,28 @@ async function applyDeclareFile(
   const questIdByRef = new Map<string, string>();
   let declarationsSkipped = 0;
 
-  for (const entry of entries) {
+  entries.forEach((entry, index) => {
+    const selectorCount = [entry.quest, entry.quest_ref, entry.new].filter(
+      (value) => value !== undefined,
+    ).length;
+    if (selectorCount !== 1) {
+      throw new InvalidDeclareFileError(
+        `--declare file entry ${index}: exactly one of quest, quest_ref, or new is required`,
+      );
+    }
+    if (entry.new_ref !== undefined && entry.new === undefined) {
+      throw new InvalidDeclareFileError(
+        `--declare file entry ${index}: new_ref is only allowed alongside new`,
+      );
+    }
+
     let questId = entry.quest;
     if (entry.quest_ref !== undefined) {
       const resolved = questIdByRef.get(entry.quest_ref);
       if (resolved === undefined) {
-        throw new InvalidDeclareFileError(`--declare file: unknown quest_ref "${entry.quest_ref}"`);
+        throw new InvalidDeclareFileError(
+          `--declare file entry ${index}: unknown quest_ref "${entry.quest_ref}"`,
+        );
       }
       questId = resolved;
     }
@@ -207,9 +223,14 @@ async function applyDeclareFile(
     });
 
     if (entry.new_ref !== undefined) {
+      if (!result.created) {
+        throw new InvalidDeclareFileError(
+          `--declare file entry ${index}: new_ref "${entry.new_ref}" was not bound because no quest was created`,
+        );
+      }
       questIdByRef.set(entry.new_ref, result.questId);
     }
-  }
+  });
 
   return { declarationsSkipped };
 }
@@ -455,7 +476,7 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
       `SELECT COUNT(*) as count FROM questions qu
        JOIN traces t ON t.id = qu.trace_id
        WHERE qu.kind IN ('belongs', 'declare') AND qu.state IN ('resolved_by_context', 'answered')
-         AND t.started_at >= ? AND t.started_at < ?`,
+         AND t.retracted_at IS NULL AND t.started_at >= ? AND t.started_at < ?`,
     )
     .get(range.from, range.to) as { count: number };
   const tracesUnattributedCount = database

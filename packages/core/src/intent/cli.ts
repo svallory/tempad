@@ -1016,8 +1016,8 @@ function runAnswerCommand(args: string[], context: IntentContext): number {
     return 2;
   }
   const question = context.database
-    .query("SELECT trace_id FROM questions WHERE id = ?")
-    .get(questionId) as { trace_id: string } | null;
+    .query("SELECT trace_id, kind FROM questions WHERE id = ?")
+    .get(questionId) as { trace_id: string; kind: string } | null;
   if (!question) {
     console.error(`unknown question: ${questionId}`);
     return 1;
@@ -1027,6 +1027,11 @@ function runAnswerCommand(args: string[], context: IntentContext): number {
     .get(question.trace_id) as { activity_id: string } | null;
   if (!trace) {
     console.error(`unknown trace: ${question.trace_id}`);
+    return 1;
+  }
+
+  if (values.belongs && question.kind !== "belongs") {
+    console.error(`--belongs is only valid for a belongs-kind question, not "${question.kind}"`);
     return 1;
   }
 
