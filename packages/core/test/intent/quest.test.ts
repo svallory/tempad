@@ -374,6 +374,157 @@ describe("quests", () => {
     expect(exitCode).toBe(2);
   });
 
+  test("quest declare --new --serves attaches the created quest to a saga", async () => {
+    const { run, database } = harness();
+    await run(["hero", "init", "S"]);
+    await run(["saga", "add", "--owner", "hero", "Ship the platform"]);
+    const saga = database.query("SELECT id FROM sagas").get() as { id: string };
+
+    const exitCode = await run([
+      "quest",
+      "declare",
+      "--session",
+      "s1",
+      "--new",
+      "Ship the thing",
+      "--outcome",
+      "get it out",
+      "--serves",
+      saga.id,
+    ]);
+    expect(exitCode).toBe(0);
+
+    const quest = database
+      .query("SELECT serves FROM quests WHERE title = ?")
+      .get("Ship the thing") as { serves: string | null };
+    expect(quest.serves).toBe(saga.id);
+  });
+
+  test("quest declare --new --advances records the contributed-to quest", async () => {
+    const { run, database } = harness();
+    await run(["hero", "init", "S"]);
+    await run(["quest", "add", "--owner", "hero", "Parent effort"]);
+    const parent = database.query("SELECT id FROM quests").get() as { id: string };
+
+    const exitCode = await run([
+      "quest",
+      "declare",
+      "--session",
+      "s1",
+      "--new",
+      "Contributing work",
+      "--outcome",
+      "help ship it",
+      "--advances",
+      parent.id,
+    ]);
+    expect(exitCode).toBe(0);
+
+    const row = database
+      .query("SELECT payload FROM events WHERE kind = 'quest.created' ORDER BY id DESC LIMIT 1")
+      .get() as { payload: string };
+    expect(JSON.parse(row.payload).advances).toBe(parent.id);
+  });
+
+  test("quest declare --new --deviates-from requires --trigger and --kind", async () => {
+    const { run, database } = harness();
+    await run(["hero", "init", "S"]);
+    await run(["quest", "add", "--owner", "hero", "Main effort"]);
+    const main = database.query("SELECT id FROM quests").get() as { id: string };
+
+    const exitCode = await run([
+      "quest",
+      "declare",
+      "--session",
+      "s1",
+      "--new",
+      "Side thing",
+      "--outcome",
+      "investigate",
+      "--deviates-from",
+      main.id,
+    ]);
+    expect(exitCode).toBe(2);
+  });
+
+  test("quest declare --new --deviates-from with --trigger/--kind appends the branch nexus event", async () => {
+    const { run, database } = harness();
+    await run(["hero", "init", "S"]);
+    await run(["quest", "add", "--owner", "hero", "Main effort"]);
+    const main = database.query("SELECT id FROM quests").get() as { id: string };
+
+    const exitCode = await run([
+      "quest",
+      "declare",
+      "--session",
+      "s1",
+      "--new",
+      "Side thing",
+      "--outcome",
+      "investigate",
+      "--deviates-from",
+      main.id,
+      "--trigger",
+      "noticed something odd",
+      "--kind",
+      "curiosity",
+    ]);
+    expect(exitCode).toBe(0);
+
+    const branched = database
+      .query("SELECT payload FROM events WHERE kind = 'quest.branched' ORDER BY id DESC LIMIT 1")
+      .get() as { payload: string };
+    const payload = JSON.parse(branched.payload);
+    expect(payload.trigger).toBe("noticed something odd");
+    expect(payload.kind).toBe("curiosity");
+  });
+
+  test("quest declare --new rejects --advances and --deviates-from together", async () => {
+    const { run, database } = harness();
+    await run(["hero", "init", "S"]);
+    await run(["quest", "add", "--owner", "hero", "Main effort"]);
+    const main = database.query("SELECT id FROM quests").get() as { id: string };
+
+    const exitCode = await run([
+      "quest",
+      "declare",
+      "--session",
+      "s1",
+      "--new",
+      "Side thing",
+      "--outcome",
+      "investigate",
+      "--advances",
+      main.id,
+      "--deviates-from",
+      main.id,
+      "--trigger",
+      "t",
+      "--kind",
+      "unknown",
+    ]);
+    expect(exitCode).toBe(2);
+  });
+
+  test("quest declare rejects --serves/--advances/--deviates-from without --new", async () => {
+    const { run, database } = harness();
+    await run(["hero", "init", "S"]);
+    await run(["quest", "add", "--owner", "hero", "Existing quest"]);
+    const existing = database.query("SELECT id FROM quests").get() as { id: string };
+
+    const exitCode = await run([
+      "quest",
+      "declare",
+      "--session",
+      "s1",
+      "--quest",
+      existing.id,
+      "--serves",
+      "some-saga-id",
+    ]);
+    expect(exitCode).toBe(2);
+  });
+
   test("quest declare --quest rejects an unknown quest id, exit 1", async () => {
     const { run, lines } = harness();
     await run(["hero", "init", "S"]);

@@ -421,6 +421,9 @@ export const QUEST_DECLARE_OPTIONS = {
   done: { type: "string" },
   by: { type: "string", default: "agent" },
   at: { type: "string" },
+  serves: { type: "string" },
+  advances: { type: "string" },
+  "deviates-from": { type: "string" },
 } as const;
 
 function runQuestCommand(args: string[], context: IntentContext): number {
@@ -790,7 +793,7 @@ function runQuestCommand(args: string[], context: IntentContext): number {
     });
 
     const usage =
-      'usage: tempad quest declare --session <id> [--parent <id>] (--quest <id> | --new "<title>" --outcome "<text>" [--commitment promised|personal|exploratory] [--project <slug>] [--origin <quest id> --trigger "<sentence>" --kind waiting|blocker|curiosity|unknown] | --done <quest>) [--plan "a; b; c"] [--by agent|hero] [--at <iso>]';
+      'usage: tempad quest declare --session <id> [--parent <id>] (--quest <id> | --new "<title>" --outcome "<text>" [--commitment promised|personal|exploratory] [--project <slug>] [--serves <saga id>] [--advances <quest id> | --deviates-from <quest id> --trigger "<sentence>" --kind waiting|blocker|curiosity|unknown] [--origin <quest id> --trigger "<sentence>" --kind waiting|blocker|curiosity|unknown] | --done <quest>) [--plan "a; b; c"] [--by agent|hero] [--at <iso>]';
 
     if (!values.session) {
       console.error(usage);
@@ -799,7 +802,15 @@ function runQuestCommand(args: string[], context: IntentContext): number {
     // `--done` retires a declaration; it names an existing quest and nothing
     // else, so every flag that describes what is being declared is excluded.
     if (values.done) {
-      if (values.quest || values.new || values.plan || values.origin) {
+      if (
+        values.quest ||
+        values.new ||
+        values.plan ||
+        values.origin ||
+        values.serves ||
+        values.advances ||
+        values["deviates-from"]
+      ) {
         console.error(usage);
         return 2;
       }
@@ -857,6 +868,31 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       console.error(usage);
       return 2;
     }
+    // `--serves`/`--advances`/`--deviates-from` only describe a quest being
+    // created: naming them alongside `--quest` would attach a relation to a
+    // quest that already has whatever relations it has.
+    if ((values.serves || values.advances || values["deviates-from"]) && !values.new) {
+      console.error(usage);
+      return 2;
+    }
+    // A quest either contributes to another (`--advances`) or pivots away
+    // from one (`--deviates-from`) -- never both, per the ubiquitous-language
+    // spec's relation table ("Never both").
+    if (values.advances && values["deviates-from"]) {
+      console.error(usage);
+      return 2;
+    }
+    if (values["deviates-from"] && (!values.trigger || !values.kind)) {
+      console.error(usage);
+      return 2;
+    }
+    // `--origin` and `--deviates-from` name the same relation under two
+    // flags (the latter is the vocabulary-aligned spelling); naming both
+    // would leave it ambiguous which one wins.
+    if (values.origin && values["deviates-from"]) {
+      console.error(usage);
+      return 2;
+    }
     const heroRow = context.database.query("SELECT id FROM heroes LIMIT 1").get() as {
       id: string;
     } | null;
@@ -899,9 +935,11 @@ function runQuestCommand(args: string[], context: IntentContext): number {
             outcome: values.outcome as string,
             commitment: (values.commitment as Commitment) ?? "personal",
             project: values.project,
-            origin: values.origin,
+            origin: values.origin ?? values["deviates-from"],
             trigger: values.trigger,
             kind: values.kind as BranchKind | undefined,
+            serves: values.serves,
+            advances: values.advances,
           }
         : undefined,
       plan,

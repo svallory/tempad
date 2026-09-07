@@ -14,6 +14,10 @@ export interface NewQuestInput {
   origin?: string;
   trigger?: string;
   kind?: BranchKind;
+  /** `--serves <saga id>`: the saga this quest serves, per the ubiquitous-language spec's relation-verb table. */
+  serves?: string;
+  /** `--advances <quest id>`: the quest this one contributes to. Payload-only; no column yet (see the rename spec). */
+  advances?: string;
 }
 
 export interface DeclareQuestInput {
@@ -67,6 +71,8 @@ export function declareQuest(
           title: input.newQuest.title,
           outcome: input.newQuest.outcome,
           commitment: input.newQuest.commitment,
+          serves: input.newQuest.serves,
+          advances: input.newQuest.advances,
           confirmed: true,
           origin_kind: "declared",
         },
@@ -118,6 +124,8 @@ export function declareQuest(
                 origin: input.newQuest.origin,
                 trigger: input.newQuest.trigger,
                 kind: input.newQuest.kind,
+                serves: input.newQuest.serves,
+                advances: input.newQuest.advances,
               },
         plan: input.plan,
         scope: input.scope,
