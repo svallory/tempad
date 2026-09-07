@@ -3,9 +3,9 @@ import type { Config } from "../config/env.ts";
 import {
   attributeNonClaudeEvidence,
   type NonClaudeEvidenceRow,
-  queryStints,
   queryQuests,
   querySideQuests,
+  queryStints,
   resolveIntentDatabase,
 } from "./intent-queries.ts";
 import { elapsedLabel, heading, localDateTime, table } from "./markdown.ts";
@@ -184,13 +184,13 @@ function render(database: Database, config: Config, options: ReportOptions): str
             "",
             table(
               [
-                "task",
+                "quest",
                 "first evidence",
                 "last evidence",
                 "elapsed (upper bound)",
                 "commits",
                 "sessions",
-                "activities",
+                "stints",
                 "side-quest minutes",
               ],
               rows,

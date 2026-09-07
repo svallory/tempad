@@ -94,7 +94,7 @@ interface DeclareFileEntry {
   quest_ref?: string;
   new?: {
     title: string;
-    aim: string;
+    outcome: string;
     commitment: "promised" | "personal" | "exploratory";
     project?: string;
   };
@@ -212,7 +212,7 @@ async function applyDeclareFile(
       newQuest: entry.new
         ? {
             title: entry.new.title,
-            aim: entry.new.aim,
+            outcome: entry.new.outcome,
             commitment: entry.new.commitment,
             project: entry.new.project,
           }
@@ -280,8 +280,8 @@ const RESET_REASON = "eval reset";
 /**
  * Retracts, on the copy only, every old-cohort row the eval range would
  * otherwise mix into the rerun's metrics: live traces started in
- * `[from, to]`, then activities left with no live trace, then unconfirmed
- * quests left with no live activity -- mirroring `dedupe.ts`'s cascade but
+ * `[from, to]`, then stints left with no live trace, then unconfirmed
+ * quests left with no live stint -- mirroring `dedupe.ts`'s cascade but
  * selecting by date range instead of duplicate grouping. Also clears
  * `w5_runs.session_note` and deletes `w5_windows` rows for every touched
  * session, since the rerun's `force` flag bypasses `w5_windows` coverage
@@ -292,16 +292,16 @@ function resetRange(database: Database, from: string, to: string): EvalResetResu
 
   const traceRows = database
     .query(
-      `SELECT id, activity_id, session_id FROM traces
+      `SELECT id, stint_id, session_id FROM traces
        WHERE retracted_at IS NULL AND started_at >= ? AND started_at < ?`,
     )
-    .all(from, to) as { id: string; activity_id: string; session_id: string | null }[];
+    .all(from, to) as { id: string; stint_id: string; session_id: string | null }[];
 
   const sessionIds = new Set(
     traceRows.map((row) => row.session_id).filter((id): id is string => id !== null),
   );
 
-  const affectedStintIds = new Set(traceRows.map((row) => row.activity_id));
+  const affectedStintIds = new Set(traceRows.map((row) => row.stint_id));
   const retractedTraceIds = new Set(traceRows.map((row) => row.id));
 
   const result = { traces: 0, stints: 0, quests: 0 };
@@ -323,7 +323,7 @@ function resetRange(database: Database, from: string, to: string): EvalResetResu
     const stintsToRetract: string[] = [];
     for (const stintId of affectedStintIds) {
       const liveTraces = database
-        .query("SELECT id FROM traces WHERE activity_id = ? AND retracted_at IS NULL")
+        .query("SELECT id FROM traces WHERE stint_id = ? AND retracted_at IS NULL")
         .all(stintId) as { id: string }[];
       const hasLiveTrace = liveTraces.some((trace) => !retractedTraceIds.has(trace.id));
       if (!hasLiveTrace) stintsToRetract.push(stintId);
@@ -346,7 +346,7 @@ function resetRange(database: Database, from: string, to: string): EvalResetResu
         .map(
           (stintId) =>
             (
-              database.query("SELECT quest_id FROM activities WHERE id = ?").get(stintId) as {
+              database.query("SELECT quest_id FROM stints WHERE id = ?").get(stintId) as {
                 quest_id: string | null;
               } | null
             )?.quest_id ?? null,
@@ -361,11 +361,9 @@ function resetRange(database: Database, from: string, to: string): EvalResetResu
         .get(questId) as { confirmed: number } | null;
       if (!quest || quest.confirmed === 1) continue;
       const liveStints = database
-        .query("SELECT id FROM activities WHERE quest_id = ? AND retracted_at IS NULL")
+        .query("SELECT id FROM stints WHERE quest_id = ? AND retracted_at IS NULL")
         .all(questId) as { id: string }[];
-      const hasLiveStint = liveStints.some(
-        (stint) => !retractedStintIds.has(stint.id),
-      );
+      const hasLiveStint = liveStints.some((stint) => !retractedStintIds.has(stint.id));
       if (!hasLiveStint) questsToRetract.push(questId);
     }
     for (const questId of questsToRetract) {
@@ -442,7 +440,7 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
 
   const resetResult = resetRange(database, range.from, range.to);
   options.log(
-    `eval: reset traces=${resetResult.traces} activities=${resetResult.stints} quests=${resetResult.quests}`,
+    `eval: reset traces=${resetResult.traces} stints=${resetResult.stints} quests=${resetResult.quests}`,
   );
 
   const backfillResult = await backfill(
@@ -467,12 +465,12 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
     .get(range.from, range.to) as { count: number };
   const stintCount = database
     .query(
-      "SELECT COUNT(*) as count FROM activities WHERE retracted_at IS NULL AND opened_at >= ? AND opened_at < ?",
+      "SELECT COUNT(*) as count FROM stints WHERE retracted_at IS NULL AND opened_at >= ? AND opened_at < ?",
     )
     .get(range.from, range.to) as { count: number };
   const continuesCount = database
     .query(
-      "SELECT COUNT(*) as count FROM activities WHERE continues IS NOT NULL AND retracted_at IS NULL AND opened_at >= ? AND opened_at < ?",
+      "SELECT COUNT(*) as count FROM stints WHERE continues IS NOT NULL AND retracted_at IS NULL AND opened_at >= ? AND opened_at < ?",
     )
     .get(range.from, range.to) as { count: number };
   const doubtsAnsweredCount = database
@@ -486,7 +484,7 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
   const tracesUnattributedCount = database
     .query(
       `SELECT COUNT(*) as count FROM traces t
-       JOIN activities a ON a.id = t.activity_id
+       JOIN stints a ON a.id = t.stint_id
        WHERE t.retracted_at IS NULL AND a.quest_id IS NULL
          AND t.started_at >= ? AND t.started_at < ?`,
     )
@@ -494,7 +492,7 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
 
   const durationRows = database
     .query(
-      "SELECT opened_at as openedAt, closed_at as closedAt FROM activities WHERE closed_at IS NOT NULL AND retracted_at IS NULL AND opened_at >= ? AND opened_at < ?",
+      "SELECT opened_at as openedAt, closed_at as closedAt FROM stints WHERE closed_at IS NOT NULL AND retracted_at IS NULL AND opened_at >= ? AND opened_at < ?",
     )
     .all(range.from, range.to) as { openedAt: string; closedAt: string }[];
   const durationsMinutes = durationRows.map(
@@ -503,27 +501,27 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
 
   const sampleRows = database
     .query(
-      `SELECT activities.objective as objective,
+      `SELECT stints.outcome as outcome,
               quests.title as questTitle,
-              activities.opened_at as openedAt, activities.closed_at as closedAt,
+              stints.opened_at as openedAt, stints.closed_at as closedAt,
               (SELECT traces.what FROM traces
-                 WHERE traces.activity_id = activities.id AND traces.retracted_at IS NULL
+                 WHERE traces.stint_id = stints.id AND traces.retracted_at IS NULL
                  ORDER BY traces.started_at ASC LIMIT 1) as what,
               (SELECT traces.why FROM traces
-                 WHERE traces.activity_id = activities.id AND traces.retracted_at IS NULL
+                 WHERE traces.stint_id = stints.id AND traces.retracted_at IS NULL
                  ORDER BY traces.started_at ASC LIMIT 1) as why,
               (SELECT claude_sessions.title FROM traces
                  JOIN claude_sessions ON claude_sessions.id = traces.session_id
-                 WHERE traces.activity_id = activities.id AND traces.retracted_at IS NULL
+                 WHERE traces.stint_id = stints.id AND traces.retracted_at IS NULL
                  ORDER BY traces.started_at ASC LIMIT 1) as sessionTitle
-         FROM activities
-         LEFT JOIN quests ON quests.id = activities.quest_id
-        WHERE activities.retracted_at IS NULL
-          AND activities.opened_at >= ? AND activities.opened_at < ?
+         FROM stints
+         LEFT JOIN quests ON quests.id = stints.quest_id
+        WHERE stints.retracted_at IS NULL
+          AND stints.opened_at >= ? AND stints.opened_at < ?
         ORDER BY RANDOM() LIMIT 20`,
     )
     .all(range.from, range.to) as {
-    aim: string;
+    outcome: string;
     questTitle: string | null;
     openedAt: string;
     closedAt: string | null;
@@ -533,7 +531,7 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
   }[];
 
   const sample: EvalSampleStint[] = sampleRows.map((row) => ({
-    what: row.what ?? row.aim,
+    what: row.what ?? row.outcome,
     why: row.why ?? "",
     questTitle: row.questTitle,
     durationMinutes: row.closedAt

@@ -31,7 +31,7 @@ function seedSession(database: ReturnType<typeof openDatabase>) {
   insertMessage.run("m3", "2026-09-04T15:20:00.000Z", "user", "wait, what does Astryx do?");
 }
 
-/** An earlier session in the same project, whose activity was closed by session end. */
+/** An earlier session in the same project, whose stint was closed by session end. */
 function seedEarlierSession(database: ReturnType<typeof openDatabase>) {
   database
     .query(
@@ -44,13 +44,13 @@ function seedEarlierSession(database: ReturnType<typeof openDatabase>) {
     .run();
   database
     .query(
-      `INSERT INTO activities (id, quest_id, objective, opened_at, closed_at, close_reason, revision)
+      `INSERT INTO stints (id, quest_id, outcome, opened_at, closed_at, close_reason, revision)
        VALUES ('A0', 'Q1', 'fixing walk order', '2026-09-04T10:00:00.000Z', '2026-09-04T11:00:00.000Z', 'session_end', 1)`,
     )
     .run();
   database
     .query(
-      `INSERT INTO traces (id, activity_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+      `INSERT INTO traces (id, stint_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
        VALUES ('T00', 'A0', 'claude-code', 'personal/marko-ui', 'session', '2026-09-04T10:00:00.000Z', '2026-09-04T11:00:00.000Z', 'hero', 'fixing walk order', 'ship it', 'personal/marko-ui', 'claude-code', 0.9, 'assistant', 's0', '2026-09-04T11:00:00.000Z')`,
     )
     .run();
@@ -59,17 +59,17 @@ function seedEarlierSession(database: ReturnType<typeof openDatabase>) {
 function seedOpenStint(database: ReturnType<typeof openDatabase>) {
   database
     .query(
-      "INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at) VALUES ('Q1', 'hero', 'H1', 'Ship marko-ui', '86 components', 1, 1, 'started', '2026-09-01T00:00:00.000Z')",
+      "INSERT INTO quests (id, owner_kind, owner_id, title, outcome, confirmed, revision, state, created_at) VALUES ('Q1', 'hero', 'H1', 'Ship marko-ui', '86 components', 1, 1, 'started', '2026-09-01T00:00:00.000Z')",
     )
     .run();
   database
     .query(
-      "INSERT INTO activities (id, quest_id, objective, opened_at, revision) VALUES ('A1', 'Q1', 'fixing walk order', '2026-09-04T14:00:00.000Z', 1)",
+      "INSERT INTO stints (id, quest_id, outcome, opened_at, revision) VALUES ('A1', 'Q1', 'fixing walk order', '2026-09-04T14:00:00.000Z', 1)",
     )
     .run();
   database
     .query(
-      `INSERT INTO traces (id, activity_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+      `INSERT INTO traces (id, stint_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
        VALUES ('T1', 'A1', 'claude-code', 'personal/marko-ui', 'session', '2026-09-04T14:00:00.000Z', '2026-09-04T14:30:00.000Z', 'hero', 'fixing walk order', 'ship', 'personal/marko-ui', 'claude-code', 0.9, 'assistant', 's1', '2026-09-04T14:30:00.000Z')`,
     )
     .run();
@@ -114,7 +114,7 @@ describe("window builder", () => {
       {
         id: "Q1",
         title: "Ship marko-ui",
-        aim: "86 components",
+        outcome: "86 components",
         lastStintAt: "2026-09-04T14:00:00.000Z",
       },
     ]);
@@ -131,7 +131,7 @@ describe("window builder", () => {
     ]);
   });
 
-  test("sessionOpenActivities carries this session's still-open activity with its last trace end", () => {
+  test("sessionOpenActivities carries this session's still-open stint with its last trace end", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
@@ -143,7 +143,7 @@ describe("window builder", () => {
       ...memoryInput,
     });
 
-    // The row carries the alias; the real id lives only in activityAliases.
+    // The row carries the alias; the real id lives only in stintAliases.
     expect(window.stintAliases).toEqual({ A1: "A1" });
     expect(window.sessionOpenStints).toEqual([
       {
@@ -158,7 +158,7 @@ describe("window builder", () => {
     ]);
   });
 
-  test("recentActivities carries a closed activity from an earlier session in the same project", () => {
+  test("recentActivities carries a closed stint from an earlier session in the same project", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
@@ -187,7 +187,7 @@ describe("window builder", () => {
     ]);
   });
 
-  test("recentActivities drops activities older than memoryHours and obeys memoryActivities", () => {
+  test("recentActivities drops stints older than memoryHours and obeys memoryActivities", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
@@ -218,7 +218,7 @@ describe("window builder", () => {
     seedOpenStint(database);
     database
       .query(
-        `INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at, origin_activity_id, branched_at, trigger)
+        `INSERT INTO quests (id, owner_kind, owner_id, title, outcome, confirmed, revision, state, created_at, deviates_from_stint_id, branched_at, trigger)
          VALUES ('Q2', 'hero', 'H1', 'Compare Astryx', 'see what they claim', 0, 1, 'started', '2026-09-04T12:00:00.000Z', 'A1', '2026-09-04T12:00:00.000Z', 'what does Astryx do for agents?')`,
       )
       .run();
@@ -282,9 +282,9 @@ describe("window builder", () => {
 
 describe("candidate time bounds", () => {
   /**
-   * An activity from a *later* session in the same project. Backfill walks
+   * A stint from a *later* session in the same project. Backfill walks
    * history, so when the window under classification is an earlier one this
-   * activity has not happened yet from that window's point of view.
+   * stint has not happened yet from that window's point of view.
    */
   function seedFutureStint(database: ReturnType<typeof openDatabase>) {
     database
@@ -298,19 +298,19 @@ describe("candidate time bounds", () => {
       .run();
     database
       .query(
-        `INSERT INTO activities (id, quest_id, objective, opened_at, closed_at, close_reason, revision)
+        `INSERT INTO stints (id, quest_id, outcome, opened_at, closed_at, close_reason, revision)
          VALUES ('A9', 'Q1', 'work from two days later', '2026-09-06T10:00:00.000Z', '2026-09-06T11:00:00.000Z', 'session_end', 1)`,
       )
       .run();
     database
       .query(
-        `INSERT INTO traces (id, activity_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+        `INSERT INTO traces (id, stint_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
          VALUES ('T9', 'A9', 'claude-code', 'personal/marko-ui', 'session', '2026-09-06T10:00:00.000Z', '2026-09-06T11:00:00.000Z', 'hero', 'later work', 'ship', 'personal/marko-ui', 'claude-code', 0.9, 'assistant', 's2', '2026-09-06T11:00:00.000Z')`,
       )
       .run();
   }
 
-  test("an activity opened after the window is not offered as a candidate", () => {
+  test("a stint opened after the window is not offered as a candidate", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
@@ -327,16 +327,14 @@ describe("candidate time bounds", () => {
     });
 
     // Rows carry aliases now, so the real ids are read back through the map.
-    const offered = window.recentStints.map(
-      (stint) => window.stintAliases[stint.stintId],
-    );
+    const offered = window.recentStints.map((stint) => window.stintAliases[stint.stintId]);
     expect(offered).not.toContain("A9");
-    // The genuinely earlier activity is still offered, so the bound is not just
+    // The genuinely earlier stint is still offered, so the bound is not just
     // emptying the slice.
     expect(offered).toContain("A0");
   });
 
-  test("without a windowEnd bound the future activity would be offered", () => {
+  test("without a windowEnd bound the future stint would be offered", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
@@ -344,7 +342,7 @@ describe("candidate time bounds", () => {
     seedFutureStint(database);
 
     // `windowEnd` defaults to now, which is after the seeded 2026 timestamps only
-    // if the clock says so; pass an explicit bound past the future activity to
+    // if the clock says so; pass an explicit bound past the future stint to
     // show the filter is what excludes it above, not some other clause.
     const window = buildWindow(database, {
       sessionId: "s1",
@@ -354,12 +352,10 @@ describe("candidate time bounds", () => {
       windowEnd: "2026-09-07T00:00:00.000Z",
     });
 
-    expect(
-      window.recentStints.map((stint) => window.stintAliases[stint.stintId]),
-    ).toContain("A9");
+    expect(window.recentStints.map((stint) => window.stintAliases[stint.stintId])).toContain("A9");
   });
 
-  test("an open activity of this session opened after the window is not offered", () => {
+  test("an open stint of this session opened after the window is not offered", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
@@ -376,7 +372,7 @@ describe("candidate time bounds", () => {
     expect(window.sessionOpenStints).toEqual([]);
   });
 
-  test("a closed activity older than memory_hours is still excluded", () => {
+  test("a closed stint older than memory_hours is still excluded", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
@@ -392,9 +388,9 @@ describe("candidate time bounds", () => {
       windowEnd: "2026-09-04T15:20:00.000Z",
     });
 
-    expect(
-      window.recentStints.map((stint) => window.stintAliases[stint.stintId]),
-    ).not.toContain("A0");
+    expect(window.recentStints.map((stint) => window.stintAliases[stint.stintId])).not.toContain(
+      "A0",
+    );
   });
 });
 
@@ -408,7 +404,7 @@ describe("declared quests in the window", () => {
       .run();
     database
       .query(
-        `INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at)
+        `INSERT INTO quests (id, owner_kind, owner_id, title, outcome, confirmed, revision, state, created_at)
          VALUES ('Q1', 'hero', 'H1', 'Ship marko-ui', '86 components', 1, 1, 'started', '2026-09-01T00:00:00.000Z')`,
       )
       .run();
@@ -440,7 +436,7 @@ describe("declared quests in the window", () => {
 
     expect(window.declaredQuest).toEqual({
       title: "Ship marko-ui",
-      aim: "86 components",
+      outcome: "86 components",
       plan: ["walk order", "docs"],
     });
     expect(window.parentDeclaredQuest).toBeNull();
@@ -479,7 +475,7 @@ describe("declared quests in the window", () => {
     const store = seedHeroAndQuest(database);
     database
       .query(
-        `INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at)
+        `INSERT INTO quests (id, owner_kind, owner_id, title, outcome, confirmed, revision, state, created_at)
          VALUES ('Q2', 'hero', 'H1', 'Verify the walk order fix', 'prove it holds', 1, 1, 'started', '2026-09-01T00:00:00.000Z')`,
       )
       .run();
@@ -537,7 +533,7 @@ describe("declared quests in the window", () => {
       ...memoryInput,
     });
 
-    // Session activities first, then recent: A1 is the open one, A2 the closed one.
+    // Session stints first, then recent: A1 is the open one, A2 the closed one.
     expect(window.sessionOpenStints.map((stint) => stint.stintId)).toEqual(["A1"]);
     expect(window.recentStints.map((stint) => stint.stintId)).toEqual(["A2"]);
     expect(window.stintAliases).toEqual({ A1: "A1", A2: "A0" });

@@ -16,7 +16,7 @@ const ORPHANED_REASON = "orphaned by dedupe";
 
 interface DuplicateTraceRow {
   id: string;
-  activity_id: string;
+  stint_id: string;
 }
 
 /**
@@ -40,7 +40,7 @@ function findDuplicateTraces(database: Database): DuplicateTraceRow[][] {
   return groups.map((group) => {
     const traces = database
       .query(
-        `SELECT t.id as id, t.activity_id as activity_id
+        `SELECT t.id as id, t.stint_id as stint_id
          FROM traces t
          JOIN events e ON e.kind = 'trace.recorded' AND e.subject = t.id
          WHERE t.retracted_at IS NULL
@@ -70,15 +70,15 @@ export function dedupe(database: Database, options: { dryRun: boolean }): Dedupe
 
   const tracesToRetract = groups.flatMap((group) => group.slice(1));
 
-  const affectedStintIds = new Set(tracesToRetract.map((trace) => trace.activity_id));
+  const affectedStintIds = new Set(tracesToRetract.map((trace) => trace.stint_id));
 
   const stintsToRetract: string[] = [];
   for (const stintId of affectedStintIds) {
     const retractedTraceIds = new Set(
-      tracesToRetract.filter((trace) => trace.activity_id === stintId).map((trace) => trace.id),
+      tracesToRetract.filter((trace) => trace.stint_id === stintId).map((trace) => trace.id),
     );
     const liveTraces = database
-      .query("SELECT id FROM traces WHERE activity_id = ? AND retracted_at IS NULL")
+      .query("SELECT id FROM traces WHERE stint_id = ? AND retracted_at IS NULL")
       .all(stintId) as { id: string }[];
     const hasLiveTrace = liveTraces.some((trace) => !retractedTraceIds.has(trace.id));
     if (!hasLiveTrace) stintsToRetract.push(stintId);
@@ -89,7 +89,7 @@ export function dedupe(database: Database, options: { dryRun: boolean }): Dedupe
       .map(
         (stintId) =>
           (
-            database.query("SELECT quest_id FROM activities WHERE id = ?").get(stintId) as {
+            database.query("SELECT quest_id FROM stints WHERE id = ?").get(stintId) as {
               quest_id: string | null;
             } | null
           )?.quest_id ?? null,
@@ -106,11 +106,9 @@ export function dedupe(database: Database, options: { dryRun: boolean }): Dedupe
 
     const retractedStintIds = new Set(stintsToRetract);
     const liveStints = database
-      .query("SELECT id FROM activities WHERE quest_id = ? AND retracted_at IS NULL")
+      .query("SELECT id FROM stints WHERE quest_id = ? AND retracted_at IS NULL")
       .all(questId) as { id: string }[];
-    const hasLiveStint = liveStints.some(
-      (stint) => !retractedStintIds.has(stint.id),
-    );
+    const hasLiveStint = liveStints.some((stint) => !retractedStintIds.has(stint.id));
     if (!hasLiveStint) questsToRetract.push(questId);
   }
 

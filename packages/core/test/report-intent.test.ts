@@ -9,11 +9,11 @@ import { applyIncremental } from "../src/intent/projections/index.ts";
 import { EventStore } from "../src/intent/store.ts";
 import {
   attributeNonClaudeEvidence,
-  queryStints,
   queryOpenQuestions,
   queryQuests,
   querySideQuestDoubts,
   querySideQuests,
+  queryStints,
 } from "../src/report/intent-queries.ts";
 import { REPORT_CONFIG, seedReportFixtures } from "./fixtures/report-golden/seed.ts";
 
@@ -34,12 +34,12 @@ const RANGE = {
 };
 
 describe("queryActivities", () => {
-  test("returns the main activity with quest title, confirmation, resolved project and clipped minutes", () => {
+  test("returns the main stint with quest title, confirmation, resolved project and clipped minutes", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     seedReportFixtures(database);
 
     const stints = queryStints(database, RANGE);
-    const main = stints.find((stint) => stint.id === "activity-1");
+    const main = stints.find((stint) => stint.id === "stint-1");
 
     expect(main).toBeDefined();
     expect(main?.questTitle).toBe("Polish the report output");
@@ -52,12 +52,12 @@ describe("queryActivities", () => {
     database.close();
   });
 
-  test("returns the side quest's activity as unconfirmed", () => {
+  test("returns the side quest's stint as unconfirmed", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     seedReportFixtures(database);
 
     const stints = queryStints(database, RANGE);
-    const side = stints.find((stint) => stint.id === "activity-2");
+    const side = stints.find((stint) => stint.id === "stint-2");
 
     expect(side?.questConfirmed).toBe(false);
     expect(side?.minutes).toBe(20);
@@ -65,7 +65,7 @@ describe("queryActivities", () => {
     database.close();
   });
 
-  test("excludes activities outside the range", () => {
+  test("excludes stints outside the range", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     seedReportFixtures(database);
 
@@ -81,7 +81,7 @@ describe("queryActivities", () => {
 });
 
 describe("querySideQuests", () => {
-  test("returns the branched quest with its trigger and origin objective", () => {
+  test("returns the branched quest with its trigger and origin outcome", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     seedReportFixtures(database);
 
@@ -91,7 +91,7 @@ describe("querySideQuests", () => {
 
     expect(sideQuest?.title).toBe("Investigate flaky commit grouping");
     expect(sideQuest?.trigger).toBe("noticed duplicate rebased commits during polish work");
-    expect(sideQuest?.fromStintAim).toBe("polish daily/hourly report output");
+    expect(sideQuest?.fromStintOutcome).toBe("polish daily/hourly report output");
     expect(sideQuest?.returnedAt).toBeNull();
     expect(sideQuest?.minutes).toBe(20);
 
@@ -122,7 +122,7 @@ describe("queryOpenQuestions", () => {
 });
 
 describe("queryQuests", () => {
-  test("an activity whose only trace matches the SQL range but clips to zero width is dropped, not a crash", () => {
+  test("a stint whose only trace matches the SQL range but clips to zero width is dropped, not a crash", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     seedReportFixtures(database);
 
@@ -131,22 +131,22 @@ describe("queryQuests", () => {
     // that string, so queryTraceIntervals' SQL WHERE (`t.ended_at > start`)
     // includes it -- but as an actual instant it equals `start`, so the
     // numeric clip in clippedEvidenceByActivity skips it entirely, leaving
-    // the activity with zero evidence.
+    // the stint with zero evidence.
     database.exec(
-      `INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at)
+      `INSERT INTO quests (id, owner_kind, owner_id, title, outcome, confirmed, revision, state, created_at)
        VALUES ('quest-4', 'hero', 'hero-1', 'Edge quest', 'zero-width edge case', 1, 1, 'started', '2026-09-01T02:00:00.000Z')`,
     );
     database.exec(
-      `INSERT INTO activities (id, quest_id, objective, opened_at, closed_at, outcome, revision)
-       VALUES ('activity-4', 'quest-4', 'edge activity', '2026-09-01T02:00:00.000Z', '2026-09-01T03:00:00.000Z', NULL, 1)`,
+      `INSERT INTO stints (id, quest_id, outcome, opened_at, closed_at, revision)
+       VALUES ('stint-4', 'quest-4', 'edge stint', '2026-09-01T02:00:00.000Z', '2026-09-01T03:00:00.000Z', 1)`,
     );
     database.exec(
-      `INSERT INTO traces (id, activity_id, tool, place, source, source_ref, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
-       VALUES ('trace-5', 'activity-4', 'edit', '/Users/octocat/work/acme/widgets', 'session', 'session-1', '2026-09-01T02:00:00.000Z', '2026-09-01T03:00:00Z', 'hero-1', 'edge edit', 'edge case', '/Users/octocat/work/acme/widgets', 'assistant edit', 0.9, 'model', 'session-1', '2026-09-01T03:00:00.000Z')`,
+      `INSERT INTO traces (id, stint_id, tool, place, source, source_ref, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+       VALUES ('trace-5', 'stint-4', 'edit', '/Users/octocat/work/acme/widgets', 'session', 'session-1', '2026-09-01T02:00:00.000Z', '2026-09-01T03:00:00Z', 'hero-1', 'edge edit', 'edge case', '/Users/octocat/work/acme/widgets', 'assistant edit', 0.9, 'model', 'session-1', '2026-09-01T03:00:00.000Z')`,
     );
     database.exec(
-      `INSERT INTO trace_links (trace_id, activity_id, linked_at, superseded_at, reason)
-       VALUES ('trace-5', 'activity-4', '2026-09-01T03:00:00.000Z', NULL, NULL)`,
+      `INSERT INTO trace_links (trace_id, stint_id, linked_at, superseded_at, reason)
+       VALUES ('trace-5', 'stint-4', '2026-09-01T03:00:00.000Z', NULL, NULL)`,
     );
 
     expect(() => queryQuests(database, RANGE)).not.toThrow();
@@ -156,27 +156,27 @@ describe("queryQuests", () => {
     database.close();
   });
 
-  test("first/last evidence come from trace intervals, not activity opened_at/closed_at", () => {
+  test("first/last evidence come from trace intervals, not stint opened_at/closed_at", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     seedReportFixtures(database);
 
-    // activity-3 opens well before and closes well after its only trace --
-    // evidence must reflect the trace, not the activity's own timestamps.
+    // stint-3 opens well before and closes well after its only trace --
+    // evidence must reflect the trace, not the stint's own timestamps.
     database.exec(
-      `INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at)
-       VALUES ('quest-3', 'hero', 'hero-1', 'Third quest', 'wide activity window', 1, 1, 'started', '2026-09-01T08:00:00.000Z')`,
+      `INSERT INTO quests (id, owner_kind, owner_id, title, outcome, confirmed, revision, state, created_at)
+       VALUES ('quest-3', 'hero', 'hero-1', 'Third quest', 'wide stint window', 1, 1, 'started', '2026-09-01T08:00:00.000Z')`,
     );
     database.exec(
-      `INSERT INTO activities (id, quest_id, objective, opened_at, closed_at, outcome, revision)
-       VALUES ('activity-3', 'quest-3', 'wide window activity', '2026-09-01T08:00:00.000Z', '2026-09-01T20:00:00.000Z', NULL, 1)`,
+      `INSERT INTO stints (id, quest_id, outcome, opened_at, closed_at, revision)
+       VALUES ('stint-3', 'quest-3', 'wide window stint', '2026-09-01T08:00:00.000Z', '2026-09-01T20:00:00.000Z', 1)`,
     );
     database.exec(
-      `INSERT INTO traces (id, activity_id, tool, place, source, source_ref, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
-       VALUES ('trace-4', 'activity-3', 'edit', '/Users/octocat/work/acme/widgets', 'session', 'session-1', '2026-09-01T15:00:00.000Z', '2026-09-01T15:10:00.000Z', 'hero-1', 'brief edit', 'quick fix', '/Users/octocat/work/acme/widgets', 'assistant edit', 0.9, 'model', 'session-1', '2026-09-01T15:10:00.000Z')`,
+      `INSERT INTO traces (id, stint_id, tool, place, source, source_ref, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+       VALUES ('trace-4', 'stint-3', 'edit', '/Users/octocat/work/acme/widgets', 'session', 'session-1', '2026-09-01T15:00:00.000Z', '2026-09-01T15:10:00.000Z', 'hero-1', 'brief edit', 'quick fix', '/Users/octocat/work/acme/widgets', 'assistant edit', 0.9, 'model', 'session-1', '2026-09-01T15:10:00.000Z')`,
     );
     database.exec(
-      `INSERT INTO trace_links (trace_id, activity_id, linked_at, superseded_at, reason)
-       VALUES ('trace-4', 'activity-3', '2026-09-01T15:10:00.000Z', NULL, NULL)`,
+      `INSERT INTO trace_links (trace_id, stint_id, linked_at, superseded_at, reason)
+       VALUES ('trace-4', 'stint-3', '2026-09-01T15:10:00.000Z', NULL, NULL)`,
     );
 
     const quests = queryQuests(database, RANGE);
@@ -256,7 +256,7 @@ describe("attributeNonClaudeEvidence", () => {
     );
     declareQuest(store, database, {
       sessionId: "session-1",
-      newQuest: { title: "Ship p", aim: "ship it", commitment: "personal" },
+      newQuest: { title: "Ship p", outcome: "ship it", commitment: "personal" },
       plan: [],
       scope: "session",
       declaredBy: "agent",
@@ -335,7 +335,7 @@ describe("attributeNonClaudeEvidence", () => {
     );
     declareQuest(store, database, {
       sessionId: "session-1",
-      newQuest: { title: "Early quest", aim: "early", commitment: "personal" },
+      newQuest: { title: "Early quest", outcome: "early", commitment: "personal" },
       plan: [],
       scope: "session",
       declaredBy: "agent",
@@ -344,7 +344,7 @@ describe("attributeNonClaudeEvidence", () => {
     });
     declareQuest(store, database, {
       sessionId: "session-later",
-      newQuest: { title: "Late quest", aim: "late", commitment: "personal" },
+      newQuest: { title: "Late quest", outcome: "late", commitment: "personal" },
       plan: [],
       scope: "session",
       declaredBy: "agent",

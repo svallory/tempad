@@ -1,10 +1,10 @@
 import type { Projection } from "./index";
 
 export const sagaProjection: Projection = {
-  name: "goals",
-  tables: ["goals"],
+  name: "sagas",
+  tables: ["sagas"],
   createSql: `
-    CREATE TABLE IF NOT EXISTS goals (
+    CREATE TABLE IF NOT EXISTS sagas (
       id TEXT PRIMARY KEY,
       owner_kind TEXT NOT NULL,
       owner_id TEXT NOT NULL,
@@ -19,11 +19,11 @@ export const sagaProjection: Projection = {
   apply(database, event) {
     const payload = event.payload;
     switch (event.kind) {
-      case "goal.created": {
+      case "saga.created": {
         const owner = payload.owner as { kind: string; id: string };
         database
           .query(
-            "INSERT OR REPLACE INTO goals (id, owner_kind, owner_id, title, statement, revision, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)",
+            "INSERT OR REPLACE INTO sagas (id, owner_kind, owner_id, title, statement, revision, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)",
           )
           .run(
             event.subject,
@@ -35,10 +35,10 @@ export const sagaProjection: Projection = {
           );
         return;
       }
-      case "goal.reworded":
+      case "saga.reworded":
         database
           .query(
-            "UPDATE goals SET title = COALESCE(?, title), statement = COALESCE(?, statement), revision = revision + 1 WHERE id = ?",
+            "UPDATE sagas SET title = COALESCE(?, title), statement = COALESCE(?, statement), revision = revision + 1 WHERE id = ?",
           )
           .run(
             payload.title !== undefined ? String(payload.title) : null,
@@ -46,9 +46,9 @@ export const sagaProjection: Projection = {
             event.subject,
           );
         return;
-      case "goal.ended":
+      case "saga.ended":
         database
-          .query("UPDATE goals SET ended_at = ?, end_reason = ?, replaced_by = ? WHERE id = ?")
+          .query("UPDATE sagas SET ended_at = ?, end_reason = ?, replaced_by = ? WHERE id = ?")
           .run(
             event.at,
             payload.reason ? String(payload.reason) : null,

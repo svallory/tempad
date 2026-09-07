@@ -313,7 +313,7 @@ function runReview(_args: string[], context: W5Context): number {
     .all() as { id: string; what: string }[];
   for (const trace of lowConfidenceTraces) {
     context.stdout(
-      `trace ${trace.id} low confidence (${trace.what}) — tempad trace list --activity <id>`,
+      `trace ${trace.id} low confidence (${trace.what}) — tempad trace list --stint <id>`,
     );
   }
 
@@ -464,10 +464,10 @@ async function runEvalCommand(args: string[], context: W5Context): Promise<numbe
 
   context.stdout(`copied_db=${metrics.copiedDbPath}`);
   context.stdout(
-    `retracted_before_rerun traces=${metrics.resetTraces} activities=${metrics.resetStints} quests=${metrics.resetQuests}`,
+    `retracted_before_rerun traces=${metrics.resetTraces} stints=${metrics.resetStints} quests=${metrics.resetQuests}`,
   );
   context.stdout(`traces=${metrics.traces}`);
-  context.stdout(`activities=${metrics.stints}`);
+  context.stdout(`stints=${metrics.stints}`);
   context.stdout(`ratio=${metrics.ratio.toFixed(3)}`);
   context.stdout(
     `median_activity_duration_minutes=${metrics.medianStintDurationMinutes.toFixed(1)}`,
@@ -503,7 +503,7 @@ function runDedupe(args: string[], context: W5Context): number {
   });
 
   const result = dedupe(context.database, { dryRun: values["dry-run"] === true });
-  context.stdout(`traces=${result.traces} activities=${result.stints} quests=${result.quests}`);
+  context.stdout(`traces=${result.traces} stints=${result.stints} quests=${result.quests}`);
   return 0;
 }
 

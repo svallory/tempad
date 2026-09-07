@@ -5,9 +5,9 @@ import { localDayBoundsUtc } from "./markdown.ts";
 import { clientCondition, type DateRange } from "./queries.ts";
 
 /**
- * Intent tables (quests, activities, traces, questions) render as of a past
+ * Intent tables (quests, stints, traces, questions) render as of a past
  * date via `--as-of`; mirrors (commits, sessions, Monday items) always read
- * current state -- see plan Task 3. `stateAsOf` rebuilds a fresh in-memory
+ * current state -- see the intent-core plan. `stateAsOf` rebuilds a fresh in-memory
  * database from events up to `asOf`, so callers must query it instead of
  * `database` for anything intent-related when `asOf` is set.
  *
@@ -46,10 +46,9 @@ export interface StintRow {
   questOriginKind: string | null;
   org: string | null;
   project: string | null;
-  aim: string;
+  outcome: string;
   openedAt: string;
   closedAt: string | null;
-  outcome: string | null;
   minutes: number;
 }
 
@@ -58,7 +57,7 @@ export interface SideQuestRow {
   title: string;
   org: string | null;
   project: string | null;
-  fromStintAim: string | null;
+  fromStintOutcome: string | null;
   branchedAt: string;
   trigger: string | null;
   kind: string | null;
@@ -84,18 +83,18 @@ function toDayBounds(range: DateRange): { start: string; end: string } {
  * Intent projection tables are created lazily by the first event applied or
  * by `tempad rebuild` (see `src/intent/projections/index.ts`). A Hero who has
  * never used the intent layer has a database without them; reports must
- * still render, just with nothing to say about quests and activities.
+ * still render, just with nothing to say about quests and stints.
  */
 function hasIntentTables(database: Database): boolean {
   const row = database
-    .query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'activities'")
+    .query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'stints'")
     .get();
   return row !== null;
 }
 
 /**
  * Only current (non-superseded) trace links -- a relinked trace's time counts
- * once, under whichever activity it is linked to now, never under both.
+ * once, under whichever stint it is linked to now, never under both.
  */
 function queryTraceIntervals(database: Database, range: DateRange): TraceIntervalRow[] {
   const { start, end } = toDayBounds(range);
@@ -116,7 +115,7 @@ function queryTraceIntervals(database: Database, range: DateRange): TraceInterva
 
   return database
     .query(
-      `SELECT tl.activity_id as activityId, t.started_at as startedAt, t.ended_at as endedAt,
+      `SELECT tl.stint_id as stintId, t.started_at as startedAt, t.ended_at as endedAt,
               s.org as org, s.project as project
        FROM trace_links tl
        JOIN traces t ON t.id = tl.trace_id
@@ -127,7 +126,7 @@ function queryTraceIntervals(database: Database, range: DateRange): TraceInterva
     .all(...params) as TraceIntervalRow[];
 }
 
-/** Minutes of trace time clipped to [start, end), summed per activity id. */
+/** Minutes of trace time clipped to [start, end), summed per stint id. */
 function minutesByStint(
   intervals: TraceIntervalRow[],
   start: string,
@@ -149,9 +148,9 @@ function minutesByStint(
 }
 
 /**
- * Trace start/end instants clipped to [start, end), per activity id -- the
+ * Trace start/end instants clipped to [start, end), per stint id -- the
  * evidence timestamps a quest's first/last-evidence columns are built from,
- * so they never report a time outside the report's range or an activity's
+ * so they never report a time outside the report's range or a stint's
  * opened/closed_at when the trace evidence itself falls inside the range.
  */
 function clippedEvidenceByStint(
@@ -175,7 +174,7 @@ function clippedEvidenceByStint(
   return evidence;
 }
 
-/** Org/project for an activity, taken from its earliest linked trace's session. */
+/** Org/project for a stint, taken from its earliest linked trace's session. */
 function projectByStint(
   intervals: TraceIntervalRow[],
 ): Map<string, { org: string; project: string }> {
@@ -192,7 +191,7 @@ function projectByStint(
 export interface StintTraceIntervalRow {
   stintId: string;
   questTitle: string | null;
-  aim: string;
+  outcome: string;
   org: string | null;
   project: string | null;
   startedAt: string;
@@ -201,9 +200,9 @@ export interface StintTraceIntervalRow {
 
 /**
  * One row per trace interval (already clipped to [start, end)), with its
- * activity's quest title and objective attached, for callers that need to
- * bucket activity time by a finer grain than a day -- the hourly report's
- * per-hour "activities active this hour" cells.
+ * stint's quest title and outcome attached, for callers that need to
+ * bucket stint time by a finer grain than a day -- the hourly report's
+ * per-hour "stints active this hour" cells.
  */
 export function queryStintTraceIntervals(
   database: Database,
@@ -220,12 +219,12 @@ export function queryStintTraceIntervals(
 
   const stintRows = database
     .query(
-      `SELECT a.id as id, a.objective as objective, q.title as questTitle
-       FROM activities a
+      `SELECT a.id as id, a.outcome as outcome, q.title as questTitle
+       FROM stints a
        LEFT JOIN quests q ON q.id = a.quest_id
        WHERE a.retracted_at IS NULL AND a.id IN (${[...stintIds].map(() => "?").join(", ")})`,
     )
-    .all(...stintIds) as { id: string; aim: string; questTitle: string | null }[];
+    .all(...stintIds) as { id: string; outcome: string; questTitle: string | null }[];
   const stintsById = new Map(stintRows.map((row) => [row.id, row]));
 
   const rows: StintTraceIntervalRow[] = [];
@@ -238,7 +237,7 @@ export function queryStintTraceIntervals(
     rows.push({
       stintId: interval.stintId,
       questTitle: stint.questTitle,
-      aim: stint.aim,
+      outcome: stint.outcome,
       org: interval.org,
       project: interval.project,
       startedAt: new Date(intervalStart).toISOString(),
@@ -260,20 +259,19 @@ export function queryStints(database: Database, range: DateRange): StintRow[] {
 
   const rows = database
     .query(
-      `SELECT a.id as id, a.quest_id as questId, a.objective as objective,
-              a.opened_at as openedAt, a.closed_at as closedAt, a.outcome as outcome,
+      `SELECT a.id as id, a.quest_id as questId, a.outcome as outcome,
+              a.opened_at as openedAt, a.closed_at as closedAt,
               q.title as questTitle, q.confirmed as questConfirmed, q.origin_kind as questOriginKind
-       FROM activities a
+       FROM stints a
        LEFT JOIN quests q ON q.id = a.quest_id
        WHERE a.retracted_at IS NULL AND a.id IN (${[...stintIds].map(() => "?").join(", ")})`,
     )
     .all(...stintIds) as {
     id: string;
     questId: string | null;
-    aim: string;
+    outcome: string;
     openedAt: string;
     closedAt: string | null;
-    outcome: string | null;
     questTitle: string | null;
     questConfirmed: number | null;
     questOriginKind: string | null;
@@ -290,10 +288,9 @@ export function queryStints(database: Database, range: DateRange): StintRow[] {
         questOriginKind: row.questOriginKind,
         org: project?.org ?? null,
         project: project?.project ?? null,
-        aim: row.aim,
+        outcome: row.outcome,
         openedAt: row.openedAt,
         closedAt: row.closedAt,
-        outcome: row.outcome,
         minutes: minutes.get(row.id) ?? 0,
       };
     })
@@ -319,7 +316,7 @@ export function querySideQuests(database: Database, range: DateRange): SideQuest
     .query(
       `SELECT q.id as id, q.title as title, q.branched_at as branchedAt, q.trigger as trigger,
               q.branch_kind as kind, q.returned_at as returnedAt,
-              (SELECT a.objective FROM activities a WHERE a.id = q.origin_activity_id) as fromActivityObjective
+              (SELECT a.outcome FROM stints a WHERE a.id = q.deviates_from_stint_id) as fromStintOutcome
        FROM quests q
        WHERE ${conditions.join(" AND ")}
        ORDER BY q.branched_at ASC`,
@@ -331,12 +328,12 @@ export function querySideQuests(database: Database, range: DateRange): SideQuest
     trigger: string | null;
     kind: string | null;
     returnedAt: string | null;
-    fromStintAim: string | null;
+    fromStintOutcome: string | null;
   }[];
 
   return rows.map((row) => {
     const questStints = database
-      .query("SELECT id FROM activities WHERE quest_id = ? AND retracted_at IS NULL")
+      .query("SELECT id FROM stints WHERE quest_id = ? AND retracted_at IS NULL")
       .all(row.id) as { id: string }[];
 
     let minutes = 0;
@@ -351,7 +348,7 @@ export function querySideQuests(database: Database, range: DateRange): SideQuest
       title: row.title,
       org: project?.org ?? null,
       project: project?.project ?? null,
-      fromStintAim: row.fromStintAim,
+      fromStintOutcome: row.fromStintOutcome,
       branchedAt: row.branchedAt,
       trigger: row.trigger,
       kind: row.kind,
@@ -376,7 +373,7 @@ export interface QuestSummaryRow {
 }
 
 /**
- * One row per quest with an activity touched in range (a linked trace
+ * One row per quest with a stint touched in range (a linked trace
  * started or ended in range), for the project report's quest table.
  * `commits`/`sessions` are not counted here -- quests carry no direct link
  * to `gh_commits`/`claude_sessions` rows, only to traces, which the caller
@@ -394,7 +391,7 @@ export function queryQuests(database: Database, range: DateRange): QuestSummaryR
 
   const stintRows = database
     .query(
-      `SELECT id, quest_id as questId FROM activities WHERE retracted_at IS NULL AND id IN (${[
+      `SELECT id, quest_id as questId FROM stints WHERE retracted_at IS NULL AND id IN (${[
         ...stintIds,
       ]
         .map(() => "?")
@@ -426,7 +423,7 @@ export function queryQuests(database: Database, range: DateRange): QuestSummaryR
   const sideQuestMinutesByQuestId = new Map<string, number>();
   for (const sideQuest of querySideQuests(database, range)) {
     const origin = database
-      .query("SELECT origin_activity_id as originActivityId FROM quests WHERE id = ?")
+      .query("SELECT deviates_from_stint_id as originStintId FROM quests WHERE id = ?")
       .get(sideQuest.id) as { originStintId: string | null } | null;
     const parentId = stintRows.find((row) => row.id === origin?.originStintId)?.questId;
     if (!parentId) continue;
@@ -440,7 +437,7 @@ export function queryQuests(database: Database, range: DateRange): QuestSummaryR
     .map((quest) => {
       const questStints = stintRows.filter((row) => row.questId === quest.id);
       const evidenceTimes = questStints.flatMap((row) => evidenceByStint.get(row.id) ?? []);
-      // A quest's activity can match `queryTraceIntervals`' SQL range (which
+      // A quest's stint can match `queryTraceIntervals`' SQL range (which
       // compares raw trace start/end) yet clip to nothing once bounded to
       // [start, end) -- e.g. a trace that only brushes the range's edge.
       // Such a quest has no evidence to report and is dropped rather than

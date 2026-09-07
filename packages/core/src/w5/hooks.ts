@@ -113,7 +113,7 @@ export function buildDeclarationLine(
   sessionId: string,
 ): string {
   const quest = declared ? declared.title : "none";
-  return `tempad: session ${sessionId}, declared quest: ${quest}. Declare with the tempad-quest skill if this prompt starts a different objective.`;
+  return `tempad: session ${sessionId}, declared quest: ${quest}. Declare with the tempad-quest skill if this prompt starts a different outcome.`;
 }
 
 /**
@@ -140,7 +140,7 @@ export function buildBelongsHandback(
 export function buildDeclareHandback(sessionId: string): string {
   return [
     "w5 has no declared quest for this session. Reply:",
-    `  tempad quest declare --session ${sessionId} --quest <id>|--new "<title>" --objective "<text>" [--commitment ...] --by agent`,
+    `  tempad quest declare --session ${sessionId} --quest <id>|--new "<title>" --outcome "<text>" [--commitment ...] --by agent`,
   ].join("\n");
 }
 

@@ -4,11 +4,7 @@ import { newUlid } from "../../src/intent/ids";
 import { ensureTables } from "../../src/intent/projections";
 import { registerAllProjections } from "../../src/intent/projections/register";
 import { EventStore } from "../../src/intent/store";
-import {
-  closeIdleStints,
-  closeSessionStints,
-  openStintContinuing,
-} from "../../src/w5/lifecycle";
+import { closeIdleStints, closeSessionStints, openStintContinuing } from "../../src/w5/lifecycle";
 
 registerAllProjections();
 
@@ -18,19 +14,19 @@ function seedStintWithTrace(
 ) {
   database
     .query(
-      "INSERT INTO activities (id, quest_id, objective, opened_at, revision) VALUES (?, NULL, 'work', '2026-09-06T09:00:00.000Z', 1)",
+      "INSERT INTO stints (id, quest_id, outcome, opened_at, revision) VALUES (?, NULL, 'work', '2026-09-06T09:00:00.000Z', 1)",
     )
     .run(input.stintId);
   database
     .query(
-      `INSERT INTO traces (id, activity_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+      `INSERT INTO traces (id, stint_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
        VALUES (?, ?, 'claude-code', 'p', 'session', '2026-09-06T09:00:00.000Z', ?, 'hero', 'work', 'ship', 'org/p', 'claude-code', 0.9, 'assistant', ?, '2026-09-06T09:00:00.000Z')`,
     )
     .run(newUlid(), input.stintId, input.endedAt, input.sessionId);
 }
 
 describe("lifecycle", () => {
-  test("closeIdleActivities closes only activities idle past the threshold", () => {
+  test("closeIdleActivities closes only stints idle past the threshold", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     const store = new EventStore(database);
@@ -53,7 +49,7 @@ describe("lifecycle", () => {
 
     expect(result.closed).toEqual(["A-old"]);
     const rows = database
-      .query("SELECT id, closed_at, close_reason FROM activities ORDER BY id")
+      .query("SELECT id, closed_at, close_reason FROM stints ORDER BY id")
       .all() as { id: string; closed_at: string | null; close_reason: string | null }[];
     expect(rows.find((r) => r.id === "A-old")).toEqual({
       id: "A-old",
@@ -63,7 +59,7 @@ describe("lifecycle", () => {
     expect(rows.find((r) => r.id === "A-recent")?.closed_at).toBeNull();
   });
 
-  test("closeSessionActivities closes every open activity of the session and clears the note", () => {
+  test("closeSessionActivities closes every open stint of the session and clears the note", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     const store = new EventStore(database);
@@ -89,7 +85,7 @@ describe("lifecycle", () => {
     });
 
     expect(result.closed.sort()).toEqual(["A1", "A2"]);
-    const reasons = database.query("SELECT close_reason FROM activities").all() as {
+    const reasons = database.query("SELECT close_reason FROM stints").all() as {
       close_reason: string;
     }[];
     expect(reasons.every((r) => r.close_reason === "session_end")).toBe(true);
@@ -107,13 +103,13 @@ describe("lifecycle", () => {
     const store = new EventStore(database);
 
     const id = openStintContinuing(store, database, {
-      aim: "back to walk order",
+      outcome: "back to walk order",
       at: "2026-09-06T12:00:00.000Z",
       actor: "hook",
       continues: "A-old",
     });
 
-    const row = database.query("SELECT continues FROM activities WHERE id = ?").get(id) as {
+    const row = database.query("SELECT continues FROM stints WHERE id = ?").get(id) as {
       continues: string | null;
     };
     expect(row.continues).toBe("A-old");

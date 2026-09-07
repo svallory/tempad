@@ -40,7 +40,33 @@ throttle_minutes = 5
     expect(config.w5.overlapMessages).toBe(3);
   });
 
-  test("parses activity_idle_minutes, memory_hours, memory_activities, overlap_messages", () => {
+  test("accepts the pre-rename [w5] key names and warns naming the new key", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tempad-intent-"));
+    const path = join(directory, "tempad.toml");
+    // Exactly the shape of an operator's config written before 2026-09-07.
+    writeFileSync(
+      path,
+      `
+[w5]
+ask_min_activity_minutes = 20
+activity_idle_minutes = 30
+memory_activities = 5
+`,
+    );
+    const warnings: string[] = [];
+    const config = loadIntentConfig(path, (message) => warnings.push(message));
+
+    expect(config.w5.askMinStintMinutes).toBe(20);
+    expect(config.w5.stintIdleMinutes).toBe(30);
+    expect(config.w5.memoryStints).toBe(5);
+
+    expect(warnings).toHaveLength(3);
+    expect(warnings.join("\n")).toContain("ask_min_stint_minutes");
+    expect(warnings.join("\n")).toContain("stint_idle_minutes");
+    expect(warnings.join("\n")).toContain("memory_stints");
+  });
+
+  test("the current [w5] key wins when both names are present, with one warning", () => {
     const directory = mkdtempSync(join(tmpdir(), "tempad-intent-"));
     const path = join(directory, "tempad.toml");
     writeFileSync(
@@ -48,8 +74,38 @@ throttle_minutes = 5
       `
 [w5]
 activity_idle_minutes = 30
+stint_idle_minutes = 45
+`,
+    );
+    const warnings: string[] = [];
+    const config = loadIntentConfig(path, (message) => warnings.push(message));
+
+    expect(config.w5.stintIdleMinutes).toBe(45);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("stint_idle_minutes");
+  });
+
+  test("a config using only current key names warns about nothing", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tempad-intent-"));
+    const path = join(directory, "tempad.toml");
+    writeFileSync(path, "\n[w5]\nstint_idle_minutes = 30\n");
+    const warnings: string[] = [];
+    const config = loadIntentConfig(path, (message) => warnings.push(message));
+
+    expect(config.w5.stintIdleMinutes).toBe(30);
+    expect(warnings).toEqual([]);
+  });
+
+  test("parses stint_idle_minutes, memory_hours, memory_stints, overlap_messages", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tempad-intent-"));
+    const path = join(directory, "tempad.toml");
+    writeFileSync(
+      path,
+      `
+[w5]
+stint_idle_minutes = 30
 memory_hours = 4
-memory_activities = 5
+memory_stints = 5
 overlap_messages = 2
 `,
     );
@@ -60,7 +116,7 @@ overlap_messages = 2
     expect(config.w5.overlapMessages).toBe(2);
   });
 
-  test("defaultIntentConfig().w5 has the activity lifecycle defaults", () => {
+  test("defaultIntentConfig().w5 has the stint lifecycle defaults", () => {
     const config = defaultIntentConfig();
     expect(config.w5.stintIdleMinutes).toBe(45);
     expect(config.w5.memoryHours).toBe(8);

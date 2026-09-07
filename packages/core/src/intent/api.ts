@@ -13,24 +13,20 @@ registerAllProjections();
 
 export interface OpenStintInput {
   quest?: string;
-  aim: string;
+  outcome: string;
   at?: string;
   actor: Actor;
 }
 
-export function openStint(
-  store: EventStore,
-  database: Database,
-  input: OpenStintInput,
-): string {
+export function openStint(store: EventStore, database: Database, input: OpenStintInput): string {
   const id = newUlid();
   applyIncremental(
     database,
     store.append({
       actor: input.actor,
-      kind: "activity.opened",
+      kind: "stint.opened",
       subject: id,
-      payload: { quest: input.quest, aim: input.aim },
+      payload: { quest: input.quest, outcome: input.outcome },
       at: input.at,
     }),
   );
@@ -48,7 +44,7 @@ export function assignStint(
     database,
     store.append({
       actor,
-      kind: "activity.assigned",
+      kind: "stint.assigned",
       subject: stintId,
       payload: { quest: questId },
     }),

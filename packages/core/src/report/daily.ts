@@ -1,13 +1,13 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
 import {
-  type StintRow,
   attributeNonClaudeEvidence,
-  queryStints,
   queryOpenQuestions,
   querySideQuests,
+  queryStints,
   resolveIntentDatabase,
   type SideQuestRow,
+  type StintRow,
 } from "./intent-queries.ts";
 import { dayRange, heading, isWeekend, localDay, localTime, localWeekday } from "./markdown.ts";
 import {
@@ -159,10 +159,10 @@ function render(database: Database, config: Config, options: ReportOptions): str
             questStints[0]?.questOriginKind && questStints[0].questOriginKind !== "declared"
               ? " (inferred)"
               : "";
-          const aims = questStints.map((stint) => stint.aim).join("; ");
+          const outcomes = questStints.map((stint) => stint.outcome).join("; ");
           const minutes = questStints.reduce((sum, stint) => sum + stint.minutes, 0);
           lines.push(
-            `- ${questTitle}${unconfirmed}${inferred}: ${aims} (${minutesLabel(minutes)})`,
+            `- ${questTitle}${unconfirmed}${inferred}: ${outcomes} (${minutesLabel(minutes)})`,
           );
         }
       }
@@ -176,7 +176,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
             ? `back ${localTime(sideQuest.returnedAt, timeZone)}`
             : "not returned";
           lines.push(
-            `- ${sideQuest.title}, branched ${branchTime} from "${sideQuest.fromStintAim ?? "unknown"}", trigger: "${sideQuest.trigger ?? "unknown"}", ${returned} (${minutesLabel(sideQuest.minutes)})`,
+            `- ${sideQuest.title}, branched ${branchTime} from "${sideQuest.fromStintOutcome ?? "unknown"}", trigger: "${sideQuest.trigger ?? "unknown"}", ${returned} (${minutesLabel(sideQuest.minutes)})`,
           );
         }
       }
@@ -258,7 +258,7 @@ function minutesLabel(totalMinutes: number): string {
   return `${hours}h ${minutes}m`;
 }
 
-/** Activities grouped by their quest title, in first-seen order. */
+/** Stints grouped by their quest title, in first-seen order. */
 function groupByQuest(stints: StintRow[]): [string, StintRow[]][] {
   const groups = new Map<string, StintRow[]>();
   for (const stint of stints) {

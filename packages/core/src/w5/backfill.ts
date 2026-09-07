@@ -148,7 +148,7 @@ export async function backfill(
   // Windows are classified in chronological order *across* sessions, not
   // session by session. Two sessions running the same afternoon interleave in
   // real time; processing one to its end before starting the other would show a
-  // window activities that, from its own point in time, had not happened yet --
+  // window stints that, from its own point in time, had not happened yet --
   // the same future-leak `windowEnd` bounds inside a single window. Each
   // session's per-chunk `sinceTs` chain still holds, because a chunk's overlap
   // tail is derived from its own session's previous chunk, not from whatever
@@ -172,7 +172,7 @@ export async function backfill(
    * partway through runs in declared mode for its *whole* span -- its earlier
    * chunks take the "no declaration yet" path (a `declare` question, traces with
    * no quest) rather than the fallback, which is only for sessions that declare
-   * nothing, ever. This is exactly what keeps inferred quests off the activities
+   * nothing, ever. This is exactly what keeps inferred quests off the stints
    * of a declared session.
    */
   const sessionModes = new Map<string, "declared" | "inferred">();
@@ -259,7 +259,7 @@ export async function backfill(
     });
 
     // The slice is rebuilt per chunk, after the previous chunk's applyResult and
-    // session note landed: chunk n+1 must see the activities chunk n opened or
+    // session note landed: chunk n+1 must see the stints chunk n opened or
     // closed, exactly as a live run sees the previous hook invocation's work.
     // `sinceTs` is this session's previous chunk's last message, so the overlap
     // tail is the messages before this chunk, never this chunk's own; `messages`

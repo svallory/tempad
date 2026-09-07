@@ -1,10 +1,10 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
 import {
-  queryStints,
   queryDoubtRows,
   queryQuests,
   querySideQuests,
+  queryStints,
   resolveIntentDatabase,
 } from "./intent-queries.ts";
 import { dayRange, heading, isWeekend, localWeekday, table } from "./markdown.ts";
@@ -79,7 +79,7 @@ function statsRow(label: string, stats: DayProjectStats): string[] {
 
 const HEADERS = [
   "project",
-  "activities",
+  "stints",
   "quests touched",
   "shipped",
   "abandoned",
@@ -144,8 +144,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
 
     for (const key of sortedKeys) {
       const stats: DayProjectStats = {
-        stints: stints.filter((row) => row.org === key.org && row.project === key.project)
-          .length,
+        stints: stints.filter((row) => row.org === key.org && row.project === key.project).length,
         questsTouched: quests.filter((row) => row.org === key.org && row.project === key.project)
           .length,
         shipped: quests.filter(

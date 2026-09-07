@@ -51,7 +51,7 @@ describe("--as-of", () => {
 
   test("intent tables render from events, not from the live projections", () => {
     const database = openDatabase(join(dir, "tempad.db"));
-    // seedReportFixtures inserts quest/activity/trace rows directly into the
+    // seedReportFixtures inserts quest/stint/trace rows directly into the
     // projection tables (see its docstring), not through events -- the same
     // shortcut every other report-golden fixture takes. `--as-of` replays
     // `events`, so it correctly sees none of that seeded intent data.

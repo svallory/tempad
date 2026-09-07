@@ -8,7 +8,7 @@ import { EventStore } from "../../src/intent/store";
 import { stateAsOf } from "../../src/intent/time-travel";
 
 describe("time travel", () => {
-  test("goals as of August exclude September changes", () => {
+  test("sagas as of August exclude September changes", () => {
     const database = openDatabase(":memory:");
     const store = new EventStore(database);
     const saga = newUlid();
@@ -17,7 +17,7 @@ describe("time travel", () => {
       store.append({
         at: "2026-08-01T00:00:00.000Z",
         actor: "hero",
-        kind: "goal.created",
+        kind: "saga.created",
         subject: saga,
         payload: { owner: { kind: "hero", id: "h" }, title: "Old title" },
       }),
@@ -27,16 +27,16 @@ describe("time travel", () => {
       store.append({
         at: "2026-09-02T00:00:00.000Z",
         actor: "hero",
-        kind: "goal.reworded",
+        kind: "saga.reworded",
         subject: saga,
         payload: { title: "New title" },
       }),
     );
     const past = stateAsOf(database, "2026-08-31T23:59:59.000Z");
-    expect((past.query("SELECT title FROM goals").get() as { title: string }).title).toBe(
+    expect((past.query("SELECT title FROM sagas").get() as { title: string }).title).toBe(
       "Old title",
     );
-    expect((database.query("SELECT title FROM goals").get() as { title: string }).title).toBe(
+    expect((database.query("SELECT title FROM sagas").get() as { title: string }).title).toBe(
       "New title",
     );
   });

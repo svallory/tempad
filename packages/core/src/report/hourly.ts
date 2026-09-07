@@ -1,10 +1,10 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
 import {
-  type StintTraceIntervalRow,
-  queryStintTraceIntervals,
   querySideQuests,
+  queryStintTraceIntervals,
   resolveIntentDatabase,
+  type StintTraceIntervalRow,
 } from "./intent-queries.ts";
 import {
   dayRange,
@@ -195,9 +195,9 @@ function minutesLabel(totalMinutes: number): string {
 }
 
 /**
- * Minutes of trace-backed activity time within [hour:00, hour+1:00) local
- * time on `day`, grouped by quest title (or the activity's own objective
- * when it has no quest), for the hourly report's per-hour activity list.
+ * Minutes of trace-backed stint time within [hour:00, hour+1:00) local
+ * time on `day`, grouped by quest title (or the stint's own outcome
+ * when it has no quest), for the hourly report's per-hour stint list.
  */
 function hourStintMinutes(
   intervals: StintTraceIntervalRow[],
@@ -214,7 +214,7 @@ function hourStintMinutes(
     const intervalStart = Math.max(new Date(interval.startedAt).getTime(), hourStartMs);
     const intervalEnd = Math.min(new Date(interval.endedAt).getTime(), hourEndMs);
     if (intervalEnd <= intervalStart) continue;
-    const label = interval.questTitle ?? interval.aim;
+    const label = interval.questTitle ?? interval.outcome;
     const minutes = (intervalEnd - intervalStart) / 60000;
     minutesByLabel.set(label, (minutesByLabel.get(label) ?? 0) + minutes);
   }

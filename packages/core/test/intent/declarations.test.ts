@@ -56,7 +56,7 @@ describe("declarations", () => {
     expect(declared).toEqual({
       questId,
       title: "Ship X",
-      aim: null,
+      outcome: null,
       plan: ["write code", "ship it"],
       scope: "session",
       parentSessionId: null,
@@ -71,7 +71,7 @@ describe("declarations", () => {
 
     const result = declareQuest(store, database, {
       sessionId: "s1",
-      newQuest: { title: "New thing", aim: "do the new thing", commitment: "personal" },
+      newQuest: { title: "New thing", outcome: "do the new thing", commitment: "personal" },
       plan: [],
       scope: "session",
       declaredBy: "agent",
@@ -99,7 +99,7 @@ describe("declarations", () => {
     const heroId = seedHero(database, store);
     const first = declareQuest(store, database, {
       sessionId: "s1",
-      newQuest: { title: "First", aim: "a", commitment: "personal" },
+      newQuest: { title: "First", outcome: "a", commitment: "personal" },
       plan: [],
       scope: "session",
       declaredBy: "agent",
@@ -108,7 +108,7 @@ describe("declarations", () => {
     });
     const second = declareQuest(store, database, {
       sessionId: "s1",
-      newQuest: { title: "Second", aim: "b", commitment: "personal" },
+      newQuest: { title: "Second", outcome: "b", commitment: "personal" },
       plan: [],
       scope: "session",
       declaredBy: "agent",
@@ -132,7 +132,7 @@ describe("declarations", () => {
     declareQuest(store, database, {
       sessionId: "sub1",
       parentSessionId: "s1",
-      newQuest: { title: "Subtask", aim: "help", commitment: "personal" },
+      newQuest: { title: "Subtask", outcome: "help", commitment: "personal" },
       plan: [],
       scope: "subagent",
       declaredBy: "agent",
@@ -160,7 +160,7 @@ describe("declarations", () => {
     expect(hasAnyDeclaration(database, "s1")).toBe(false);
     declareQuest(store, database, {
       sessionId: "s1",
-      newQuest: { title: "X", aim: "y", commitment: "personal" },
+      newQuest: { title: "X", outcome: "y", commitment: "personal" },
       plan: [],
       scope: "session",
       declaredBy: "agent",

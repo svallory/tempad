@@ -32,15 +32,40 @@ export function openDatabase(path: string): Database {
   const migrations = loadMigrations();
   for (const migration of migrations) {
     if (migration.version <= currentVersion) continue;
-    runMigration(database, migration.sql);
-    database.exec(`PRAGMA user_version = ${migration.version};`);
+    applyMigration(database, migration);
   }
 
   return database;
 }
 
 /**
- * Some tables (`traces`, `activities`, `quests`) are projection tables
+ * Runs one migration and its `user_version` bump inside a single transaction,
+ * so a failure part-way through leaves the database exactly as it was.
+ *
+ * Without this, a migration that dies on its fifth statement would leave the
+ * first four applied and `user_version` un-bumped: the next start would replay
+ * the whole file against a half-renamed schema, and whether that self-heals
+ * depended on every residual statement happening to fail with one of the two
+ * tolerated messages. That is recovery by coincidence; a transaction makes it
+ * a property.
+ *
+ * SQLite runs DDL transactionally, so `ALTER TABLE` and `PRAGMA user_version`
+ * both roll back with everything else.
+ */
+function applyMigration(database: Database, migration: { version: number; sql: string }): void {
+  database.exec("BEGIN");
+  try {
+    runMigration(database, migration.sql);
+    database.exec(`PRAGMA user_version = ${migration.version};`);
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+/**
+ * Some tables (`traces`, `stints`, `quests`) are projection tables
  * created lazily by `ensureTables` (`src/intent/projections/index.ts`), not
  * by a migration -- so an `ALTER TABLE ... ADD COLUMN` targeting one of them
  * fails with "no such table" on a database where the intent layer was never
@@ -53,17 +78,35 @@ export function openDatabase(path: string): Database {
  * define triggers whose bodies contain their own semicolons, e.g.
  * 0003_events.sql) still runs as one plain `exec` so its statements are
  * never split apart.
+ *
+ * The tolerance is deliberately narrow, and covers exactly two messages:
+ *
+ * - "no such table" -- 0006, 0007, 0010 and 0011 target projection tables that
+ *   a never-used intent layer has not created yet.
+ * - "no such column" -- 0011's `RENAME COLUMN`s target columns that a
+ *   freshly-created projection table already has under the new name.
+ *
+ * Every other error propagates and rolls the whole migration back
+ * (see `applyMigration`). Skipping is safe only because these statements are
+ * idempotent with respect to a table the projection creates correctly from
+ * scratch; it is not a general "ignore migration errors" path.
  */
 function runMigration(database: Database, sql: string): void {
   const statements = sql
     .split(";")
-    .map((statement) => statement.trim())
+    .map((statement) =>
+      statement
+        .split("\n")
+        .filter((line) => !line.trim().startsWith("--"))
+        .join("\n")
+        .trim(),
+    )
     .filter((statement) => statement.length > 0);
-  const allAlterAddColumn = statements.every((statement) =>
-    /^ALTER TABLE \S+ ADD COLUMN/i.test(statement),
+  const allTolerableAlter = statements.every((statement) =>
+    /^ALTER TABLE \S+ (ADD COLUMN|DROP COLUMN|RENAME (TO|COLUMN))/i.test(statement),
   );
 
-  if (!allAlterAddColumn) {
+  if (!allTolerableAlter) {
     database.exec(sql);
     return;
   }
@@ -73,7 +116,7 @@ function runMigration(database: Database, sql: string): void {
       database.exec(statement);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("no such table")) continue;
+      if (message.includes("no such table") || message.includes("no such column")) continue;
       throw error;
     }
   }

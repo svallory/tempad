@@ -139,10 +139,10 @@ describe("buildAdditionalContext", () => {
 describe("buildDeclarationLine", () => {
   test("renders the quest title or 'none'", () => {
     expect(buildDeclarationLine({ title: "Ship X" }, "s1")).toBe(
-      "tempad: session s1, declared quest: Ship X. Declare with the tempad-quest skill if this prompt starts a different objective.",
+      "tempad: session s1, declared quest: Ship X. Declare with the tempad-quest skill if this prompt starts a different outcome.",
     );
     expect(buildDeclarationLine(null, "s1")).toBe(
-      "tempad: session s1, declared quest: none. Declare with the tempad-quest skill if this prompt starts a different objective.",
+      "tempad: session s1, declared quest: none. Declare with the tempad-quest skill if this prompt starts a different outcome.",
     );
   });
 });
@@ -338,7 +338,7 @@ describe("verifier hand-back text", () => {
     expect(text).toBe(
       [
         "w5 has no declared quest for this session. Reply:",
-        '  tempad quest declare --session s1 --quest <id>|--new "<title>" --objective "<text>" [--commitment ...] --by agent',
+        '  tempad quest declare --session s1 --quest <id>|--new "<title>" --outcome "<text>" [--commitment ...] --by agent',
       ].join("\n"),
     );
   });

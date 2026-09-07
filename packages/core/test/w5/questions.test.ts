@@ -34,13 +34,13 @@ function seedStintAndTrace(
 ): string {
   database
     .query(
-      "INSERT OR IGNORE INTO activities (id, quest_id, objective, opened_at, revision) VALUES (?, ?, 'objective', '2026-09-04T14:00:00.000Z', 1)",
+      "INSERT OR IGNORE INTO stints (id, quest_id, outcome, opened_at, revision) VALUES (?, ?, 'outcome', '2026-09-04T14:00:00.000Z', 1)",
     )
     .run(input.stintId, input.questId);
   const traceId = newUlid();
   database
     .query(
-      `INSERT INTO traces (id, activity_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+      `INSERT INTO traces (id, stint_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
        VALUES (?, ?, 'claude-code', 'p', 'session', '2026-09-04T15:00:00.000Z', '2026-09-04T15:20:00.000Z', 'hero', 'what', 'why', 'p', 'claude-code', 0.6, 'assistant', ?, '2026-09-04T15:20:00.000Z')`,
     )
     .run(traceId, input.stintId, input.sessionId);
@@ -140,7 +140,7 @@ describe("advanceQuestions", () => {
     expect(row.turns_at_ask).toBe(3);
   });
 
-  test("never asks a why question on an activity that has a quest; it expires to review", () => {
+  test("never asks a why question on a stint that has a quest; it expires to review", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     const store = new EventStore(database);
@@ -420,7 +420,7 @@ test("advanceQuestions transitions are event-sourced: tempad rebuild reproduces 
     resolvedByContext: [],
   });
 
-  // Question 3: why-kind on an activity that already has a quest -> auto-expires.
+  // Question 3: why-kind on a stint that already has a quest -> auto-expires.
   const traceC = seedStintAndTrace(database, {
     stintId: "A3",
     questId: "Q1",
@@ -493,7 +493,7 @@ test("advanceQuestions transitions are event-sourced: tempad rebuild reproduces 
 
 describe("advanceQuestions and the verifier's question kinds", () => {
   /**
-   * The declared-mode shape: the activity carries the declared quest, so the
+   * The declared-mode shape: the stint carries the declared quest, so the
    * inference-era "no quest" heuristic can never fire for these questions.
    */
   function seedDeclaredQuestion(kind: "belongs" | "declare") {
@@ -520,7 +520,7 @@ describe("advanceQuestions and the verifier's question kinds", () => {
         now: "2026-09-04T15:30:00.000Z",
         turnsSinceLastRun: 1,
         // Deliberately below askMinActivityMinutes: these kinds must not depend
-        // on the activity heuristic at all.
+        // on the stint heuristic at all.
         sessionStintMinutes: 0,
         resolvedByContext: [],
       });
@@ -581,7 +581,7 @@ describe("advanceQuestions and the verifier's question kinds", () => {
     });
   }
 
-  test("a belongs question on an activity that has a quest is still asked", () => {
+  test("a belongs question on a stint that has a quest is still asked", () => {
     // The regression this guards: the promotion gate used to require a null
     // quest, which declared mode never produces, so belongs questions sat in
     // `watching` forever -- never asked, never expired.
@@ -597,7 +597,7 @@ describe("advanceQuestions and the verifier's question kinds", () => {
 
     expect(result.asked.map((question) => question.id)).toEqual([questionId]);
     const quest = database
-      .query("SELECT quest_id as questId FROM activities WHERE id = 'A1'")
+      .query("SELECT quest_id as questId FROM stints WHERE id = 'A1'")
       .get() as { questId: string | null };
     expect(quest.questId).toBe("Q1");
   });

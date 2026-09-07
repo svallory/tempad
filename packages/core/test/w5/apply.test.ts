@@ -30,17 +30,17 @@ function seed(database: ReturnType<typeof openDatabase>) {
   const questId = "Q1";
   database
     .query(
-      "INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at) VALUES (?, 'hero', ?, 'Ship marko-ui', '86 components', 1, 1, 'started', '2026-09-01T00:00:00.000Z')",
+      "INSERT INTO quests (id, owner_kind, owner_id, title, outcome, confirmed, revision, state, created_at) VALUES (?, 'hero', ?, 'Ship marko-ui', '86 components', 1, 1, 'started', '2026-09-01T00:00:00.000Z')",
     )
     .run(questId, heroId);
   database
     .query(
-      "INSERT INTO activities (id, quest_id, objective, opened_at, revision) VALUES ('A1', ?, 'fixing walk order', '2026-09-04T14:00:00.000Z', 1)",
+      "INSERT INTO stints (id, quest_id, outcome, opened_at, revision) VALUES ('A1', ?, 'fixing walk order', '2026-09-04T14:00:00.000Z', 1)",
     )
     .run(questId);
   database
     .query(
-      `INSERT INTO traces (id, activity_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
+      `INSERT INTO traces (id, stint_id, tool, place, source, started_at, ended_at, who, what, why, where_text, how, confidence, classified_by, session_id, recorded_at)
        VALUES ('T0', 'A1', 'claude-code', 'marko-ui', 'session', '2026-09-04T14:00:00.000Z', '2026-09-04T14:30:00.000Z', 'hero', 'fixing walk order', 'ship', 'personal/marko-ui', 'claude-code', 0.9, 'assistant', 's1', '2026-09-04T14:30:00.000Z')`,
     )
     .run();
@@ -59,9 +59,7 @@ const window: ClassifierWindow = {
   declaredQuest: null,
   parentDeclaredQuest: null,
   stintAliases: { A1: "A1" },
-  openQuests: [
-    { id: "Q1", title: "Ship marko-ui", aim: "86 components", lastStintAt: null },
-  ],
+  openQuests: [{ id: "Q1", title: "Ship marko-ui", outcome: "86 components", lastStintAt: null }],
   sessionOpenStints: [
     {
       stintId: "A1",
@@ -108,7 +106,7 @@ const good: ClassifierResult = {
       matchedQuest: null,
       proposedQuest: {
         title: "Compare Astryx",
-        aim: "see what they claim",
+        outcome: "see what they claim",
         commitment: "exploratory",
       },
       matchedStint: null,
@@ -129,7 +127,7 @@ const [baseMatched, baseNew] = good.segments as [
 ];
 
 describe("applyResult", () => {
-  test("reuses activity, opens new unconfirmed quest, branches, watches question", () => {
+  test("reuses stint, opens new unconfirmed quest, branches, watches question", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);
 
@@ -147,12 +145,10 @@ describe("applyResult", () => {
     expect(summary.branches).toBe(1);
     expect(summary.questionsWatching).toBe(1);
 
-    const traceRows = database
-      .query("SELECT activity_id FROM traces ORDER BY recorded_at")
-      .all() as {
-      activity_id: string;
+    const traceRows = database.query("SELECT stint_id FROM traces ORDER BY recorded_at").all() as {
+      stint_id: string;
     }[];
-    expect(traceRows[0]?.activity_id).toBe("A1");
+    expect(traceRows[0]?.stint_id).toBe("A1");
     expect(traceRows).toHaveLength(3);
 
     const appliedSources = database
@@ -170,7 +166,7 @@ describe("applyResult", () => {
     expect(question.state).toBe("watching");
   });
 
-  test("a switch between segment 2 and 3 branches from segment 2's activity, not window.previousTrace", () => {
+  test("a switch between segment 2 and 3 branches from segment 2's stint, not window.previousTrace", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);
 
@@ -186,7 +182,7 @@ describe("applyResult", () => {
           matchedQuest: null,
           proposedQuest: {
             title: "Compare Astryx",
-            aim: "see what they claim",
+            outcome: "see what they claim",
             commitment: "exploratory",
           },
           matchedStint: null,
@@ -224,7 +220,7 @@ describe("applyResult", () => {
           matchedQuest: null,
           proposedQuest: {
             title: "Check email",
-            aim: "clear inbox",
+            outcome: "clear inbox",
             commitment: "personal",
           },
           matchedStint: null,
@@ -250,18 +246,18 @@ describe("applyResult", () => {
     // Two switches happened (Q1 -> Compare Astryx, Compare Astryx -> Check email).
     // With the bug (comparing against the static window.previousTrace = A1/Q1),
     // only one branch would be recorded because segment 3's questId (Check email)
-    // differs from A1's quest (Q1) too, but the branch's from_activity would
-    // wrongly point at A1 instead of the activity opened for segment 1/2.
+    // differs from A1's quest (Q1) too, but the branch's deviates_from would
+    // wrongly point at A1 instead of the stint opened for segment 1/2.
     expect(summary.branches).toBe(2);
 
     const secondStint = database
-      .query("SELECT id FROM activities WHERE objective = 'read Astryx docs'")
+      .query("SELECT id FROM stints WHERE outcome = 'read Astryx docs'")
       .get() as { id: string };
     const emailQuest = database
-      .query("SELECT id, origin_activity_id FROM quests WHERE title = 'Check email'")
-      .get() as { id: string; origin_activity_id: string };
+      .query("SELECT id, deviates_from_stint_id FROM quests WHERE title = 'Check email'")
+      .get() as { id: string; deviates_from_stint_id: string };
 
-    expect(emailQuest.origin_activity_id).toBe(secondStint.id);
+    expect(emailQuest.deviates_from_stint_id).toBe(secondStint.id);
   });
 
   test("askingEnabled false records no question row", () => {
@@ -282,12 +278,12 @@ describe("applyResult", () => {
     expect(count.count).toBe(0);
   });
 
-  test("matchedActivity with a conflicting quest keeps the activity's quest and counts a conflict", () => {
+  test("matchedStint with a conflicting quest keeps the stint's quest and counts a conflict", () => {
     const database = openDatabase(":memory:");
     const { store, heroId } = seed(database);
     database
       .query(
-        "INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at) VALUES ('Q9', 'hero', ?, 'Other quest', 'other', 1, 1, 'started', '2026-09-01T00:00:00.000Z')",
+        "INSERT INTO quests (id, owner_kind, owner_id, title, outcome, confirmed, revision, state, created_at) VALUES ('Q9', 'hero', ?, 'Other quest', 'other', 1, 1, 'started', '2026-09-01T00:00:00.000Z')",
       )
       .run(heroId);
 
@@ -319,18 +315,18 @@ describe("applyResult", () => {
     expect(summary.stintsOpened).toBe(0);
     expect(logs).toHaveLength(1);
 
-    const stint = database.query("SELECT quest_id FROM activities WHERE id = 'A1'").get() as {
+    const stint = database.query("SELECT quest_id FROM stints WHERE id = 'A1'").get() as {
       quest_id: string;
     };
     expect(stint.quest_id).toBe("Q1");
 
-    const trace = database.query("SELECT activity_id FROM traces WHERE id != 'T0'").get() as {
-      activity_id: string;
+    const trace = database.query("SELECT stint_id FROM traces WHERE id != 'T0'").get() as {
+      stint_id: string;
     };
-    expect(trace.activity_id).toBe("A1");
+    expect(trace.stint_id).toBe("A1");
   });
 
-  test("matchedQuest null on a matched activity is no opinion: quest kept, no conflict", () => {
+  test("matchedQuest null on a matched stint is no opinion: quest kept, no conflict", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);
 
@@ -339,7 +335,7 @@ describe("applyResult", () => {
         {
           ...baseMatched,
           // The classifier did not judge the quest. That is silence, not a claim
-          // that the activity has none, so A1 keeps Q1 and nothing is reported.
+          // that the stint has none, so A1 keeps Q1 and nothing is reported.
           belongs: true,
           guess: null,
           matchedQuest: null,
@@ -366,17 +362,17 @@ describe("applyResult", () => {
     expect(summary.stintsOpened).toBe(0);
     expect(logs).toHaveLength(0);
 
-    const stint = database.query("SELECT quest_id FROM activities WHERE id = 'A1'").get() as {
+    const stint = database.query("SELECT quest_id FROM stints WHERE id = 'A1'").get() as {
       quest_id: string;
     };
     expect(stint.quest_id).toBe("Q1");
   });
 
-  test("proposedQuest on a matched activity with no quest creates and attaches it", () => {
+  test("proposedQuest on a matched stint with no quest creates and attaches it", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);
     // A1 starts with no quest, so the proposal fills a gap rather than contesting.
-    database.query("UPDATE activities SET quest_id = NULL WHERE id = 'A1'").run();
+    database.query("UPDATE stints SET quest_id = NULL WHERE id = 'A1'").run();
 
     const proposing: ClassifierResult = {
       segments: [
@@ -387,7 +383,7 @@ describe("applyResult", () => {
           matchedQuest: null,
           proposedQuest: {
             title: "Ship the walk order fix",
-            aim: "land it",
+            outcome: "land it",
             commitment: "personal",
           },
           matchedStint: "A1",
@@ -413,7 +409,7 @@ describe("applyResult", () => {
     expect(summary.stintsOpened).toBe(0);
     expect(logs).toHaveLength(1);
 
-    const stint = database.query("SELECT quest_id FROM activities WHERE id = 'A1'").get() as {
+    const stint = database.query("SELECT quest_id FROM stints WHERE id = 'A1'").get() as {
       quest_id: string | null;
     };
     expect(stint.quest_id).not.toBeNull();
@@ -425,7 +421,7 @@ describe("applyResult", () => {
     expect(quest.confirmed).toBe(0);
   });
 
-  test("proposedQuest on a matched activity that already has a quest changes nothing", () => {
+  test("proposedQuest on a matched stint that already has a quest changes nothing", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);
 
@@ -438,7 +434,7 @@ describe("applyResult", () => {
           matchedQuest: null,
           proposedQuest: {
             title: "Something else entirely",
-            aim: "no",
+            outcome: "no",
             commitment: "personal",
           },
           matchedStint: "A1",
@@ -460,18 +456,18 @@ describe("applyResult", () => {
     expect(summary.questProposedOnMatched).toBe(0);
     expect(summary.questsProposed).toBe(0);
 
-    const stint = database.query("SELECT quest_id FROM activities WHERE id = 'A1'").get() as {
+    const stint = database.query("SELECT quest_id FROM stints WHERE id = 'A1'").get() as {
       quest_id: string;
     };
     expect(stint.quest_id).toBe("Q1");
   });
 
-  test("continuesActivity opens a new activity linked to the closed one, keeping its quest", () => {
+  test("continuesStint opens a new stint linked to the closed one, keeping its quest", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);
     database
       .query(
-        `INSERT INTO activities (id, quest_id, objective, opened_at, closed_at, close_reason, revision)
+        `INSERT INTO stints (id, quest_id, outcome, opened_at, closed_at, close_reason, revision)
          VALUES ('A0', 'Q1', 'fixing walk order', '2026-09-04T10:00:00.000Z', '2026-09-04T11:00:00.000Z', 'session_end', 1)`,
       )
       .run();
@@ -503,13 +499,13 @@ describe("applyResult", () => {
     expect(summary.doubts).toBe(0);
 
     const opened = database
-      .query("SELECT id, quest_id, continues FROM activities WHERE continues IS NOT NULL")
+      .query("SELECT id, quest_id, continues FROM stints WHERE continues IS NOT NULL")
       .get() as { id: string; quest_id: string | null; continues: string };
     expect(opened.continues).toBe("A0");
     expect(opened.quest_id).toBe("Q1");
   });
 
-  test("a switch to a different activity closes nothing", () => {
+  test("a switch to a different stint closes nothing", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);
 
@@ -533,7 +529,7 @@ describe("applyResult", () => {
           endedAt: "2026-09-04T15:20:00.000Z",
           matchedStint: null,
           continuesStint: null,
-          newStintReason: "a different objective entirely",
+          newStintReason: "a different outcome entirely",
           isSwitch: true,
           questions: [],
         },
@@ -550,24 +546,24 @@ describe("applyResult", () => {
     });
 
     const untouched = database
-      .query("SELECT closed_at, close_reason FROM activities WHERE id = 'A1'")
+      .query("SELECT closed_at, close_reason FROM stints WHERE id = 'A1'")
       .get() as { closed_at: string | null; close_reason: string | null };
     expect(untouched.closed_at).toBeNull();
     expect(untouched.close_reason).toBeNull();
 
     const closedCount = database
-      .query("SELECT COUNT(*) as count FROM activities WHERE closed_at IS NOT NULL")
+      .query("SELECT COUNT(*) as count FROM stints WHERE closed_at IS NOT NULL")
       .get() as { count: number };
     expect(closedCount.count).toBe(0);
   });
 
-  test("a switch landing on a matched still-open activity closes neither activity", () => {
+  test("a switch landing on a matched still-open stint closes neither stint", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);
     database
       .query(
-        `INSERT INTO activities (id, quest_id, objective, opened_at, revision)
-         VALUES ('B1', 'Q1', 'second open activity', '2026-09-04T14:10:00.000Z', 1)`,
+        `INSERT INTO stints (id, quest_id, outcome, opened_at, revision)
+         VALUES ('B1', 'Q1', 'second open stint', '2026-09-04T14:10:00.000Z', 1)`,
       )
       .run();
 
@@ -577,7 +573,7 @@ describe("applyResult", () => {
         ...window.sessionOpenStints,
         {
           stintId: "B1",
-          what: "second open activity",
+          what: "second open stint",
           why: "ship",
           questId: "Q1",
           questTitle: "Ship marko-ui",
@@ -615,12 +611,12 @@ describe("applyResult", () => {
     });
 
     const a1 = database
-      .query("SELECT closed_at, close_reason FROM activities WHERE id = 'A1'")
+      .query("SELECT closed_at, close_reason FROM stints WHERE id = 'A1'")
       .get() as { closed_at: string | null; close_reason: string | null };
     expect(a1.closed_at).toBeNull();
 
     const b1 = database
-      .query("SELECT closed_at, close_reason FROM activities WHERE id = 'B1'")
+      .query("SELECT closed_at, close_reason FROM stints WHERE id = 'B1'")
       .get() as { closed_at: string | null; close_reason: string | null };
     expect(b1.closed_at).toBeNull();
   });
@@ -639,7 +635,7 @@ describe("applyResult", () => {
           belongs: true,
           guess: null,
           matchedQuest: null,
-          proposedQuest: { title: "Quest B", aim: "do B", commitment: "exploratory" },
+          proposedQuest: { title: "Quest B", outcome: "do B", commitment: "exploratory" },
           matchedStint: null,
           continuesStint: null,
           newStintReason: "switch to B",
@@ -679,17 +675,17 @@ describe("applyResult", () => {
     expect(summary.branches).toBe(1);
 
     const closedCount = database
-      .query("SELECT COUNT(*) as count FROM activities WHERE closed_at IS NOT NULL")
+      .query("SELECT COUNT(*) as count FROM stints WHERE closed_at IS NOT NULL")
       .get() as { count: number };
     expect(closedCount.count).toBe(0);
 
     const bOpen = database
-      .query("SELECT closed_at FROM activities WHERE objective = 'switch to B'")
+      .query("SELECT closed_at FROM stints WHERE outcome = 'switch to B'")
       .get() as { closed_at: string | null };
     expect(bOpen.closed_at).toBeNull();
 
     const a1Traces = database
-      .query("SELECT COUNT(*) as count FROM traces WHERE activity_id = 'A1'")
+      .query("SELECT COUNT(*) as count FROM traces WHERE stint_id = 'A1'")
       .get() as { count: number };
     expect(a1Traces.count).toBe(2); // T0 from seed() plus the returning segment.
   });
@@ -734,7 +730,7 @@ describe("applyResult", () => {
     expect(count.count).toBe(1);
   });
 
-  test("matchedActivity naming an id absent from the slice opens a new activity and counts it", () => {
+  test("matchedStint naming an id absent from the slice opens a new stint and counts it", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);
 
@@ -757,24 +753,24 @@ describe("applyResult", () => {
     expect(summary.doubts).toBe(0);
     expect(logs).toHaveLength(1);
 
-    const trace = database.query("SELECT activity_id FROM traces WHERE id != 'T0'").get() as {
-      activity_id: string;
+    const trace = database.query("SELECT stint_id FROM traces WHERE id != 'T0'").get() as {
+      stint_id: string;
     };
-    expect(trace.activity_id).not.toBe("A-does-not-exist");
+    expect(trace.stint_id).not.toBe("A-does-not-exist");
   });
 
-  test("matchedActivity naming an activity that is closed or retracted is not reused", () => {
+  test("matchedStint naming a stint that is closed or retracted is not reused", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);
     database
       .query(
-        `INSERT INTO activities (id, quest_id, objective, opened_at, closed_at, close_reason, revision)
+        `INSERT INTO stints (id, quest_id, outcome, opened_at, closed_at, close_reason, revision)
          VALUES ('A-closed', 'Q1', 'already finished', '2026-09-04T10:00:00.000Z', '2026-09-04T11:00:00.000Z', 'idle', 1)`,
       )
       .run();
     database
       .query(
-        `INSERT INTO activities (id, quest_id, objective, opened_at, retracted_at, revision)
+        `INSERT INTO stints (id, quest_id, outcome, opened_at, retracted_at, revision)
          VALUES ('A-retracted', 'Q1', 'wrong call', '2026-09-04T12:00:00.000Z', '2026-09-04T12:30:00.000Z', 1)`,
       )
       .run();
@@ -822,14 +818,12 @@ describe("applyResult", () => {
 
     expect(summary.unknownStintIds).toBe(2);
     const reused = database
-      .query(
-        "SELECT COUNT(*) as count FROM traces WHERE activity_id IN ('A-closed', 'A-retracted')",
-      )
+      .query("SELECT COUNT(*) as count FROM traces WHERE stint_id IN ('A-closed', 'A-retracted')")
       .get() as { count: number };
     expect(reused.count).toBe(0);
   });
 
-  test("continuesActivity pointing at a still-open activity reuses it instead of opening a second", () => {
+  test("continuesStint pointing at a still-open stint reuses it instead of opening a second", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);
 
@@ -846,22 +840,22 @@ describe("applyResult", () => {
       { actor: "hook", askingEnabled: false, now: "2026-09-04T15:21:00.000Z", log: () => {} },
     );
 
-    // The objective never stopped, so this is a plain reuse: no new row, no continues link.
+    // The outcome never stopped, so this is a plain reuse: no new row, no continues link.
     expect(summary.stintsOpened).toBe(0);
     expect(summary.unknownStintIds).toBe(0);
 
-    const stintCount = database.query("SELECT COUNT(*) as count FROM activities").get() as {
+    const stintCount = database.query("SELECT COUNT(*) as count FROM stints").get() as {
       count: number;
     };
     expect(stintCount.count).toBe(1);
 
-    const trace = database.query("SELECT activity_id FROM traces WHERE id != 'T0'").get() as {
-      activity_id: string;
+    const trace = database.query("SELECT stint_id FROM traces WHERE id != 'T0'").get() as {
+      stint_id: string;
     };
-    expect(trace.activity_id).toBe("A1");
+    expect(trace.stint_id).toBe("A1");
   });
 
-  test("continuesActivity naming an unknown id opens a new activity with no continues link", () => {
+  test("continuesStint naming an unknown id opens a new stint with no continues link", () => {
     const database = openDatabase(":memory:");
     const { store } = seed(database);
 
@@ -889,7 +883,7 @@ describe("applyResult", () => {
     expect(summary.stintsOpened).toBe(1);
 
     const linked = database
-      .query("SELECT COUNT(*) as count FROM activities WHERE continues IS NOT NULL")
+      .query("SELECT COUNT(*) as count FROM stints WHERE continues IS NOT NULL")
       .get() as { count: number };
     expect(linked.count).toBe(0);
   });
@@ -907,7 +901,7 @@ describe("applyResult", () => {
           belongs: true,
           guess: null,
           matchedQuest: null,
-          proposedQuest: { title: "Side task", aim: "fill the wait", commitment: "personal" },
+          proposedQuest: { title: "Side task", outcome: "fill the wait", commitment: "personal" },
           matchedStint: null,
           continuesStint: null,
           newStintReason: "started this while the build was running",
@@ -935,7 +929,7 @@ describe("applyResult", () => {
 });
 
 describe("applyResult in declared mode", () => {
-  /** A declared session: hero, quest, one open activity A1, and a declaration. */
+  /** A declared session: hero, quest, one open stint A1, and a declaration. */
   function seedDeclared(database: ReturnType<typeof openDatabase>, options?: { at?: string }) {
     const { store, heroId, questId } = seed(database);
     declareQuest(store, database, {
@@ -999,7 +993,7 @@ describe("applyResult in declared mode", () => {
     expect(summary.doubts).toBe(0);
     expect(summary.questsProposed).toBe(0);
     const stint = database
-      .query("SELECT quest_id as questId FROM activities ORDER BY opened_at DESC LIMIT 1")
+      .query("SELECT quest_id as questId FROM stints ORDER BY opened_at DESC LIMIT 1")
       .get() as { questId: string | null };
     expect(stint.questId).toBe(questId);
     expect(
@@ -1037,9 +1031,9 @@ describe("applyResult in declared mode", () => {
     expect(question.guess).toBe("a competitor comparison");
     expect(question.sessionId).toBe("s1");
 
-    // The doubt is raised, never acted on: the activity keeps the declared quest.
+    // The doubt is raised, never acted on: the stint keeps the declared quest.
     const stint = database
-      .query("SELECT quest_id as questId FROM activities WHERE id = 'A1'")
+      .query("SELECT quest_id as questId FROM stints WHERE id = 'A1'")
       .get() as { questId: string | null };
     expect(stint.questId).toBe(questId);
   });
@@ -1083,10 +1077,10 @@ describe("applyResult in declared mode", () => {
 
     expect(kinds).not.toContain("quest.created");
     expect(kinds).not.toContain("quest.branched");
-    expect(kinds).not.toContain("activity.assigned");
+    expect(kinds).not.toContain("stint.assigned");
   });
 
-  test("an unknown alias opens a new activity and counts an unknown activity id", () => {
+  test("an unknown alias opens a new stint and counts an unknown stint id", () => {
     const database = openDatabase(":memory:");
     const { store, questId } = seedDeclared(database);
 
@@ -1104,12 +1098,12 @@ describe("applyResult in declared mode", () => {
     expect(summary.unknownStintIds).toBe(1);
     expect(summary.stintsOpened).toBe(1);
     const opened = database
-      .query("SELECT quest_id as questId FROM activities WHERE id != 'A1'")
+      .query("SELECT quest_id as questId FROM stints WHERE id != 'A1'")
       .get() as { questId: string | null };
     expect(opened.questId).toBe(questId);
   });
 
-  test("an alias is mapped back to the real activity id it stands for", () => {
+  test("an alias is mapped back to the real stint id it stands for", () => {
     const database = openDatabase(":memory:");
     const { store } = seedDeclared(database);
 
@@ -1128,7 +1122,7 @@ describe("applyResult in declared mode", () => {
     expect(summary.stintsOpened).toBe(0);
     expect(summary.unknownStintIds).toBe(0);
     const trace = database
-      .query("SELECT activity_id as activityId FROM traces WHERE id != 'T0'")
+      .query("SELECT stint_id as stintId FROM traces WHERE id != 'T0'")
       .get() as { stintId: string };
     expect(trace.stintId).toBe("A1");
   });
@@ -1153,7 +1147,7 @@ describe("applyResult in declared mode", () => {
 
     expect(summary.stintsOpened).toBe(2);
     const opened = database
-      .query("SELECT quest_id as questId FROM activities WHERE id != 'A1'")
+      .query("SELECT quest_id as questId FROM stints WHERE id != 'A1'")
       .all() as { questId: string | null }[];
     expect(opened).toHaveLength(2);
     expect(opened.every((stint) => stint.questId === null)).toBe(true);
@@ -1169,7 +1163,7 @@ describe("applyResult in declared mode", () => {
     const { store, heroId } = seed(database);
     database
       .query(
-        `INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at)
+        `INSERT INTO quests (id, owner_kind, owner_id, title, outcome, confirmed, revision, state, created_at)
          VALUES ('Q2', 'hero', ?, 'Verify the fix', 'prove it', 1, 1, 'started', '2026-09-01T00:00:00.000Z')`,
       )
       .run(heroId);
@@ -1189,7 +1183,7 @@ describe("applyResult in declared mode", () => {
       database,
       {
         ...declaredWindow,
-        parentDeclaredQuest: { title: "Ship marko-ui", aim: null, plan: [] },
+        parentDeclaredQuest: { title: "Ship marko-ui", outcome: null, plan: [] },
       },
       {
         segments: [segment({ belongs: false, guess: "unrelated refactor" })],
@@ -1206,7 +1200,7 @@ describe("applyResult in declared mode", () => {
 
     // The subagent's own quest, not the parent's, is what its work is attributed to.
     const stint = database
-      .query("SELECT quest_id as questId FROM activities WHERE id != 'A1'")
+      .query("SELECT quest_id as questId FROM stints WHERE id != 'A1'")
       .get() as { questId: string | null };
     expect(stint.questId).toBe("Q2");
   });
