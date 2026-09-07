@@ -160,6 +160,9 @@ CREATE TABLE w5_quiet (
 -- value at the moment a question was asked, for expiry) and
 -- `is_switch INTEGER NOT NULL DEFAULT 0` (carried on the question.asked
 -- event payload, since traces have no isSwitch column of their own).
+-- The declared-quests plan added `guess TEXT` (0010_verifier_questions.sql):
+-- what the verifier thinks a doubted stretch of work looks like instead,
+-- from which `w5 context` renders a `belongs` question's hand-back text.
 --
 -- Likewise `traces`, `activities` and `quests` (owned by the `activities`
 -- and `quests` projections) each carry a `retracted_at TEXT` column, added

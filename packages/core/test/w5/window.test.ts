@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { openDatabase } from "../../src/db/database";
+import { declareQuest } from "../../src/intent/declarations";
 import { ensureTables } from "../../src/intent/projections";
 import { registerAllProjections } from "../../src/intent/projections/register";
+import { EventStore } from "../../src/intent/store";
 import { buildWindow, findSessionFile } from "../../src/w5/window";
 
 registerAllProjections();
@@ -97,7 +99,18 @@ describe("window builder", () => {
       "fix the walk order bug",
       "wait, what does Astryx do?",
     ]);
-    expect(windowSinceCut.openQuests).toEqual([
+    // Declared mode has no quest lists at all; they come back only for the
+    // inference fallback.
+    expect(windowSinceCut.openQuests).toBeUndefined();
+    expect(windowSinceCut.recentSideQuests).toBeUndefined();
+
+    const inferredWindow = buildWindow(database, {
+      sessionId: "s1",
+      sinceTs: "2026-09-04T14:30:00.000Z",
+      mode: "inferred",
+      ...memoryInput,
+    });
+    expect(inferredWindow.openQuests).toEqual([
       {
         id: "Q1",
         title: "Ship marko-ui",
@@ -130,6 +143,8 @@ describe("window builder", () => {
       ...memoryInput,
     });
 
+    // The row carries the alias; the real id lives only in activityAliases.
+    expect(window.activityAliases).toEqual({ A1: "A1" });
     expect(window.sessionOpenActivities).toEqual([
       {
         activityId: "A1",
@@ -156,9 +171,10 @@ describe("window builder", () => {
       ...memoryInput,
     });
 
+    expect(window.activityAliases.A2).toBe("A0");
     expect(window.recentActivities).toEqual([
       {
-        activityId: "A0",
+        activityId: "A2",
         what: "fixing walk order",
         why: "ship it",
         questId: "Q1",
@@ -195,7 +211,7 @@ describe("window builder", () => {
     expect(capped.recentActivities).toEqual([]);
   });
 
-  test("recentSideQuests carries branched quests with their trigger", () => {
+  test("recentSideQuests carries branched quests with their trigger (inference fallback only)", () => {
     const database = openDatabase(":memory:");
     ensureTables(database);
     seedSession(database);
@@ -210,6 +226,7 @@ describe("window builder", () => {
     const window = buildWindow(database, {
       sessionId: "s1",
       sinceTs: "2026-09-04T14:30:00.000Z",
+      mode: "inferred",
       ...memoryInput,
     });
 
@@ -309,7 +326,10 @@ describe("candidate time bounds", () => {
       windowEnd: "2026-09-04T15:20:00.000Z",
     });
 
-    const offered = window.recentActivities.map((activity) => activity.activityId);
+    // Rows carry aliases now, so the real ids are read back through the map.
+    const offered = window.recentActivities.map(
+      (activity) => window.activityAliases[activity.activityId],
+    );
     expect(offered).not.toContain("A9");
     // The genuinely earlier activity is still offered, so the bound is not just
     // emptying the slice.
@@ -334,7 +354,9 @@ describe("candidate time bounds", () => {
       windowEnd: "2026-09-07T00:00:00.000Z",
     });
 
-    expect(window.recentActivities.map((activity) => activity.activityId)).toContain("A9");
+    expect(
+      window.recentActivities.map((activity) => window.activityAliases[activity.activityId]),
+    ).toContain("A9");
   });
 
   test("an open activity of this session opened after the window is not offered", () => {
@@ -370,6 +392,155 @@ describe("candidate time bounds", () => {
       windowEnd: "2026-09-04T15:20:00.000Z",
     });
 
-    expect(window.recentActivities.map((activity) => activity.activityId)).not.toContain("A0");
+    expect(
+      window.recentActivities.map((activity) => window.activityAliases[activity.activityId]),
+    ).not.toContain("A0");
+  });
+});
+
+describe("declared quests in the window", () => {
+  function seedHeroAndQuest(database: ReturnType<typeof openDatabase>) {
+    const store = new EventStore(database);
+    database
+      .query(
+        "INSERT INTO heroes (id, name, created_at) VALUES ('H1', 'Saulo', '2026-09-01T00:00:00.000Z')",
+      )
+      .run();
+    database
+      .query(
+        `INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at)
+         VALUES ('Q1', 'hero', 'H1', 'Ship marko-ui', '86 components', 1, 1, 'started', '2026-09-01T00:00:00.000Z')`,
+      )
+      .run();
+    return store;
+  }
+
+  test("declaredQuest is populated from a quest.declared event at the window's reference time", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    seedSession(database);
+    const store = seedHeroAndQuest(database);
+
+    declareQuest(store, database, {
+      sessionId: "s1",
+      questId: "Q1",
+      plan: ["walk order", "docs"],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-04T14:05:00.000Z",
+      heroId: "H1",
+    });
+
+    const window = buildWindow(database, {
+      sessionId: "s1",
+      sinceTs: "2026-09-04T14:30:00.000Z",
+      ...memoryInput,
+      windowEnd: "2026-09-04T15:20:00.000Z",
+    });
+
+    expect(window.declaredQuest).toEqual({
+      title: "Ship marko-ui",
+      objective: "86 components",
+      plan: ["walk order", "docs"],
+    });
+    expect(window.parentDeclaredQuest).toBeNull();
+  });
+
+  test("a declaration made after the window's end is not visible to it", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    seedSession(database);
+    const store = seedHeroAndQuest(database);
+
+    declareQuest(store, database, {
+      sessionId: "s1",
+      questId: "Q1",
+      plan: [],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-05T09:00:00.000Z",
+      heroId: "H1",
+    });
+
+    const window = buildWindow(database, {
+      sessionId: "s1",
+      sinceTs: "2026-09-04T14:30:00.000Z",
+      ...memoryInput,
+      windowEnd: "2026-09-04T15:20:00.000Z",
+    });
+
+    expect(window.declaredQuest).toBeNull();
+  });
+
+  test("a subagent's window carries its own quest and the parent's", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    seedSession(database);
+    const store = seedHeroAndQuest(database);
+    database
+      .query(
+        `INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at)
+         VALUES ('Q2', 'hero', 'H1', 'Verify the walk order fix', 'prove it holds', 1, 1, 'started', '2026-09-01T00:00:00.000Z')`,
+      )
+      .run();
+    database
+      .query(
+        `INSERT INTO claude_sessions
+          (id, claude_dir, project_dir, file_path, cwd, org, project, title, git_branch,
+           started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+         VALUES ('parent', '/c', 'p', '/c/p/parent.jsonl', '/w/marko-ui', 'personal', 'marko-ui', 'parent', 'main',
+                 '2026-09-04T13:00:00.000Z', '2026-09-04T16:00:00.000Z', 1, 0, '[]', 'host', '2026-09-04T16:00:00.000Z')`,
+      )
+      .run();
+
+    declareQuest(store, database, {
+      sessionId: "parent",
+      questId: "Q1",
+      plan: [],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-04T13:05:00.000Z",
+      heroId: "H1",
+    });
+    declareQuest(store, database, {
+      sessionId: "s1",
+      parentSessionId: "parent",
+      questId: "Q2",
+      plan: [],
+      scope: "subagent",
+      declaredBy: "agent",
+      at: "2026-09-04T14:05:00.000Z",
+      heroId: "H1",
+    });
+
+    const window = buildWindow(database, {
+      sessionId: "s1",
+      sinceTs: "2026-09-04T14:30:00.000Z",
+      ...memoryInput,
+      windowEnd: "2026-09-04T15:20:00.000Z",
+    });
+
+    expect(window.declaredQuest?.title).toBe("Verify the walk order fix");
+    expect(window.parentDeclaredQuest?.title).toBe("Ship marko-ui");
+  });
+
+  test("aliases number both slices in list order and never leak a real id", () => {
+    const database = openDatabase(":memory:");
+    ensureTables(database);
+    seedSession(database);
+    seedOpenActivity(database);
+    seedEarlierSession(database);
+
+    const window = buildWindow(database, {
+      sessionId: "s1",
+      sinceTs: "2026-09-04T14:30:00.000Z",
+      ...memoryInput,
+    });
+
+    // Session activities first, then recent: A1 is the open one, A2 the closed one.
+    expect(window.sessionOpenActivities.map((activity) => activity.activityId)).toEqual(["A1"]);
+    expect(window.recentActivities.map((activity) => activity.activityId)).toEqual(["A2"]);
+    expect(window.activityAliases).toEqual({ A1: "A1", A2: "A0" });
+    expect(Object.keys(window.activityAliases).every((alias) => /^A\d+$/.test(alias))).toBe(true);
   });
 });

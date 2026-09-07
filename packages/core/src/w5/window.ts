@@ -1,5 +1,10 @@
 import type { Database } from "bun:sqlite";
-import type { ClassifierWindow } from "./classifier";
+import {
+  currentDeclaredQuest,
+  currentDeclaredQuestForSubagent,
+  type DeclaredQuest,
+} from "../intent/declarations";
+import type { ClassifierWindow, DeclaredQuestSlice } from "./classifier";
 
 export function findSessionFile(database: Database, sessionId: string): string | null {
   const row = database
@@ -25,6 +30,12 @@ export interface BuildWindowInput {
    * which is what a live run wants: nothing in the database is in its future.
    */
   windowEnd?: string | null;
+  /**
+   * `"inferred"` restores the pre-verifier slice: the quest lists the classifier
+   * used to browse come back and no declaration is looked up. Defaults to
+   * `"declared"`.
+   */
+  mode?: "declared" | "inferred";
 }
 
 interface ActivityRow {
@@ -58,6 +69,38 @@ const ACTIVITY_SLICE_SELECT = `
             ORDER BY traces.ended_at DESC LIMIT 1)
     LEFT JOIN quests ON quests.id = activities.quest_id
    WHERE activities.retracted_at IS NULL`;
+
+/**
+ * The `parent_session_id` on the session's latest declaration at `at`, or null
+ * when its latest declaration is session-scoped (or there is none). Parent
+ * linkage lives entirely on the `quest.declared` payload -- no schema or
+ * collector column -- so this is the only place it needs to be read.
+ */
+function latestDeclaredParentSessionId(
+  database: Database,
+  sessionId: string,
+  at: string,
+): string | null {
+  const row = database
+    .query(
+      `SELECT payload FROM events
+        WHERE kind = 'quest.declared' AND json_extract(payload, '$.session_id') = ? AND at <= ?
+        ORDER BY at DESC, id DESC LIMIT 1`,
+    )
+    .get(sessionId, at) as { payload: string } | null;
+  if (row === null) return null;
+  const payload = JSON.parse(row.payload) as {
+    scope?: string;
+    parent_session_id?: string;
+  };
+  if (payload.scope !== "subagent") return null;
+  return payload.parent_session_id ?? null;
+}
+
+function toSlice(declared: DeclaredQuest | null): DeclaredQuestSlice | null {
+  if (declared === null) return null;
+  return { title: declared.title, objective: declared.objective, plan: declared.plan };
+}
 
 export function buildWindow(database: Database, input: BuildWindowInput): ClassifierWindow {
   const session = database
@@ -98,9 +141,13 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
 
   const messages = input.sinceTs !== null ? messageRows.slice(-input.maxMessages) : messageRows;
 
-  const openQuests = database
-    .query(
-      `SELECT quests.id as id, quests.title as title, quests.objective as objective,
+  const mode = input.mode ?? "declared";
+
+  const openQuests =
+    mode === "inferred"
+      ? (database
+          .query(
+            `SELECT quests.id as id, quests.title as title, quests.objective as objective,
               (SELECT MAX(traces.started_at) FROM traces
                  JOIN activities ON activities.id = traces.activity_id
                 WHERE activities.quest_id = quests.id) as lastActivityAt
@@ -111,13 +158,14 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
             quests.owner_kind = 'hero'
             OR quests.owner_id IN (SELECT id FROM parties WHERE slug = ?)
           )`,
-    )
-    .all(session.org) as {
-    id: string;
-    title: string;
-    objective: string | null;
-    lastActivityAt: string | null;
-  }[];
+          )
+          .all(session.org) as {
+          id: string;
+          title: string;
+          objective: string | null;
+          lastActivityAt: string | null;
+        }[])
+      : undefined;
 
   // An activity opened after this window ended did not exist yet when the window
   // happened, so it is never a candidate -- see `windowEnd` on `BuildWindowInput`.
@@ -168,9 +216,11 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
       input.memoryActivities,
     ) as (ActivityRow & { closedAt: string | null; closeReason: string | null })[];
 
-  const recentSideQuests = database
-    .query(
-      `SELECT quests.id as id, quests.title as title, quests.trigger as trigger
+  const recentSideQuests =
+    mode === "inferred"
+      ? (database
+          .query(
+            `SELECT quests.id as id, quests.title as title, quests.trigger as trigger
          FROM quests
         WHERE quests.origin_activity_id IS NOT NULL
           AND quests.trigger IS NOT NULL
@@ -181,8 +231,9 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
           )
         ORDER BY quests.branched_at DESC
         LIMIT 3`,
-    )
-    .all(session.org) as { id: string; title: string; trigger: string }[];
+          )
+          .all(session.org) as { id: string; title: string; trigger: string }[])
+      : undefined;
 
   // Only a window with a cut has messages "before" it. A whole-session window
   // (sinceTs null, as backfill builds) starts at the session's first message, so
@@ -208,6 +259,65 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
     .query("SELECT session_note FROM w5_runs WHERE session_id = ?")
     .get(input.sessionId) as { session_note: string | null } | null;
 
+  // The declaration is resolved at the window's own reference time, so a backfill
+  // window sees what was declared when it happened, not what is declared now. A
+  // subagent's own declaration carries its parent's session id, which is the only
+  // thing needed to find the parent's quest -- no schema or collector change.
+  let declaredQuest: DeclaredQuest | null = null;
+  let parentDeclaredQuest: DeclaredQuest | null = null;
+  if (mode === "declared") {
+    // `currentDeclaredQuest` only ever resolves a *session*-scope declaration, so
+    // a subagent's own quest is invisible to it. The parent id is read straight
+    // off the latest declaration event -- the same place the resolver reads it --
+    // and then the subagent resolver is asked for the quest itself.
+    const parentSessionId = latestDeclaredParentSessionId(database, input.sessionId, windowEnd);
+    if (parentSessionId !== null) {
+      declaredQuest = currentDeclaredQuestForSubagent(database, {
+        sessionId: input.sessionId,
+        parentSessionId,
+        at: windowEnd,
+      });
+      parentDeclaredQuest = currentDeclaredQuest(database, {
+        sessionId: parentSessionId,
+        at: windowEnd,
+      });
+    } else {
+      declaredQuest = currentDeclaredQuest(database, {
+        sessionId: input.sessionId,
+        at: windowEnd,
+      });
+    }
+  }
+
+  const openSlice = sessionOpenActivities.map(
+    ({ closedAt: _closedAt, closeReason: _closeReason, ...activity }) => activity,
+  );
+
+  // Aliases are assigned over both slices in the order they are listed, so the
+  // prompt never carries a 26-character id for the model to garble; `apply.ts`
+  // maps whatever alias comes back through `activityAliases`.
+  // Inference mode is the pre-verifier path end to end: `apply.ts` looks activity
+  // ids up directly there, so the slice must keep carrying real ids. Aliasing is
+  // declared mode's scheme alone.
+  const activityAliases: Record<string, string> = {};
+  let aliasNumber = 0;
+  const aliasFor = (realId: string): string => {
+    if (mode !== "declared") return realId;
+    aliasNumber += 1;
+    const alias = `A${aliasNumber}`;
+    activityAliases[alias] = realId;
+    return alias;
+  };
+
+  const aliasedOpen = openSlice.map((activity) => ({
+    ...activity,
+    activityId: aliasFor(activity.activityId),
+  }));
+  const aliasedRecent = recentActivities.map((activity) => ({
+    ...activity,
+    activityId: aliasFor(activity.activityId),
+  }));
+
   return {
     sessionId: input.sessionId,
     title: session.title,
@@ -216,12 +326,13 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
     org: session.org,
     project: session.project,
     messages,
-    openQuests,
-    sessionOpenActivities: sessionOpenActivities.map(
-      ({ closedAt: _closedAt, closeReason: _closeReason, ...activity }) => activity,
-    ),
-    recentActivities,
-    recentSideQuests,
+    declaredQuest: toSlice(declaredQuest),
+    parentDeclaredQuest: toSlice(parentDeclaredQuest),
+    activityAliases,
+    ...(openQuests === undefined ? {} : { openQuests }),
+    sessionOpenActivities: aliasedOpen,
+    recentActivities: aliasedRecent,
+    ...(recentSideQuests === undefined ? {} : { recentSideQuests }),
     overlapMessages,
     previousSessionNote: runRow?.session_note ?? null,
   };

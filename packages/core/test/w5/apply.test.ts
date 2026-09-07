@@ -1,11 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { openDatabase } from "../../src/db/database";
+import { declareQuest } from "../../src/intent/declarations";
 import { newUlid } from "../../src/intent/ids";
 import { applyIncremental, ensureTables } from "../../src/intent/projections";
 import { registerAllProjections } from "../../src/intent/projections/register";
 import { EventStore } from "../../src/intent/store";
 import { applyResult } from "../../src/w5/apply";
-import type { ClassifierResult, ClassifierWindow } from "../../src/w5/classifier";
+import type {
+  ClassifierResult,
+  ClassifierSegment,
+  ClassifierWindow,
+} from "../../src/w5/classifier";
 
 registerAllProjections();
 
@@ -50,6 +55,9 @@ const window: ClassifierWindow = {
   org: "personal",
   project: "marko-ui",
   messages: [],
+  declaredQuest: null,
+  parentDeclaredQuest: null,
+  activityAliases: { A1: "A1" },
   openQuests: [
     { id: "Q1", title: "Ship marko-ui", objective: "86 components", lastActivityAt: null },
   ],
@@ -77,6 +85,8 @@ const good: ClassifierResult = {
       endedAt: "2026-09-04T15:20:00.000Z",
       what: "fix walk order",
       why: "ship marko-ui",
+      belongs: true,
+      guess: null,
       matchedQuest: "Q1",
       proposedQuest: null,
       matchedActivity: "A1",
@@ -92,6 +102,8 @@ const good: ClassifierResult = {
       endedAt: "2026-09-04T15:20:00.000Z",
       what: "compare Astryx",
       why: "unknown",
+      belongs: true,
+      guess: null,
       matchedQuest: null,
       proposedQuest: {
         title: "Compare Astryx",
@@ -125,6 +137,7 @@ describe("applyResult", () => {
       askingEnabled: true,
       now: "2026-09-04T15:21:00.000Z",
       log: () => {},
+      mode: "inferred",
     });
 
     expect(summary.traces).toBe(2);
@@ -167,6 +180,8 @@ describe("applyResult", () => {
           endedAt: "2026-09-04T15:10:00.000Z",
           what: "compare Astryx",
           why: "unknown",
+          belongs: true,
+          guess: null,
           matchedQuest: null,
           proposedQuest: {
             title: "Compare Astryx",
@@ -186,6 +201,8 @@ describe("applyResult", () => {
           endedAt: "2026-09-04T15:20:00.000Z",
           what: "read Astryx docs",
           why: "unknown",
+          belongs: true,
+          guess: null,
           matchedQuest: null,
           proposedQuest: null,
           matchedActivity: null,
@@ -201,6 +218,8 @@ describe("applyResult", () => {
           endedAt: "2026-09-04T15:30:00.000Z",
           what: "check email",
           why: "unknown",
+          belongs: true,
+          guess: null,
           matchedQuest: null,
           proposedQuest: {
             title: "Check email",
@@ -224,6 +243,7 @@ describe("applyResult", () => {
       askingEnabled: false,
       now: "2026-09-04T15:31:00.000Z",
       log: () => {},
+      mode: "inferred",
     });
 
     // Two switches happened (Q1 -> Compare Astryx, Compare Astryx -> Check email).
@@ -252,6 +272,7 @@ describe("applyResult", () => {
       askingEnabled: false,
       now: "2026-09-04T15:21:00.000Z",
       log: () => {},
+      mode: "inferred",
     });
 
     const count = database.query("SELECT COUNT(*) as count FROM questions").get() as {
@@ -273,6 +294,8 @@ describe("applyResult", () => {
       segments: [
         {
           ...baseMatched,
+          belongs: true,
+          guess: null,
           matchedQuest: "Q9",
           matchedActivity: "A1",
           continuesActivity: null,
@@ -288,9 +311,10 @@ describe("applyResult", () => {
       askingEnabled: false,
       now: "2026-09-04T15:21:00.000Z",
       log: (line) => logs.push(line),
+      mode: "inferred",
     });
 
-    expect(summary.questConflicts).toBe(1);
+    expect(summary.doubts).toBe(1);
     expect(summary.activitiesOpened).toBe(0);
     expect(logs).toHaveLength(1);
 
@@ -315,6 +339,8 @@ describe("applyResult", () => {
           ...baseMatched,
           // The classifier did not judge the quest. That is silence, not a claim
           // that the activity has none, so A1 keeps Q1 and nothing is reported.
+          belongs: true,
+          guess: null,
           matchedQuest: null,
           proposedQuest: null,
           matchedActivity: "A1",
@@ -331,9 +357,10 @@ describe("applyResult", () => {
       askingEnabled: false,
       now: "2026-09-04T15:21:00.000Z",
       log: (line) => logs.push(line),
+      mode: "inferred",
     });
 
-    expect(summary.questConflicts).toBe(0);
+    expect(summary.doubts).toBe(0);
     expect(summary.questProposedOnMatched).toBe(0);
     expect(summary.activitiesOpened).toBe(0);
     expect(logs).toHaveLength(0);
@@ -354,6 +381,8 @@ describe("applyResult", () => {
       segments: [
         {
           ...baseMatched,
+          belongs: true,
+          guess: null,
           matchedQuest: null,
           proposedQuest: {
             title: "Ship the walk order fix",
@@ -374,11 +403,12 @@ describe("applyResult", () => {
       askingEnabled: false,
       now: "2026-09-04T15:21:00.000Z",
       log: (line) => logs.push(line),
+      mode: "inferred",
     });
 
     expect(summary.questProposedOnMatched).toBe(1);
     expect(summary.questsProposed).toBe(1);
-    expect(summary.questConflicts).toBe(0);
+    expect(summary.doubts).toBe(0);
     expect(summary.activitiesOpened).toBe(0);
     expect(logs).toHaveLength(1);
 
@@ -402,6 +432,8 @@ describe("applyResult", () => {
       segments: [
         {
           ...baseMatched,
+          belongs: true,
+          guess: null,
           matchedQuest: null,
           proposedQuest: {
             title: "Something else entirely",
@@ -421,6 +453,7 @@ describe("applyResult", () => {
       askingEnabled: false,
       now: "2026-09-04T15:21:00.000Z",
       log: () => {},
+      mode: "inferred",
     });
 
     expect(summary.questProposedOnMatched).toBe(0);
@@ -446,6 +479,8 @@ describe("applyResult", () => {
       segments: [
         {
           ...baseMatched,
+          belongs: true,
+          guess: null,
           matchedQuest: "Q1",
           matchedActivity: null,
           continuesActivity: "A0",
@@ -460,10 +495,11 @@ describe("applyResult", () => {
       askingEnabled: false,
       now: "2026-09-04T15:21:00.000Z",
       log: () => {},
+      mode: "inferred",
     });
 
     expect(summary.activitiesOpened).toBe(1);
-    expect(summary.questConflicts).toBe(0);
+    expect(summary.doubts).toBe(0);
 
     const opened = database
       .query("SELECT id, quest_id, continues FROM activities WHERE continues IS NOT NULL")
@@ -482,6 +518,8 @@ describe("applyResult", () => {
           ...baseMatched,
           startedAt: "2026-09-04T15:00:00.000Z",
           endedAt: "2026-09-04T15:10:00.000Z",
+          belongs: true,
+          guess: null,
           matchedQuest: "Q1",
           matchedActivity: "A1",
           continuesActivity: null,
@@ -507,6 +545,7 @@ describe("applyResult", () => {
       askingEnabled: false,
       now: "2026-09-04T15:21:00.000Z",
       log: () => {},
+      mode: "inferred",
     });
 
     const untouched = database
@@ -553,6 +592,8 @@ describe("applyResult", () => {
           ...baseMatched,
           startedAt: "2026-09-04T15:10:00.000Z",
           endedAt: "2026-09-04T15:20:00.000Z",
+          belongs: true,
+          guess: null,
           matchedQuest: "Q1",
           matchedActivity: "A1",
           continuesActivity: null,
@@ -569,6 +610,7 @@ describe("applyResult", () => {
       askingEnabled: false,
       now: "2026-09-04T15:21:00.000Z",
       log: () => {},
+      mode: "inferred",
     });
 
     const a1 = database
@@ -593,6 +635,8 @@ describe("applyResult", () => {
           startedAt: "2026-09-04T15:00:00.000Z",
           endedAt: "2026-09-04T15:10:00.000Z",
           what: "switch to B",
+          belongs: true,
+          guess: null,
           matchedQuest: null,
           proposedQuest: { title: "Quest B", objective: "do B", commitment: "exploratory" },
           matchedActivity: null,
@@ -607,6 +651,8 @@ describe("applyResult", () => {
           startedAt: "2026-09-04T15:10:00.000Z",
           endedAt: "2026-09-04T15:20:00.000Z",
           what: "back to walk order",
+          belongs: true,
+          guess: null,
           matchedQuest: "Q1",
           matchedActivity: "A1",
           continuesActivity: null,
@@ -624,6 +670,7 @@ describe("applyResult", () => {
       askingEnabled: false,
       now: "2026-09-04T15:21:00.000Z",
       log: () => {},
+      mode: "inferred",
     });
 
     // One branch (A to B); the return to A is attention moving back to a quest
@@ -677,6 +724,7 @@ describe("applyResult", () => {
       askingEnabled: false,
       now: "2026-09-04T15:21:00.000Z",
       log: () => {},
+      mode: "inferred",
     });
 
     expect(summary.traces).toBe(0);
@@ -700,11 +748,12 @@ describe("applyResult", () => {
       askingEnabled: false,
       now: "2026-09-04T15:21:00.000Z",
       log: (line) => logs.push(line),
+      mode: "inferred",
     });
 
     expect(summary.unknownActivityIds).toBe(1);
     expect(summary.activitiesOpened).toBe(1);
-    expect(summary.questConflicts).toBe(0);
+    expect(summary.doubts).toBe(0);
     expect(logs).toHaveLength(1);
 
     const trace = database.query("SELECT activity_id FROM traces WHERE id != 'T0'").get() as {
@@ -757,6 +806,8 @@ describe("applyResult", () => {
             matchedActivity: "A-retracted",
             continuesActivity: null,
             newActivityReason: null,
+            belongs: true,
+            guess: null,
             matchedQuest: "Q1",
             proposedQuest: null,
             isSwitch: false,
@@ -823,6 +874,8 @@ describe("applyResult", () => {
             ...baseMatched,
             matchedActivity: null,
             continuesActivity: "A-nope",
+            belongs: true,
+            guess: null,
             matchedQuest: "Q1",
           },
         ],
@@ -850,6 +903,8 @@ describe("applyResult", () => {
           ...baseNew,
           startedAt: "2026-09-04T15:10:00.000Z",
           endedAt: "2026-09-04T15:20:00.000Z",
+          belongs: true,
+          guess: null,
           matchedQuest: null,
           proposedQuest: { title: "Side task", objective: "fill the wait", commitment: "personal" },
           matchedActivity: null,
@@ -868,11 +923,311 @@ describe("applyResult", () => {
       askingEnabled: false,
       now: "2026-09-04T15:21:00.000Z",
       log: () => {},
+      mode: "inferred",
     });
 
     const branched = database
       .query("SELECT branch_kind FROM quests WHERE title = 'Side task'")
       .get() as { branch_kind: string };
     expect(branched.branch_kind).toBe("waiting");
+  });
+});
+
+describe("applyResult in declared mode", () => {
+  /** A declared session: hero, quest, one open activity A1, and a declaration. */
+  function seedDeclared(database: ReturnType<typeof openDatabase>, options?: { at?: string }) {
+    const { store, heroId, questId } = seed(database);
+    declareQuest(store, database, {
+      sessionId: "s1",
+      questId,
+      plan: ["walk order"],
+      scope: "session",
+      declaredBy: "agent",
+      at: options?.at ?? "2026-09-04T13:00:00.000Z",
+      heroId,
+    });
+    return { store, heroId, questId };
+  }
+
+  const declaredWindow: ClassifierWindow = {
+    ...window,
+    messages: [{ ts: "2026-09-04T15:20:00.000Z", role: "user", text: "still on it" }],
+    openQuests: undefined,
+    recentSideQuests: undefined,
+    activityAliases: { A1: "A1" },
+  };
+
+  function segment(overrides: Partial<ClassifierSegment>): ClassifierSegment {
+    return {
+      startedAt: "2026-09-04T15:00:00.000Z",
+      endedAt: "2026-09-04T15:20:00.000Z",
+      what: "fix walk order",
+      why: "ship marko-ui",
+      belongs: true,
+      guess: null,
+      matchedActivity: null,
+      continuesActivity: null,
+      newActivityReason: "a fresh stretch of work",
+      isSwitch: false,
+      trigger: null,
+      confidence: 0.9,
+      ...overrides,
+    };
+  }
+
+  const declaredOptions = {
+    actor: "hook" as const,
+    askingEnabled: true,
+    now: "2026-09-04T15:30:00.000Z",
+    log: () => {},
+    mode: "declared" as const,
+  };
+
+  test("a belonging segment gets the declared quest and asks nothing", () => {
+    const database = openDatabase(":memory:");
+    const { store, questId } = seedDeclared(database);
+
+    const summary = applyResult(
+      store,
+      database,
+      declaredWindow,
+      { segments: [segment({})], sessionNote: null },
+      declaredOptions,
+    );
+
+    expect(summary.doubts).toBe(0);
+    expect(summary.questsProposed).toBe(0);
+    const activity = database
+      .query("SELECT quest_id as questId FROM activities ORDER BY opened_at DESC LIMIT 1")
+      .get() as { questId: string | null };
+    expect(activity.questId).toBe(questId);
+    expect(
+      (database.query("SELECT COUNT(*) as count FROM questions").get() as { count: number }).count,
+    ).toBe(0);
+  });
+
+  test("belongs: false counts a doubt, asks a belongs question with the guess, and never reassigns", () => {
+    const database = openDatabase(":memory:");
+    const { store, questId } = seedDeclared(database);
+
+    const summary = applyResult(
+      store,
+      database,
+      declaredWindow,
+      {
+        segments: [
+          segment({
+            matchedActivity: "A1",
+            newActivityReason: null,
+            belongs: false,
+            guess: "a competitor comparison",
+          }),
+        ],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+
+    expect(summary.doubts).toBe(1);
+    const question = database
+      .query("SELECT kind, guess, session_id as sessionId FROM questions")
+      .get() as { kind: string; guess: string | null; sessionId: string | null };
+    expect(question.kind).toBe("belongs");
+    expect(question.guess).toBe("a competitor comparison");
+    expect(question.sessionId).toBe("s1");
+
+    // The doubt is raised, never acted on: the activity keeps the declared quest.
+    const activity = database
+      .query("SELECT quest_id as questId FROM activities WHERE id = 'A1'")
+      .get() as { questId: string | null };
+    expect(activity.questId).toBe(questId);
+  });
+
+  test("declared mode never emits quest.created, quest.branched or a reassignment", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seedDeclared(database);
+    const before = (
+      database.query("SELECT COUNT(*) as count FROM events").get() as { count: number }
+    ).count;
+
+    applyResult(
+      store,
+      database,
+      declaredWindow,
+      {
+        segments: [
+          segment({
+            isSwitch: true,
+            trigger: "blocked on the build",
+            belongs: false,
+            guess: "a build fix",
+          }),
+          segment({
+            startedAt: "2026-09-04T15:20:00.000Z",
+            endedAt: "2026-09-04T15:20:00.000Z",
+            isSwitch: true,
+            what: "something else",
+          }),
+        ],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+
+    const kinds = (
+      database.query("SELECT kind FROM events ORDER BY id ASC LIMIT -1 OFFSET ?").all(before) as {
+        kind: string;
+      }[]
+    ).map((row) => row.kind);
+
+    expect(kinds).not.toContain("quest.created");
+    expect(kinds).not.toContain("quest.branched");
+    expect(kinds).not.toContain("activity.assigned");
+  });
+
+  test("an unknown alias opens a new activity and counts an unknown activity id", () => {
+    const database = openDatabase(":memory:");
+    const { store, questId } = seedDeclared(database);
+
+    const summary = applyResult(
+      store,
+      database,
+      declaredWindow,
+      {
+        segments: [segment({ matchedActivity: "A7", newActivityReason: null })],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+
+    expect(summary.unknownActivityIds).toBe(1);
+    expect(summary.activitiesOpened).toBe(1);
+    const opened = database
+      .query("SELECT quest_id as questId FROM activities WHERE id != 'A1'")
+      .get() as { questId: string | null };
+    expect(opened.questId).toBe(questId);
+  });
+
+  test("an alias is mapped back to the real activity id it stands for", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seedDeclared(database);
+
+    const summary = applyResult(
+      store,
+      database,
+      { ...declaredWindow, activityAliases: { A1: "A1" } },
+      {
+        segments: [segment({ matchedActivity: "A1", newActivityReason: null })],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+
+    // The alias resolved, so nothing new was opened and the trace joined A1.
+    expect(summary.activitiesOpened).toBe(0);
+    expect(summary.unknownActivityIds).toBe(0);
+    const trace = database
+      .query("SELECT activity_id as activityId FROM traces WHERE id != 'T0'")
+      .get() as { activityId: string };
+    expect(trace.activityId).toBe("A1");
+  });
+
+  test("a session with no declaration records traces with no quest and asks to declare once", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seed(database);
+
+    const summary = applyResult(
+      store,
+      database,
+      declaredWindow,
+      {
+        segments: [
+          segment({}),
+          segment({ startedAt: "2026-09-04T15:20:00.000Z", endedAt: "2026-09-04T15:20:00.000Z" }),
+        ],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+
+    expect(summary.activitiesOpened).toBe(2);
+    const opened = database
+      .query("SELECT quest_id as questId FROM activities WHERE id != 'A1'")
+      .all() as { questId: string | null }[];
+    expect(opened).toHaveLength(2);
+    expect(opened.every((activity) => activity.questId === null)).toBe(true);
+
+    // One gap, one question -- not one per segment.
+    const questions = database.query("SELECT kind FROM questions").all() as { kind: string }[];
+    expect(questions).toHaveLength(1);
+    expect(questions[0]?.kind).toBe("declare");
+  });
+
+  test("a subagent's doubt is addressed to the parent session", () => {
+    const database = openDatabase(":memory:");
+    const { store, heroId } = seed(database);
+    database
+      .query(
+        `INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at)
+         VALUES ('Q2', 'hero', ?, 'Verify the fix', 'prove it', 1, 1, 'started', '2026-09-01T00:00:00.000Z')`,
+      )
+      .run(heroId);
+    declareQuest(store, database, {
+      sessionId: "s1",
+      parentSessionId: "parent",
+      questId: "Q2",
+      plan: [],
+      scope: "subagent",
+      declaredBy: "agent",
+      at: "2026-09-04T13:00:00.000Z",
+      heroId,
+    });
+
+    const summary = applyResult(
+      store,
+      database,
+      {
+        ...declaredWindow,
+        parentDeclaredQuest: { title: "Ship marko-ui", objective: null, plan: [] },
+      },
+      {
+        segments: [segment({ belongs: false, guess: "unrelated refactor" })],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+
+    expect(summary.doubts).toBe(1);
+    const question = database.query("SELECT session_id as sessionId FROM questions").get() as {
+      sessionId: string | null;
+    };
+    expect(question.sessionId).toBe("parent");
+
+    // The subagent's own quest, not the parent's, is what its work is attributed to.
+    const activity = database
+      .query("SELECT quest_id as questId FROM activities WHERE id != 'A1'")
+      .get() as { questId: string | null };
+    expect(activity.questId).toBe("Q2");
+  });
+
+  test("a doubt is still counted when asking is disabled, without asking", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seedDeclared(database);
+
+    const summary = applyResult(
+      store,
+      database,
+      declaredWindow,
+      {
+        segments: [segment({ belongs: false, guess: "something else" })],
+        sessionNote: null,
+      },
+      { ...declaredOptions, askingEnabled: false },
+    );
+
+    expect(summary.doubts).toBe(1);
+    expect(
+      (database.query("SELECT COUNT(*) as count FROM questions").get() as { count: number }).count,
+    ).toBe(0);
   });
 });

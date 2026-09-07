@@ -9,7 +9,25 @@ export interface ClassifierWindow {
   org: string;
   project: string;
   messages: { ts: string; role: string; text: string }[];
-  openQuests: {
+  /**
+   * The quest this session declared (`tempad quest declare`), as of the window's
+   * reference time. `null` means the session has not declared anything yet, which
+   * the verifier reads as "ask to declare" rather than "infer one".
+   */
+  declaredQuest: DeclaredQuestSlice | null;
+  /** Set only for a subagent session, from the parent's own declaration. */
+  parentDeclaredQuest: DeclaredQuestSlice | null;
+  /**
+   * alias -> real activity id, e.g. `{ A1: "01H..." }`. The model only ever sees
+   * the alias, so there is no 26-character id for it to garble, and `apply.ts`
+   * maps whatever it returns back through this map.
+   */
+  activityAliases: Record<string, string>;
+  /**
+   * Inference-mode only (`[w5].mode = "inferred"`, or the backfill fallback for a
+   * session that never declares anything). Absent in declared mode.
+   */
+  openQuests?: {
     id: string;
     title: string;
     objective: string | null;
@@ -35,28 +53,50 @@ export interface ClassifierWindow {
     closedAt: string | null;
     closeReason: string | null;
   }[];
-  recentSideQuests: { id: string; title: string; trigger: string }[];
+  /** Inference-mode only, like `openQuests`. */
+  recentSideQuests?: { id: string; title: string; trigger: string }[];
   overlapMessages: { ts: string; role: string; text: string }[];
   previousSessionNote: string | null;
 }
 
-export type QuestionKind = "which_quest" | "why" | "trigger";
+export interface DeclaredQuestSlice {
+  title: string;
+  objective: string | null;
+  plan: string[];
+}
+
+export type QuestionKind = "belongs" | "declare";
+
+/** Retained for the inference fallback; declared mode proposes no quests. */
 export type Commitment = "promised" | "personal" | "exploratory";
+
+/** The question kinds the pre-verifier classifier was allowed to raise. */
+export type LegacyQuestionKind = "which_quest" | "why" | "trigger";
 
 export interface ClassifierSegment {
   startedAt: string;
   endedAt: string;
   what: string;
   why: string;
-  matchedQuest: string | null;
-  proposedQuest: { title: string; objective: string; commitment: Commitment } | null;
+  /** Does this segment belong to the declared quest (the parent's, for a subagent)? */
+  belongs: boolean;
+  /** Short string naming what it looks like instead; required when `belongs` is false. */
+  guess: string | null;
+  /** Alias (`"A1"`), never a real id, in declared mode. */
   matchedActivity: string | null;
+  /** Alias (`"A1"`), never a real id, in declared mode. */
   continuesActivity: string | null;
   newActivityReason: string | null;
   isSwitch: boolean;
   trigger: string | null;
   confidence: number;
-  questions: QuestionKind[];
+  /**
+   * Inference-mode only. The verifier makes no quest decision, so these are
+   * absent in declared mode and only read on the fallback path.
+   */
+  matchedQuest?: string | null;
+  proposedQuest?: { title: string; objective: string; commitment: Commitment } | null;
+  questions?: LegacyQuestionKind[];
 }
 
 export interface ClassifierResult {
@@ -89,6 +129,7 @@ export const DEFAULT_NEW_ACTIVITY_REASON = "classifier gave no reason";
  * window.
  */
 const NULLABLE_SEGMENT_FIELDS = [
+  "guess",
   "matchedQuest",
   "proposedQuest",
   "matchedActivity",
@@ -97,7 +138,8 @@ const NULLABLE_SEGMENT_FIELDS = [
   "trigger",
 ] as const;
 
-const QUESTION_KINDS = new Set<QuestionKind>(["which_quest", "why", "trigger"]);
+export const QUESTION_KINDS = new Set<QuestionKind>(["belongs", "declare"]);
+const LEGACY_QUESTION_KINDS = new Set<LegacyQuestionKind>(["which_quest", "why", "trigger"]);
 const COMMITMENTS = new Set<Commitment>(["promised", "personal", "exploratory"]);
 
 function requireString(value: unknown, path: string, problems: string[]): value is string {
@@ -119,6 +161,7 @@ function validateSegment(
   problems: string[],
   bounds: { firstTs: string; lastTs: string } | null,
   counters: SelectorCounters,
+  aliases: Set<string> | null,
 ): void {
   const where = `segments[${index}]`;
   if (typeof raw !== "object" || raw === null) {
@@ -130,7 +173,6 @@ function validateSegment(
   for (const field of NULLABLE_SEGMENT_FIELDS) {
     if (segment[field] === undefined) segment[field] = null;
   }
-  if (segment.questions === undefined) segment.questions = [];
 
   const startedAtIsString = requireString(segment.startedAt, `${where}.startedAt`, problems);
   const endedAtIsString = requireString(segment.endedAt, `${where}.endedAt`, problems);
@@ -156,7 +198,25 @@ function validateSegment(
     }
   }
 
-  if (segment.matchedQuest !== null && typeof segment.matchedQuest !== "string") {
+  if (typeof segment.belongs !== "boolean") {
+    problems.push(`${where}.belongs: expected boolean`);
+  } else if (segment.belongs === false) {
+    // A doubt with nothing to say is useless to the human answering it, so this
+    // is the one new hard requirement rather than a repair.
+    if (typeof segment.guess !== "string" || segment.guess.trim() === "") {
+      problems.push(`${where}.guess: expected a non-empty string when belongs is false`);
+    }
+  } else if (segment.guess !== null) {
+    // Repair, don't reject: a segment that belongs has no need to guess what else
+    // it might be, and a model that fills it in anyway is just noisy.
+    segment.guess = null;
+  }
+
+  if (
+    segment.matchedQuest !== undefined &&
+    segment.matchedQuest !== null &&
+    typeof segment.matchedQuest !== "string"
+  ) {
     problems.push(`${where}.matchedQuest: expected string or null`);
   }
   if (segment.matchedActivity !== null && typeof segment.matchedActivity !== "string") {
@@ -167,6 +227,19 @@ function validateSegment(
   }
   if (segment.newActivityReason !== null && typeof segment.newActivityReason !== "string") {
     problems.push(`${where}.newActivityReason: expected string or null`);
+  }
+
+  // An alias the window never offered resolves to nothing, exactly as a
+  // fabricated ULID did before the alias scheme: it is dropped here so the
+  // existing selector repair below re-defaults the segment, rather than adding a
+  // third counter for the same failure.
+  if (aliases !== null) {
+    if (typeof segment.matchedActivity === "string" && !aliases.has(segment.matchedActivity)) {
+      segment.matchedActivity = null;
+    }
+    if (typeof segment.continuesActivity === "string" && !aliases.has(segment.continuesActivity)) {
+      segment.continuesActivity = null;
+    }
   }
 
   // The prompt still asks for exactly one selector, but a model that sets none or
@@ -197,7 +270,7 @@ function validateSegment(
     problems.push(`${where}.isSwitch: expected boolean`);
   }
 
-  if (segment.proposedQuest !== null) {
+  if (segment.proposedQuest !== undefined && segment.proposedQuest !== null) {
     if (typeof segment.proposedQuest !== "object") {
       problems.push(`${where}.proposedQuest: expected object or null`);
     } else {
@@ -214,14 +287,17 @@ function validateSegment(
     problems.push(`${where}.confidence: expected number between 0 and 1`);
   }
 
-  if (!Array.isArray(segment.questions)) {
-    problems.push(`${where}.questions: expected array`);
-  } else {
-    for (const [questionIndex, question] of segment.questions.entries()) {
-      if (!QUESTION_KINDS.has(question as QuestionKind)) {
-        problems.push(
-          `${where}.questions[${questionIndex}]: unknown question kind ${String(question)}`,
-        );
+  // Inference-mode only: the verifier raises no per-segment questions.
+  if (segment.questions !== undefined) {
+    if (!Array.isArray(segment.questions)) {
+      problems.push(`${where}.questions: expected array`);
+    } else {
+      for (const [questionIndex, question] of segment.questions.entries()) {
+        if (!LEGACY_QUESTION_KINDS.has(question as LegacyQuestionKind)) {
+          problems.push(
+            `${where}.questions[${questionIndex}]: unknown question kind ${String(question)}`,
+          );
+        }
       }
     }
   }
@@ -245,10 +321,15 @@ export function validateResult(raw: unknown, window?: ClassifierWindow): Classif
         }
       : null;
 
+  const aliases =
+    window !== undefined && window.activityAliases !== undefined
+      ? new Set(Object.keys(window.activityAliases))
+      : null;
+
   const counters: SelectorCounters = { selectorDefaulted: 0, selectorAmbiguous: 0 };
   const segments = (raw as { segments: unknown[] }).segments;
   for (const [index, segment] of segments.entries()) {
-    validateSegment(segment, index, problems, bounds, counters);
+    validateSegment(segment, index, problems, bounds, counters, aliases);
   }
 
   const sessionNote = (raw as { sessionNote?: unknown }).sessionNote;

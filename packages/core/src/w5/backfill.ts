@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env";
 import type { W5Config } from "../intent/config";
+import { hasAnyDeclaration } from "../intent/declarations";
 import { applyIncremental, ensureTables } from "../intent/projections";
 import { registerAllProjections } from "../intent/projections/register";
 import { EventStore } from "../intent/store";
@@ -35,7 +36,7 @@ export interface BackfillResult {
   windowsClassified: number;
   windowsFailed: number;
   windowsSkipped: number;
-  questConflicts: number;
+  doubts: number;
   unknownActivityIds: number;
   overlapDropped: number;
   questProposedOnMatched: number;
@@ -132,7 +133,7 @@ export async function backfill(
   let windowsClassified = 0;
   let windowsFailed = 0;
   let windowsSkipped = 0;
-  let questConflicts = 0;
+  let doubts = 0;
   let unknownActivityIds = 0;
   let overlapDropped = 0;
   let questProposedOnMatched = 0;
@@ -161,9 +162,32 @@ export async function backfill(
 
   const pending: PendingWindow[] = [];
 
+  /**
+   * Decided once per session, never per chunk: a session either declares
+   * something somewhere in its span or it never does. A session that declares
+   * partway through runs in declared mode for its *whole* span -- its earlier
+   * chunks take the "no declaration yet" path (a `declare` question, traces with
+   * no quest) rather than the fallback, which is only for sessions that declare
+   * nothing, ever. This is exactly what keeps inferred quests off the activities
+   * of a declared session.
+   */
+  const sessionModes = new Map<string, "declared" | "inferred">();
+  const modeFor = (sessionId: string): "declared" | "inferred" => {
+    const cached = sessionModes.get(sessionId);
+    if (cached !== undefined) return cached;
+    const mode: "declared" | "inferred" =
+      intentConfig.mode === "inferred" ||
+      (intentConfig.inferenceFallback && !hasAnyDeclaration(database, sessionId))
+        ? "inferred"
+        : "declared";
+    sessionModes.set(sessionId, mode);
+    return mode;
+  };
+
   for (const session of sessions) {
     const fullWindow = buildWindow(database, {
       sessionId: session.id,
+      mode: modeFor(session.id),
       sinceTs: null,
       maxMessages: 5000,
       memoryHours: intentConfig.memoryHours,
@@ -240,6 +264,7 @@ export async function backfill(
     const chunkWindow = {
       ...buildWindow(database, {
         sessionId: session.id,
+        mode: modeFor(session.id),
         sinceTs: previousChunkEnd,
         maxMessages: 5000,
         memoryHours: intentConfig.memoryHours,
@@ -262,8 +287,9 @@ export async function backfill(
         askingEnabled: false,
         now: options.now,
         log: options.log,
+        mode: modeFor(session.id),
       });
-      questConflicts += applied.questConflicts;
+      doubts += applied.doubts;
       unknownActivityIds += applied.unknownActivityIds;
       overlapDropped += applied.overlapDropped;
       questProposedOnMatched += applied.questProposedOnMatched;
@@ -305,7 +331,7 @@ export async function backfill(
     windowsClassified,
     windowsFailed,
     windowsSkipped,
-    questConflicts,
+    doubts,
     unknownActivityIds,
     overlapDropped,
     questProposedOnMatched,

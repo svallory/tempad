@@ -199,3 +199,166 @@ describe("activities and traces", () => {
     expect(row.answer).toBe(quest.id);
   });
 });
+
+describe("tempad answer --belongs", () => {
+  /** A trace under a quest, plus a `belongs` question about it. */
+  async function seedBelongsQuestion() {
+    const database = openDatabase(":memory:");
+    const store = new EventStore(database);
+    const lines: string[] = [];
+    const context = {
+      database,
+      config: {} as never,
+      intentConfig: defaultIntentConfig(),
+      stdout: (line: string) => lines.push(line),
+    };
+    await runIntentCommand(["hero", "init", "S"], context);
+    await runIntentCommand(
+      ["quest", "add", "Ship marko-ui", "--objective", "86 components", "--owner", "hero"],
+      context,
+    );
+    const quest = database.query("SELECT id FROM quests").get() as { id: string };
+    const activity = openActivity(store, database, {
+      objective: "fix walk order",
+      quest: quest.id,
+      actor: "hook",
+    });
+    const trace = recordTrace(store, database, {
+      activity,
+      tool: "claude-code",
+      place: "p",
+      source: "session",
+      startedAt: "2026-09-04T15:00:00.000Z",
+      endedAt: "2026-09-04T15:30:00.000Z",
+      who: "hero",
+      what: "x",
+      why: "unknown",
+      where: "w",
+      how: "h",
+      confidence: 0.9,
+      classifiedBy: "assistant",
+      actor: "hook",
+    });
+    const question = askQuestion(store, database, {
+      trace,
+      sessionId: "s1",
+      kind: "belongs",
+      text: "belongs",
+      guess: "a competitor comparison",
+      actor: "hook",
+    });
+    return { database, context, question, activity, quest };
+  }
+
+  test("--belongs answers the question and leaves the trace and its quest alone", async () => {
+    const { database, context, question, activity, quest } = await seedBelongsQuestion();
+
+    expect(
+      await runIntentCommand(
+        ["answer", question, "--belongs", "--why", "it is the same work"],
+        context,
+      ),
+    ).toBe(0);
+
+    const row = database
+      .query("SELECT state, answer FROM questions WHERE id = ?")
+      .get(question) as { state: string; answer: string };
+    expect(row.state).toBe("answered");
+    expect(row.answer).toBe("it is the same work");
+
+    // "Yes it belongs" confirms the declared quest: nothing moves.
+    const activityRow = database
+      .query("SELECT quest_id as questId FROM activities WHERE id = ?")
+      .get(activity) as { questId: string | null };
+    expect(activityRow.questId).toBe(quest.id);
+    expect(
+      (database.query("SELECT COUNT(*) as count FROM quests").get() as { count: number }).count,
+    ).toBe(1);
+  });
+
+  test("the question.answered payload records belongs: true", async () => {
+    const { database, context, question } = await seedBelongsQuestion();
+
+    await runIntentCommand(["answer", question, "--belongs"], context);
+
+    const event = database
+      .query("SELECT payload FROM events WHERE kind = 'question.answered' AND subject = ?")
+      .get(question) as { payload: string };
+    expect(JSON.parse(event.payload).belongs).toBe(true);
+  });
+
+  test("--belongs and --quest together are refused", async () => {
+    const { context, question } = await seedBelongsQuestion();
+
+    expect(
+      await runIntentCommand(["answer", question, "--belongs", "--quest", "new:Other"], context),
+    ).toBe(2);
+  });
+
+  test("neither --belongs nor --quest is refused", async () => {
+    const { context, question } = await seedBelongsQuestion();
+
+    expect(await runIntentCommand(["answer", question], context)).toBe(2);
+  });
+
+  test("--quest on a belongs question still moves the trace's activity", async () => {
+    const { database, context, question, activity } = await seedBelongsQuestion();
+
+    expect(
+      await runIntentCommand(
+        ["answer", question, "--quest", "new:Compare Astryx", "--why", "different work"],
+        context,
+      ),
+    ).toBe(0);
+
+    const moved = database
+      .query("SELECT title FROM quests WHERE id = (SELECT quest_id FROM activities WHERE id = ?)")
+      .get(activity) as { title: string };
+    expect(moved.title).toBe("Compare Astryx");
+  });
+
+  test("--origin current on a new quest records the branch with its trigger and kind", async () => {
+    const { database, context, question, activity } = await seedBelongsQuestion();
+
+    expect(
+      await runIntentCommand(
+        [
+          "answer",
+          question,
+          "--quest",
+          "new:Compare Astryx",
+          "--origin",
+          "current",
+          "--trigger",
+          "what does Astryx do for agents?",
+          "--kind",
+          "curiosity",
+        ],
+        context,
+      ),
+    ).toBe(0);
+
+    const branched = database
+      .query("SELECT payload FROM events WHERE kind = 'quest.branched'")
+      .get() as { payload: string };
+    const payload = JSON.parse(branched.payload) as {
+      from_activity: string;
+      trigger: string;
+      kind: string;
+    };
+    expect(payload.from_activity).toBe(activity);
+    expect(payload.trigger).toBe("what does Astryx do for agents?");
+    expect(payload.kind).toBe("curiosity");
+  });
+
+  test("--origin is refused without a new quest, and an unknown --kind is refused", async () => {
+    const { context, question } = await seedBelongsQuestion();
+
+    expect(
+      await runIntentCommand(
+        ["answer", question, "--quest", "new:X", "--origin", "current", "--kind", "sideways"],
+        context,
+      ),
+    ).toBe(2);
+  });
+});

@@ -116,11 +116,60 @@ export function buildDeclarationLine(
   return `tempad: session ${sessionId}, declared quest: ${quest}. Declare with the tempad-quest skill if this prompt starts a different objective.`;
 }
 
-export function buildAdditionalContext(questions: QuestionRow[]): string {
+/**
+ * The hand-back for a doubt the verifier raised. Rendered fresh at read time from
+ * the question's `kind`/`guess` plus the quest declared *now*, never from a
+ * sentence stored when the question was asked: a title can change, and the stored
+ * `text` is internal/debug only for the verifier's two kinds.
+ */
+export function buildBelongsHandback(
+  declaredTitle: string,
+  guess: string,
+  questionId: string,
+): string {
+  return [
+    `w5 thinks the last stretch is not part of "${declaredTitle}" (looks like: ${guess}). Reply:`,
+    `  tempad answer ${questionId} --belongs --why "<reason>"`,
+    "  or",
+    `  tempad answer ${questionId} --quest <id>|new:"<title>" --why "<reason>" [--origin current --trigger "<sentence>" --kind waiting|blocker|curiosity|unknown]`,
+    "Ask the user if you are not sure.",
+  ].join("\n");
+}
+
+/** The hand-back for a session that has declared nothing yet. */
+export function buildDeclareHandback(sessionId: string): string {
+  return [
+    "w5 has no declared quest for this session. Reply:",
+    `  tempad quest declare --session ${sessionId} --quest <id>|--new "<title>" --objective "<text>" [--commitment ...] --by agent`,
+  ].join("\n");
+}
+
+export function buildAdditionalContext(
+  questions: QuestionRow[],
+  context?: {
+    declaredTitle: string | null;
+    sessionId: string;
+    guessFor: (questionId: string) => string | null;
+  },
+): string {
   if (questions.length === 0) return "";
 
   const lines: string[] = [];
   for (const question of questions) {
+    if (context !== undefined && question.kind === "declare") {
+      lines.push(buildDeclareHandback(context.sessionId));
+      continue;
+    }
+    if (context !== undefined && question.kind === "belongs") {
+      lines.push(
+        buildBelongsHandback(
+          context.declaredTitle ?? "your declared quest",
+          context.guessFor(question.id) ?? "something else",
+          question.id,
+        ),
+      );
+      continue;
+    }
     lines.push(
       `w5 noticed a possible shift in what you're working on (question ${question.id}, ${question.kind}).`,
     );

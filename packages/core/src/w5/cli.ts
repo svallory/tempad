@@ -12,7 +12,9 @@ import { dedupe } from "./dedupe";
 import { InvalidEvalRangeError, runEval, validateEvalRange } from "./eval";
 import {
   buildAdditionalContext,
+  buildBelongsHandback,
   buildDeclarationLine,
+  buildDeclareHandback,
   installHooks,
   uninstallHooks,
 } from "./hooks";
@@ -158,7 +160,18 @@ function runContext(args: string[], context: W5Context): number {
     .all(values.session) as (Omit<QuestionRow, "isSwitch"> & { isSwitch: number })[];
 
   const questions: QuestionRow[] = rows.map((row) => ({ ...row, isSwitch: row.isSwitch === 1 }));
-  const text = buildAdditionalContext(questions);
+  const guesses = new Map(
+    (
+      context.database
+        .query("SELECT id, guess FROM questions WHERE session_id = ? AND state = 'asked'")
+        .all(values.session) as { id: string; guess: string | null }[]
+    ).map((row) => [row.id, row.guess]),
+  );
+  const text = buildAdditionalContext(questions, {
+    declaredTitle: declared?.title ?? null,
+    sessionId: values.session,
+    guessFor: (questionId) => guesses.get(questionId) ?? null,
+  });
   const parts = [declarationLine, text].filter((part) => part.length > 0);
   if (parts.length > 0) context.stdout(parts.join("\n"));
   return 0;
@@ -240,9 +253,43 @@ function runQuiet(args: string[], context: W5Context): number {
 
 function runReview(_args: string[], context: W5Context): number {
   const expiredQuestions = context.database
-    .query("SELECT id, text FROM questions WHERE state = 'expired' ORDER BY rowid ASC")
-    .all() as { id: string; text: string }[];
+    .query(
+      "SELECT id, text, kind, guess, session_id as sessionId FROM questions WHERE state = 'expired' ORDER BY rowid ASC",
+    )
+    .all() as {
+    id: string;
+    text: string;
+    kind: string;
+    guess: string | null;
+    sessionId: string | null;
+  }[];
   for (const question of expiredQuestions) {
+    // The verifier's two kinds render the same hand-back the hook shows, so an
+    // expired doubt is answerable straight from `tempad review`; older kinds keep
+    // their generic line.
+    if (question.kind === "declare" && question.sessionId !== null) {
+      context.stdout(
+        `question ${question.id} expired — ${buildDeclareHandback(question.sessionId)}`,
+      );
+      continue;
+    }
+    if (question.kind === "belongs") {
+      const declared =
+        question.sessionId === null
+          ? null
+          : currentDeclaredQuest(context.database, {
+              sessionId: question.sessionId,
+              at: new Date().toISOString(),
+            });
+      context.stdout(
+        `question ${question.id} expired — ${buildBelongsHandback(
+          declared?.title ?? "your declared quest",
+          question.guess ?? "something else",
+          question.id,
+        )}`,
+      );
+      continue;
+    }
     context.stdout(
       `question ${question.id} expired (${question.text}) — tempad answer ${question.id} --quest <id> --why "…"`,
     );
@@ -412,7 +459,7 @@ async function runEvalCommand(args: string[], context: W5Context): Promise<numbe
     `median_activity_duration_minutes=${metrics.medianActivityDurationMinutes.toFixed(1)}`,
   );
   context.stdout(`continues_links=${metrics.continuesLinks}`);
-  context.stdout(`quest_conflicts=${metrics.questConflicts}`);
+  context.stdout(`doubts=${metrics.doubts}`);
   context.stdout(`unknown_activity_ids=${metrics.unknownActivityIds}`);
   context.stdout(`overlap_dropped=${metrics.overlapDropped}`);
   context.stdout(`quest_proposed_on_matched=${metrics.questProposedOnMatched}`);

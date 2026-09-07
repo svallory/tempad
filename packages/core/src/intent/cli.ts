@@ -944,16 +944,29 @@ function runTraceCommand(args: string[], context: IntentContext): number {
   return 2;
 }
 
+const BRANCH_KINDS = new Set<string>(["waiting", "blocker", "curiosity", "unknown"]);
+
 function runAnswerCommand(args: string[], context: IntentContext): number {
   const { values, positionals } = parseArgs({
     args,
-    options: { quest: { type: "string" }, why: { type: "string" } },
+    options: {
+      quest: { type: "string" },
+      why: { type: "string" },
+      belongs: { type: "boolean", default: false },
+      origin: { type: "string" },
+      trigger: { type: "string" },
+      kind: { type: "string" },
+    },
     strict: true,
     allowPositionals: true,
   });
   const questionId = positionals[0];
-  if (!questionId || !values.quest) {
-    console.error('usage: tempad answer <question-id> --quest <id|new:"title"> [--why "..."]');
+  const usage =
+    'usage: tempad answer <question-id> --belongs | --quest <id|new:"title"> [--why "..."] [--origin current --trigger "..." --kind waiting|blocker|curiosity|unknown]';
+  // Exactly one of the two: `--belongs` confirms the declared quest, `--quest`
+  // moves the trace somewhere else. Both together says nothing coherent.
+  if (!questionId || (values.belongs ? values.quest !== undefined : !values.quest)) {
+    console.error(usage);
     return 2;
   }
   const question = context.database
@@ -973,9 +986,26 @@ function runAnswerCommand(args: string[], context: IntentContext): number {
 
   const store = new EventStore(context.database);
 
+  if (values.belongs) {
+    // "Yes it belongs" confirms the declared quest, so the trace and its
+    // activity's quest are left exactly as they are.
+    applyIncremental(
+      context.database,
+      store.append({
+        actor: "hero",
+        kind: "question.answered",
+        subject: questionId,
+        payload: { answeredBy: "hero", belongs: true, why: values.why },
+      }),
+    );
+    return 0;
+  }
+
+  const quest = values.quest as string;
+  const isNewQuest = quest.startsWith("new:");
   let questId: string;
-  if (values.quest.startsWith("new:")) {
-    const title = values.quest.slice("new:".length);
+  if (isNewQuest) {
+    const title = quest.slice("new:".length);
     const heroId = requireHero(context.database);
     questId = newUlid();
     applyIncremental(
@@ -988,7 +1018,39 @@ function runAnswerCommand(args: string[], context: IntentContext): number {
       }),
     );
   } else {
-    questId = resolveQuest(context.database, values.quest);
+    questId = resolveQuest(context.database, quest);
+  }
+
+  // `--origin current` is the answer-time equivalent of a live declaration's
+  // `--origin`: the answer itself is what reveals a side quest existed, branching
+  // from the declared quest's most recent activity.
+  if (values.origin !== undefined) {
+    if (values.origin !== "current") {
+      console.error("--origin must be current");
+      return 2;
+    }
+    if (!isNewQuest) {
+      console.error('--origin is only meaningful with --quest new:"<title>"');
+      return 2;
+    }
+    const kind = values.kind ?? "unknown";
+    if (!BRANCH_KINDS.has(kind)) {
+      console.error("--kind must be waiting|blocker|curiosity|unknown");
+      return 2;
+    }
+    applyIncremental(
+      context.database,
+      store.append({
+        actor: "hero",
+        kind: "quest.branched",
+        subject: questId,
+        payload: {
+          from_activity: trace.activity_id,
+          trigger: values.trigger ?? "unknown",
+          kind,
+        },
+      }),
+    );
   }
 
   answerQuestion(store, context.database, questionId, questId, values.why, "hero");

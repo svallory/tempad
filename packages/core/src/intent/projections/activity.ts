@@ -56,7 +56,8 @@ export const activityProjection: Projection = {
       answered_by TEXT,
       turns_watched INTEGER NOT NULL DEFAULT 0,
       turns_at_ask INTEGER,
-      is_switch INTEGER NOT NULL DEFAULT 0
+      is_switch INTEGER NOT NULL DEFAULT 0,
+      guess TEXT
     );`,
   apply(database, event) {
     const payload = event.payload;
@@ -149,7 +150,7 @@ export const activityProjection: Projection = {
       case "question.asked":
         database
           .query(
-            "INSERT OR REPLACE INTO questions (id, trace_id, session_id, text, kind, state, turns_watched, is_switch) VALUES (?, ?, ?, ?, ?, 'watching', 0, ?)",
+            "INSERT OR REPLACE INTO questions (id, trace_id, session_id, text, kind, state, turns_watched, is_switch, guess) VALUES (?, ?, ?, ?, ?, 'watching', 0, ?, ?)",
           )
           .run(
             event.subject,
@@ -158,6 +159,7 @@ export const activityProjection: Projection = {
             String(payload.text),
             String(payload.kind),
             payload.is_switch === true ? 1 : 0,
+            payload.guess ? String(payload.guess) : null,
           );
         return;
       case "question.watched":
