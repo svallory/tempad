@@ -136,10 +136,10 @@ function resolveDeclaration(
   const rows = database
     .query(
       `SELECT payload FROM events
-        WHERE kind = 'quest.declared' AND at <= ?
+        WHERE kind = 'quest.declared' AND json_extract(payload, '$.session_id') = ? AND at <= ?
         ORDER BY at DESC, id DESC`,
     )
-    .all(at) as { payload: string }[];
+    .all(sessionId, at) as { payload: string }[];
 
   for (const row of rows) {
     const payload = JSON.parse(row.payload) as {

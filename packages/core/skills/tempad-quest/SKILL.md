@@ -28,9 +28,9 @@ As soon as you know what the user's first prompt is asking for, declare it:
 tempad quest declare --session <id> --new "<title>" --objective "<text>" --commitment personal
 ```
 
-Infer `--new`'s `--title`/`--objective` from the prompt. Use `--commitment promised` when the
-user is asking for something they expect delivered, `--exploratory` when it's investigation with
-no fixed deliverable, `--personal` otherwise.
+Infer `--new`'s `--title`/`--objective` from the prompt. Set `--commitment promised` when the
+user is asking for something they expect delivered, `--commitment exploratory` when it's
+investigation with no fixed deliverable, `--commitment personal` otherwise.
 
 If the work is continuing an existing quest, use its id instead:
 
