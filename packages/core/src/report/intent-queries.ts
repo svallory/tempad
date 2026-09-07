@@ -247,6 +247,67 @@ export function queryStintTraceIntervals(
   return rows;
 }
 
+export interface DismissedQuestMinutesRow {
+  questId: string;
+  questTitle: string;
+  org: string | null;
+  project: string | null;
+  minutes: number;
+}
+
+/**
+ * Trace minutes of dismissed stints (below `stint_min_minutes`), grouped by
+ * quest, org and project -- the "short work" line `daily.ts`/`weekly.ts`
+ * render under a quest's normal stint listing. A dismissed stint's traces
+ * keep their `stint_id` and quest (see `w5/lifecycle.ts`), so this reuses the
+ * same `traces -> stints -> quests` path `queryStints` uses, just scoped to
+ * `dismissed_at IS NOT NULL` instead of `IS NULL`.
+ */
+export function queryDismissedMinutesByQuest(
+  database: Database,
+  range: DateRange,
+): DismissedQuestMinutesRow[] {
+  if (!hasIntentTables(database)) return [];
+  const { start, end } = toDayBounds(range);
+  const intervals = queryTraceIntervals(database, range);
+  const minutes = minutesByStint(intervals, start, end);
+  const projects = projectByStint(intervals);
+
+  const stintIds = new Set(intervals.map((interval) => interval.stintId));
+  if (stintIds.size === 0) return [];
+
+  const rows = database
+    .query(
+      `SELECT a.id as id, a.quest_id as questId, q.title as questTitle
+       FROM stints a
+       JOIN quests q ON q.id = a.quest_id
+       WHERE a.retracted_at IS NULL AND a.dismissed_at IS NOT NULL
+         AND a.id IN (${[...stintIds].map(() => "?").join(", ")})`,
+    )
+    .all(...stintIds) as { id: string; questId: string; questTitle: string }[];
+
+  const byQuest = new Map<string, DismissedQuestMinutesRow>();
+  for (const row of rows) {
+    const stintMinutes = minutes.get(row.id) ?? 0;
+    if (stintMinutes <= 0) continue;
+    const project = projects.get(row.id) ?? null;
+    const key = `${project?.org ?? ""}/${project?.project ?? ""}/${row.questId}`;
+    const existing = byQuest.get(key);
+    if (existing) {
+      existing.minutes += stintMinutes;
+    } else {
+      byQuest.set(key, {
+        questId: row.questId,
+        questTitle: row.questTitle,
+        org: project?.org ?? null,
+        project: project?.project ?? null,
+        minutes: stintMinutes,
+      });
+    }
+  }
+  return [...byQuest.values()];
+}
+
 export function queryStints(database: Database, range: DateRange): StintRow[] {
   if (!hasIntentTables(database)) return [];
   const { start, end } = toDayBounds(range);

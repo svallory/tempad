@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
 import {
   attributeNonClaudeEvidence,
+  queryDismissedMinutesByQuest,
   queryOpenQuestions,
   querySideQuests,
   queryStints,
@@ -71,6 +72,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
     };
     const dayStints = queryStints(intentDatabase, dayRangeOptions);
     const daySideQuests = querySideQuests(intentDatabase, dayRangeOptions);
+    const dayDismissedMinutes = queryDismissedMinutesByQuest(intentDatabase, dayRangeOptions);
     const dayAttribution = new Map(
       attributeNonClaudeEvidence(intentDatabase, dayRangeOptions).map((row) => [row.id, row]),
     );
@@ -151,6 +153,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
       }
 
       const keyStints = dayStints.filter((row) => matchesKey(row, key));
+      const keyDismissedMinutes = dayDismissedMinutes.filter((row) => matchesKey(row, key));
       if (keyStints.length > 0) {
         lines.push(heading(4, "Quests"));
         for (const [questTitle, questStints] of groupByQuest(keyStints)) {
@@ -164,6 +167,12 @@ function render(database: Database, config: Config, options: ReportOptions): str
           lines.push(
             `- ${questTitle}${unconfirmed}${inferred}: ${outcomes} (${minutesLabel(minutes)})`,
           );
+          const shortWork = keyDismissedMinutes.find(
+            (row) => row.questId === questStints[0]?.questId,
+          );
+          if (shortWork) {
+            lines.push(`  - short work: ${Math.round(shortWork.minutes)} min`);
+          }
         }
       }
 

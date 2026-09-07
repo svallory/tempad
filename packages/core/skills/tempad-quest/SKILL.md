@@ -5,68 +5,55 @@ description: Declare which quest this session (or subagent) is pursuing, so temp
 
 # tempad-quest
 
-TemPad no longer guesses what you're working on — you declare it. Declare early and re-declare
-whenever the outcome shifts.
+TemPad tracks the human's attention, not the agent's — declare which quest the coming work
+pursues, so tempad places it under the right outcome instead of guessing.
 
-## Read your current declaration first
+## Glossary
 
-Every `UserPromptSubmit` hook injects a line like:
+- **Quest**: planned work with an outcome. A quest may _advance_ another quest (contributing
+  work) or _deviate from_ one; a quest that deviates is a side quest. Never both.
+- **Stint**: a stretch of your attention pursuing one quest. It starts when you begin pursuing an
+  outcome and ends when that outcome is delivered, abandoned or handed off, or after an idle gap.
+  Stints interleave. It lasts at least `stint_min_minutes` (default 5); shorter stretches are
+  maneuvers, folded into the quest's time without a stint of their own.
+- **Maneuver**: anything done inside a stint (read a file, run tests, rebase, check on a dev,
+  answer a clarifying question). Never reported on its own.
 
-```
-tempad: session <id>, declared quest: <title>. Declare with the tempad-quest skill if this prompt starts a different outcome.
-```
+Three tests for a stint: **the report test** (its own standup/timesheet line?), **the
+same-answer test** ("what am I finishing" doesn't change), **the handoff test** (over once the
+outcome leaves your hands; waiting isn't a stint, checking on someone is a maneuver of the stint
+that handed off).
 
-`<title>` is either the declared quest's real title, or the literal word `none` when nothing is
-declared yet — never a placeholder to fill in yourself. This line names your own session id and
-your current declared quest. Do not track either yourself — read it fresh each turn.
+## Declare
 
-## Declare at session start
+Every `UserPromptSubmit` hook injects `tempad: session <id>, active quests: <title> [Q1], <title>
+[Q2]. Declare with the tempad-quest skill if this prompt starts a different outcome.` (`none` =
+nothing declared). Read it fresh each turn; do not track it yourself.
 
-As soon as you know what the user's first prompt is asking for, declare it:
+Declare at session start; on every new quest (plain re-declaration, or
+`--origin`/`--trigger`/`--kind` for a detour); inside every subagent with `--parent`, even
+matching the parent's outcome; and when a quest is done, with `--done`:
 
 ```
 tempad quest declare --session <id> --new "<title>" --outcome "<text>" --commitment personal
-```
-
-Infer `--new`'s `--title`/`--outcome` from the prompt. Set `--commitment promised` when the
-user is asking for something they expect delivered, `--commitment exploratory` when it's
-investigation with no fixed deliverable, `--commitment personal` otherwise.
-
-If the work is continuing an existing quest, use its id instead:
-
-```
 tempad quest declare --session <id> --quest <existing-quest-id>
-```
-
-## Re-declare on outcome change
-
-When the prompt shifts what you're doing mid-session:
-
-- If the old outcome is simply done, declare the new one plainly (no `--origin`).
-- If the new work is a detour from the quest you were just pursuing (a blocker, a question that
-  needs answering first, idle waiting, or curiosity), declare it as a branch:
-
-```
 tempad quest declare --session <id> --new "<title>" --outcome "<text>" \
   --origin <quest id you're branching from> --trigger "<the sentence that caused the pivot>" \
   --kind waiting|blocker|curiosity|unknown
-```
-
-## Declare inside every subagent
-
-Before a subagent starts substantive work, it must declare its own quest with `--parent`, even
-when its outcome is the same as the parent's:
-
-```
 tempad quest declare --session <subagent session id> --parent <parent session id> \
-  --quest <quest id> --plan "first maneuver; second maneuver"
+  --quest <quest id> --plan "Refactor the window builder and ship it as a PR"
+tempad quest declare --session <id> --done <quest>
 ```
 
-Learn the parent's session id from the parent's own hook-context line — never guess it. An
-explicit declaration (not silent inheritance) is what lets tempad tell "forgot to declare" apart
-from "same outcome, deliberately."
+`--commitment promised` for something expected delivered, `exploratory` for investigation with no
+fixed deliverable, `personal` otherwise. Other work while a quest is active? If it advances the
+active quest, `--advances`; otherwise `--deviates-from` and say what pulled you away.
 
-## Plan
+## The plan
 
-Pass `--plan "a; b; c"` with coarse, semicolon-separated steps you expect to take. It's optional
-and may be empty — a rough plan is more useful than none.
+`--plan` lists the **stints** you expect, not maneuvers — apply the three tests above to each line.
+
+- Wrong: `"read the brief; edit window.ts; run tests"` — three maneuvers of one stint.
+- Right: `"Refactor the window builder and ship it as a PR"` — one stint, one outcome.
+
+Re-declaring an active quest with a new `--plan` amends it.

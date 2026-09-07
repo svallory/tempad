@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
 import {
+  queryDismissedMinutesByQuest,
   queryDoubtRows,
   queryQuests,
   querySideQuests,
@@ -35,6 +36,7 @@ interface DayProjectStats {
   sideQuestMinutes: number;
   unconfirmedQuests: number;
   doubts: number;
+  shortWorkMinutes: number;
 }
 
 function emptyStats(): DayProjectStats {
@@ -47,6 +49,7 @@ function emptyStats(): DayProjectStats {
     sideQuestMinutes: 0,
     unconfirmedQuests: 0,
     doubts: 0,
+    shortWorkMinutes: 0,
   };
 }
 
@@ -60,6 +63,7 @@ function addStats(a: DayProjectStats, b: DayProjectStats): DayProjectStats {
     sideQuestMinutes: a.sideQuestMinutes + b.sideQuestMinutes,
     unconfirmedQuests: a.unconfirmedQuests + b.unconfirmedQuests,
     doubts: a.doubts + b.doubts,
+    shortWorkMinutes: a.shortWorkMinutes + b.shortWorkMinutes,
   };
 }
 
@@ -74,6 +78,7 @@ function statsRow(label: string, stats: DayProjectStats): string[] {
     minutesLabel(stats.sideQuestMinutes),
     String(stats.unconfirmedQuests),
     String(stats.doubts),
+    minutesLabel(stats.shortWorkMinutes),
   ];
 }
 
@@ -87,6 +92,7 @@ const HEADERS = [
   "side-quest minutes",
   "unconfirmed quests",
   "doubts",
+  "short work",
 ];
 
 function render(database: Database, config: Config, options: ReportOptions): string {
@@ -113,6 +119,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
     const quests = queryQuests(intentDatabase, dayRangeOptions);
     const sideQuests = querySideQuests(intentDatabase, dayRangeOptions);
     const doubtRows = queryDoubtRows(intentDatabase, dayRangeOptions);
+    const dismissedMinutes = queryDismissedMinutesByQuest(intentDatabase, dayRangeOptions);
 
     const hasEvidence = stints.length > 0 || quests.length > 0 || sideQuests.length > 0;
     if (!hasEvidence && isWeekend(day, timeZone)) continue;
@@ -163,6 +170,9 @@ function render(database: Database, config: Config, options: ReportOptions): str
         ).length,
         doubts: doubtRows.filter((row) => row.org === key.org && row.project === key.project)
           .length,
+        shortWorkMinutes: dismissedMinutes
+          .filter((row) => row.org === key.org && row.project === key.project)
+          .reduce((sum, row) => sum + row.minutes, 0),
       };
 
       rows.push(statsRow(projectKeyString(key), stats));
