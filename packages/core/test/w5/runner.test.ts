@@ -5,10 +5,12 @@ import { join } from "node:path";
 import type { Config } from "../../src/config/env";
 import { openDatabase } from "../../src/db/database";
 import type { W5Config } from "../../src/intent/config";
+import { declareQuest } from "../../src/intent/declarations";
 import { applyIncremental, ensureTables } from "../../src/intent/projections";
 import { registerAllProjections } from "../../src/intent/projections/register";
 import { EventStore } from "../../src/intent/store";
 import type { Classifier, ClassifierResult, ClassifierWindow } from "../../src/w5/classifier";
+import { buildBelongsHandback } from "../../src/w5/hooks";
 import { enqueueJob } from "../../src/w5/jobs";
 import { runOnce } from "../../src/w5/runner";
 
@@ -516,6 +518,79 @@ describe("runOnce in declared mode", () => {
         questId: string | null;
       };
       expect(activity.questId).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("runOnce drives a belongs question to the user", () => {
+  test("an unforced declared run asks the doubt, and the hand-back renders from it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tempad-runner-belongs-"));
+    try {
+      const database = openDatabase(":memory:");
+      seedHero(database);
+      seedSessionWithMessages(database, join(dir, "s1.jsonl"));
+
+      const store = new EventStore(database);
+      database
+        .query(
+          `INSERT INTO quests (id, owner_kind, owner_id, title, objective, confirmed, revision, state, created_at, origin_kind)
+           VALUES ('Q1', 'hero', 'H1', 'Ship marko-ui', '86 components', 1, 1, 'started', '2026-09-01T00:00:00.000Z', 'declared')`,
+        )
+        .run();
+      declareQuest(store, database, {
+        sessionId: "s1",
+        questId: "Q1",
+        plan: [],
+        scope: "session",
+        declaredBy: "agent",
+        at: "2026-09-04T14:00:00.000Z",
+        heroId: "H1",
+      });
+
+      // Not forced: `askingEnabled` stays true, so `askQuestion` actually runs.
+      enqueueJob(database, { sessionId: "s1", forced: false, throttleMinutes: 0 });
+
+      const doubting: ClassifierResult = {
+        segments: [
+          {
+            ...(good.segments[0] as ClassifierResult["segments"][number]),
+            belongs: false,
+            guess: "a competitor comparison",
+          },
+        ],
+        sessionNote: null,
+      };
+
+      const result = await runOnce(
+        database,
+        makeConfig(dir),
+        // watchTurns 1 so the two seeded user turns promote it in this same run.
+        { ...config, watchTurns: 1, askMinActivityMinutes: 0 },
+        new FakeClassifier(doubting),
+        { now: "2026-09-04T15:21:00.000Z", log: () => {} },
+      );
+
+      expect(result.summary?.doubts).toBe(1);
+
+      // The whole point: the question reaches `asked`, which is the only state
+      // `w5 context` reads. It used to stay in `watching` forever.
+      const question = database.query("SELECT id, state, kind, guess FROM questions").get() as {
+        id: string;
+        state: string;
+        kind: string;
+        guess: string | null;
+      };
+      expect(question.kind).toBe("belongs");
+      expect(question.state).toBe("asked");
+      expect(question.guess).toBe("a competitor comparison");
+
+      const handback = buildBelongsHandback("Ship marko-ui", question.guess ?? "", question.id);
+      expect(handback).toContain(
+        'not part of "Ship marko-ui" (looks like: a competitor comparison)',
+      );
+      expect(handback).toContain(`tempad answer ${question.id} --belongs`);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
