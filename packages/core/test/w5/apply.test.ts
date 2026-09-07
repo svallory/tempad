@@ -56,9 +56,12 @@ const window: ClassifierWindow = {
   project: "marko-ui",
   messages: [],
   mode: "declared",
-  declaredQuest: null,
-  parentDeclaredQuest: null,
-  stintAliases: { A1: "A1" },
+  activeQuests: [],
+  activeQuestAliases: {},
+  parentActiveQuests: [],
+  parentActiveQuestAliases: {},
+  openStintAliases: { S1: "A1" },
+  planAliases: {},
   openQuests: [{ id: "Q1", title: "Ship marko-ui", outcome: "86 components", lastStintAt: null }],
   sessionOpenStints: [
     {
@@ -832,6 +835,7 @@ describe("applyResult", () => {
         now: "2026-09-04T15:21:00.000Z",
         log: () => {},
         stintMinMinutes: 5,
+        mode: "inferred" as const,
       },
     );
 
@@ -866,6 +870,7 @@ describe("applyResult", () => {
         now: "2026-09-04T15:21:00.000Z",
         log: () => {},
         stintMinMinutes: 5,
+        mode: "inferred" as const,
       },
     );
 
@@ -896,6 +901,7 @@ describe("applyResult", () => {
         now: "2026-09-04T15:21:00.000Z",
         log: () => {},
         stintMinMinutes: 5,
+        mode: "inferred" as const,
       },
     );
 
@@ -941,6 +947,7 @@ describe("applyResult", () => {
         now: "2026-09-04T15:21:00.000Z",
         log: () => {},
         stintMinMinutes: 5,
+        mode: "inferred" as const,
       },
     );
 
@@ -1015,7 +1022,17 @@ describe("applyResult in declared mode", () => {
     messages: [{ ts: "2026-09-04T15:20:00.000Z", role: "user", text: "still on it" }],
     openQuests: undefined,
     recentSideQuests: undefined,
-    stintAliases: { A1: "A1" },
+    activeQuests: [{ alias: "Q1", title: "Ship marko-ui", outcome: "86 components", plan: [] }],
+    activeQuestAliases: { Q1: "Q1" },
+    openStintAliases: { S1: "A1" },
+    sessionOpenStints: window.sessionOpenStints.map((stint) => ({ ...stint, stintId: "S1" })),
+  };
+
+  /** What `buildWindow` produces for a session that has declared nothing yet. */
+  const undeclaredWindow: ClassifierWindow = {
+    ...declaredWindow,
+    activeQuests: [],
+    activeQuestAliases: {},
   };
 
   function segment(overrides: Partial<ClassifierSegment>): ClassifierSegment {
@@ -1026,9 +1043,8 @@ describe("applyResult in declared mode", () => {
       why: "ship marko-ui",
       belongs: true,
       guess: null,
-      matchedStint: null,
-      continuesStint: null,
-      newStintReason: "a fresh stretch of work",
+      quest: "Q1",
+      stint: "new: a fresh stretch of work",
       isSwitch: false,
       trigger: null,
       confidence: 0.9,
@@ -1079,9 +1095,9 @@ describe("applyResult in declared mode", () => {
       {
         segments: [
           segment({
-            matchedStint: "A1",
-            newStintReason: null,
+            stint: "S1",
             belongs: false,
+            quest: null,
             guess: "a competitor comparison",
           }),
         ],
@@ -1122,6 +1138,7 @@ describe("applyResult in declared mode", () => {
             isSwitch: true,
             trigger: "blocked on the build",
             belongs: false,
+            quest: null,
             guess: "a build fix",
           }),
           segment({
@@ -1156,7 +1173,7 @@ describe("applyResult in declared mode", () => {
       database,
       declaredWindow,
       {
-        segments: [segment({ matchedStint: "A7", newStintReason: null })],
+        segments: [segment({ stint: "S7" })],
         sessionNote: null,
       },
       declaredOptions,
@@ -1177,9 +1194,9 @@ describe("applyResult in declared mode", () => {
     const summary = applyResult(
       store,
       database,
-      { ...declaredWindow, stintAliases: { A1: "A1" } },
+      declaredWindow,
       {
-        segments: [segment({ matchedStint: "A1", newStintReason: null })],
+        segments: [segment({ stint: "S1" })],
         sessionNote: null,
       },
       declaredOptions,
@@ -1201,7 +1218,7 @@ describe("applyResult in declared mode", () => {
     const summary = applyResult(
       store,
       database,
-      declaredWindow,
+      undeclaredWindow,
       {
         segments: [
           segment({}),
@@ -1232,7 +1249,7 @@ describe("applyResult in declared mode", () => {
     applyResult(
       store,
       database,
-      declaredWindow,
+      undeclaredWindow,
       {
         segments: [
           segment({ startedAt: "2026-09-04T15:00:00.000Z", endedAt: "2026-09-04T15:02:00.000Z" }),
@@ -1255,7 +1272,7 @@ describe("applyResult in declared mode", () => {
     applyResult(
       store,
       database,
-      declaredWindow,
+      undeclaredWindow,
       {
         segments: [
           segment({ startedAt: "2026-09-04T15:00:00.000Z", endedAt: "2026-09-04T15:06:00.000Z" }),
@@ -1276,7 +1293,7 @@ describe("applyResult in declared mode", () => {
     const { store } = seed(database);
 
     const overlapDeclaredWindow: ClassifierWindow = {
-      ...declaredWindow,
+      ...undeclaredWindow,
       overlapMessages: [
         { ts: "2026-09-04T15:00:00.000Z", role: "user", text: "tail one" },
         { ts: "2026-09-04T15:06:00.000Z", role: "user", text: "tail two" },
@@ -1328,10 +1345,23 @@ describe("applyResult in declared mode", () => {
       database,
       {
         ...declaredWindow,
-        parentDeclaredQuest: { title: "Ship marko-ui", outcome: null, plan: [] },
+        parentActiveQuests: [{ alias: "PQ1", title: "Ship marko-ui", outcome: null, plan: [] }],
+        parentActiveQuestAliases: { PQ1: "Q1" },
+        activeQuests: [{ alias: "Q1", title: "Verify the fix", outcome: "prove it", plan: [] }],
+        activeQuestAliases: { Q1: "Q2" },
       },
       {
-        segments: [segment({ belongs: false, guess: "unrelated refactor" })],
+        segments: [
+          // A doubted segment names no quest, so its stint carries none; the
+          // belonging one is what shows the subagent's own quest is used.
+          segment({ belongs: false, quest: null, guess: "unrelated refactor" }),
+          segment({
+            startedAt: "2026-09-04T15:20:00.000Z",
+            endedAt: "2026-09-04T15:20:00.000Z",
+            quest: "Q1",
+            stint: "new: verifying the fix",
+          }),
+        ],
         sessionNote: null,
       },
       declaredOptions,
@@ -1345,9 +1375,330 @@ describe("applyResult in declared mode", () => {
 
     // The subagent's own quest, not the parent's, is what its work is attributed to.
     const stint = database
-      .query("SELECT quest_id as questId FROM stints WHERE id != 'A1'")
+      .query(
+        "SELECT quest_id as questId FROM stints WHERE id != 'A1' ORDER BY opened_at DESC LIMIT 1",
+      )
       .get() as { questId: string | null };
     expect(stint.questId).toBe("Q2");
+  });
+
+  test("a P selector opens a plan stint carrying its plan_index, and reuses it after", () => {
+    const database = openDatabase(":memory:");
+    const { store, questId } = seedDeclared(database);
+
+    const planWindow: ClassifierWindow = {
+      ...declaredWindow,
+      activeQuests: [
+        { alias: "Q1", title: "Ship marko-ui", outcome: "86 components", plan: ["walk order"] },
+      ],
+      planAliases: { "P1.1": "walk order" },
+    };
+
+    const summary = applyResult(
+      store,
+      database,
+      planWindow,
+      {
+        segments: [
+          segment({ quest: "Q1", stint: "P1.1" }),
+          segment({
+            startedAt: "2026-09-04T15:20:00.000Z",
+            endedAt: "2026-09-04T15:20:00.000Z",
+            quest: "Q1",
+            stint: "P1.1",
+          }),
+        ],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+
+    // Two segments naming the same plan item share one stint, not two.
+    expect(summary.stintsOpened).toBe(1);
+    const opened = database
+      .query(
+        "SELECT id, quest_id as questId, plan_index as planIndex, outcome FROM stints WHERE plan_index IS NOT NULL",
+      )
+      .all() as { id: string; questId: string | null; planIndex: string; outcome: string }[];
+    expect(opened.length).toBe(1);
+    expect(opened[0]?.planIndex).toBe("P1.1");
+    expect(opened[0]?.questId).toBe(questId);
+    expect(opened[0]?.outcome).toBe("walk order");
+
+    const traces = database
+      .query("SELECT stint_id as stintId FROM traces WHERE id != 'T0'")
+      .all() as { stintId: string }[];
+    const planStintId = opened[0]?.id as string;
+    expect(traces.map((trace) => trace.stintId)).toEqual([planStintId, planStintId]);
+  });
+
+  test("each active quest's segments land on their own quest, and nothing creates a quest", () => {
+    const database = openDatabase(":memory:");
+    const { store, heroId, questId } = seedDeclared(database);
+    database
+      .query(
+        `INSERT INTO quests (id, owner_kind, owner_id, title, outcome, confirmed, revision, state, created_at)
+         VALUES ('Q2', 'hero', ?, 'Fix the flake', 'green suite', 1, 1, 'started', '2026-09-01T00:00:00.000Z')`,
+      )
+      .run(heroId);
+    declareQuest(store, database, {
+      sessionId: "s1",
+      questId: "Q2",
+      plan: ["quarantine it"],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-04T13:30:00.000Z",
+      heroId,
+    });
+
+    const twoQuestWindow: ClassifierWindow = {
+      ...declaredWindow,
+      activeQuests: [
+        { alias: "Q1", title: "Ship marko-ui", outcome: "86 components", plan: [] },
+        { alias: "Q2", title: "Fix the flake", outcome: "green suite", plan: ["quarantine it"] },
+      ],
+      activeQuestAliases: { Q1: questId, Q2: "Q2" },
+      planAliases: { "P2.1": "quarantine it" },
+    };
+
+    const before = (
+      database.query("SELECT COUNT(*) as count FROM quests").get() as { count: number }
+    ).count;
+
+    applyResult(
+      store,
+      database,
+      twoQuestWindow,
+      {
+        segments: [
+          segment({ quest: "Q1", stint: "new: chase the walk order bug" }),
+          segment({
+            startedAt: "2026-09-04T15:20:00.000Z",
+            endedAt: "2026-09-04T15:20:00.000Z",
+            quest: "Q2",
+            stint: "P2.1",
+          }),
+        ],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+
+    const opened = database
+      .query(
+        "SELECT quest_id as questId, outcome, plan_index as planIndex FROM stints WHERE id != 'A1' ORDER BY opened_at ASC",
+      )
+      .all() as { questId: string | null; outcome: string; planIndex: string | null }[];
+
+    expect(opened.map((stint) => stint.questId)).toEqual([questId, "Q2"]);
+    expect(opened[0]?.outcome).toBe("chase the walk order bug");
+    expect(opened[0]?.planIndex).toBeNull();
+    expect(opened[1]?.planIndex).toBe("P2.1");
+    expect(
+      (database.query("SELECT COUNT(*) as count FROM quests").get() as { count: number }).count,
+    ).toBe(before);
+  });
+
+  test("the latest plan declared for a quest in the session is the one that is offered", () => {
+    const database = openDatabase(":memory:");
+    const { store, heroId, questId } = seedDeclared(database);
+    declareQuest(store, database, {
+      sessionId: "s1",
+      questId,
+      plan: ["a better plan"],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-04T14:00:00.000Z",
+      heroId,
+    });
+
+    const amendedWindow: ClassifierWindow = {
+      ...declaredWindow,
+      activeQuests: [
+        { alias: "Q1", title: "Ship marko-ui", outcome: "86 components", plan: ["a better plan"] },
+      ],
+      planAliases: { "P1.1": "a better plan" },
+    };
+
+    applyResult(
+      store,
+      database,
+      amendedWindow,
+      { segments: [segment({ quest: "Q1", stint: "P1.1" })], sessionNote: null },
+      declaredOptions,
+    );
+
+    const opened = database.query("SELECT outcome FROM stints WHERE plan_index = 'P1.1'").get() as {
+      outcome: string;
+    };
+    expect(opened.outcome).toBe("a better plan");
+  });
+
+  test("returning to a plan stint after it closed opens a stint that continues it", () => {
+    const database = openDatabase(":memory:");
+    const { store, questId } = seedDeclared(database);
+
+    const planWindow: ClassifierWindow = {
+      ...declaredWindow,
+      activeQuests: [
+        { alias: "Q1", title: "Ship marko-ui", outcome: "86 components", plan: ["walk order"] },
+      ],
+      planAliases: { "P1.1": "walk order" },
+    };
+
+    applyResult(
+      store,
+      database,
+      planWindow,
+      { segments: [segment({ quest: "Q1", stint: "P1.1" })], sessionNote: null },
+      declaredOptions,
+    );
+
+    const first = database.query("SELECT id FROM stints WHERE plan_index = 'P1.1'").get() as {
+      id: string;
+    };
+    // An idle gap closed it; the executor comes back to the same plan item.
+    database
+      .query("UPDATE stints SET closed_at = '2026-09-04T15:25:00.000Z' WHERE id = ?")
+      .run(first.id);
+
+    applyResult(
+      store,
+      database,
+      planWindow,
+      {
+        segments: [
+          segment({
+            startedAt: "2026-09-04T15:20:00.000Z",
+            endedAt: "2026-09-04T15:20:00.000Z",
+            quest: "Q1",
+            stint: "P1.1",
+          }),
+        ],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+
+    const stints = database
+      .query(
+        "SELECT id, continues, quest_id as questId FROM stints WHERE plan_index = 'P1.1' ORDER BY opened_at ASC",
+      )
+      .all() as { id: string; continues: string | null; questId: string | null }[];
+
+    expect(stints.length).toBe(2);
+    expect(stints[1]?.continues).toBe(first.id);
+    expect(stints[1]?.questId).toBe(questId);
+  });
+
+  test("an S selector records on the open stint under the quest the segment names", () => {
+    const database = openDatabase(":memory:");
+    const { store, questId } = seedDeclared(database);
+
+    const summary = applyResult(
+      store,
+      database,
+      declaredWindow,
+      { segments: [segment({ quest: "Q1", stint: "S1" })], sessionNote: null },
+      declaredOptions,
+    );
+
+    expect(summary.stintsOpened).toBe(0);
+    const trace = database
+      .query("SELECT stint_id as stintId FROM traces WHERE id != 'T0'")
+      .get() as { stintId: string };
+    expect(trace.stintId).toBe("A1");
+    expect(
+      (
+        database.query("SELECT quest_id as questId FROM stints WHERE id = 'A1'").get() as {
+          questId: string | null;
+        }
+      ).questId,
+    ).toBe(questId);
+  });
+
+  test("a new: selector opens a stint whose outcome is the text after the prefix", () => {
+    const database = openDatabase(":memory:");
+    const { store } = seedDeclared(database);
+
+    applyResult(
+      store,
+      database,
+      declaredWindow,
+      {
+        segments: [segment({ quest: "Q1", stint: "new: Investigate the flaky test" })],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+
+    const opened = database
+      .query("SELECT outcome, plan_index as planIndex FROM stints WHERE id != 'A1'")
+      .get() as { outcome: string; planIndex: string | null };
+    expect(opened.outcome).toBe("Investigate the flaky test");
+    expect(opened.planIndex).toBeNull();
+  });
+
+  test("a subagent may place a segment on one of the parent's active quests", () => {
+    const database = openDatabase(":memory:");
+    const { store, heroId, questId } = seed(database);
+    database
+      .query(
+        `INSERT INTO quests (id, owner_kind, owner_id, title, outcome, confirmed, revision, state, created_at)
+         VALUES ('Q2', 'hero', ?, 'Verify the fix', 'prove it', 1, 1, 'started', '2026-09-01T00:00:00.000Z')`,
+      )
+      .run(heroId);
+    declareQuest(store, database, {
+      sessionId: "parent",
+      questId,
+      plan: [],
+      scope: "session",
+      declaredBy: "agent",
+      at: "2026-09-04T12:00:00.000Z",
+      heroId,
+    });
+    declareQuest(store, database, {
+      sessionId: "s1",
+      parentSessionId: "parent",
+      questId: "Q2",
+      plan: [],
+      scope: "subagent",
+      declaredBy: "agent",
+      at: "2026-09-04T13:00:00.000Z",
+      heroId,
+    });
+
+    applyResult(
+      store,
+      database,
+      {
+        ...declaredWindow,
+        activeQuests: [{ alias: "Q1", title: "Verify the fix", outcome: "prove it", plan: [] }],
+        activeQuestAliases: { Q1: "Q2" },
+        parentActiveQuests: [
+          { alias: "PQ1", title: "Ship marko-ui", outcome: "86 components", plan: [] },
+        ],
+        parentActiveQuestAliases: { PQ1: questId },
+      },
+      {
+        segments: [
+          segment({ quest: "Q1", stint: "new: verifying the fix" }),
+          segment({
+            startedAt: "2026-09-04T15:20:00.000Z",
+            endedAt: "2026-09-04T15:20:00.000Z",
+            quest: "PQ1",
+            stint: "new: a chunk of the lead's own quest",
+          }),
+        ],
+        sessionNote: null,
+      },
+      declaredOptions,
+    );
+
+    const opened = database
+      .query("SELECT quest_id as questId FROM stints WHERE id != 'A1' ORDER BY opened_at ASC")
+      .all() as { questId: string | null }[];
+    expect(opened.map((stint) => stint.questId)).toEqual(["Q2", questId]);
   });
 
   test("a doubt is still counted when asking is disabled, without asking", () => {
@@ -1359,7 +1710,7 @@ describe("applyResult in declared mode", () => {
       database,
       declaredWindow,
       {
-        segments: [segment({ belongs: false, guess: "something else" })],
+        segments: [segment({ belongs: false, quest: null, guess: "something else" })],
         sessionNote: null,
       },
       { ...declaredOptions, askingEnabled: false },

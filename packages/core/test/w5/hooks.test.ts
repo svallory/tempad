@@ -137,12 +137,23 @@ describe("buildAdditionalContext", () => {
 });
 
 describe("buildDeclarationLine", () => {
-  test("renders the quest title or 'none'", () => {
-    expect(buildDeclarationLine({ title: "Ship X" }, "s1")).toBe(
-      "tempad: session s1, declared quest: Ship X. Declare with the tempad-quest skill if this prompt starts a different outcome.",
+  test("renders 'none' when the session has declared nothing", () => {
+    expect(buildDeclarationLine([], "s1")).toBe(
+      "tempad: session s1, active quests: none. Declare with the tempad-quest skill if this prompt starts a different outcome.",
     );
-    expect(buildDeclarationLine(null, "s1")).toBe(
-      "tempad: session s1, declared quest: none. Declare with the tempad-quest skill if this prompt starts a different outcome.",
+  });
+
+  test("renders every active quest bracket-tagged with its alias", () => {
+    expect(
+      buildDeclarationLine(
+        [
+          { title: "Ship X", alias: "Q1" },
+          { title: "Fix Y", alias: "Q2" },
+        ],
+        "s1",
+      ),
+    ).toBe(
+      "tempad: session s1, active quests: Ship X [Q1], Fix Y [Q2]. Declare with the tempad-quest skill if this prompt starts a different outcome.",
     );
   });
 });
@@ -318,18 +329,31 @@ describe("w5-stop.sh / w5-prompt.sh injection safety", () => {
 });
 
 describe("verifier hand-back text", () => {
-  test("a belongs hand-back names the declared quest, the guess and both answer commands", () => {
-    const text = buildBelongsHandback("Ship marko-ui", "a competitor comparison", "Q123");
+  test("a belongs hand-back lists every active quest, the guess and both answer commands", () => {
+    const text = buildBelongsHandback(
+      [
+        { title: "Ship marko-ui", alias: "Q1" },
+        { title: "Fix the flake", alias: "Q2" },
+      ],
+      "a competitor comparison",
+      "Q123",
+    );
 
     expect(text).toBe(
       [
-        'w5 thinks the last stretch is not part of "Ship marko-ui" (looks like: a competitor comparison). Reply:',
+        "w5 thinks the last stretch is not part of your active quests (Ship marko-ui [Q1], Fix the flake [Q2]) (looks like: a competitor comparison). Reply:",
         '  tempad answer Q123 --belongs --why "<reason>"',
         "  or",
         '  tempad answer Q123 --quest <id>|new:"<title>" --why "<reason>" [--origin current --trigger "<sentence>" --kind waiting|blocker|curiosity|unknown]',
         "Ask the user if you are not sure.",
       ].join("\n"),
     );
+  });
+
+  test("a belongs hand-back falls back when no quest is active any more", () => {
+    const text = buildBelongsHandback([], "a competitor comparison", "Q123");
+
+    expect(text).toContain("not part of your active quests (none)");
   });
 
   test("a declare hand-back names the session and the declare command", () => {
@@ -368,13 +392,15 @@ describe("verifier hand-back text", () => {
         },
       ],
       {
-        declaredTitle: "Ship marko-ui",
+        activeQuests: [{ title: "Ship marko-ui", alias: "Q1" }],
         sessionId: "s1",
         guessFor: (questionId) => (questionId === "Q1" ? "a competitor comparison" : null),
       },
     );
 
-    expect(text).toContain('not part of "Ship marko-ui" (looks like: a competitor comparison)');
+    expect(text).toContain(
+      "not part of your active quests (Ship marko-ui [Q1]) (looks like: a competitor comparison)",
+    );
     expect(text).toContain("tempad answer Q1 --belongs");
     expect(text).toContain("w5 has no declared quest for this session");
     expect(text).toContain("tempad quest declare --session s1");

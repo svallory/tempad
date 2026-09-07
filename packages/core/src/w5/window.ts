@@ -1,10 +1,10 @@
 import type { Database } from "bun:sqlite";
 import {
-  currentDeclaredQuest,
+  type ActiveDeclaredQuest,
+  activeDeclaredQuests,
   currentDeclaredQuestForSubagent,
-  type DeclaredQuest,
 } from "../intent/declarations";
-import type { ClassifierWindow, DeclaredQuestSlice } from "./classifier";
+import { type ClassifierWindow, type DeclaredQuestSlice, planAliasPrefix } from "./classifier";
 
 export function findSessionFile(database: Database, sessionId: string): string | null {
   const row = database
@@ -98,9 +98,26 @@ function latestDeclaredParentSessionId(
   return payload.parent_session_id ?? null;
 }
 
-function toSlice(declared: DeclaredQuest | null): DeclaredQuestSlice | null {
-  if (declared === null) return null;
-  return { title: declared.title, outcome: declared.outcome, plan: declared.plan };
+/**
+ * Aliases are assigned fresh here, never persisted: `activeDeclaredQuests`
+ * numbers the session's own quests `Q1..Qn`, and a parent's are re-lettered
+ * `PQ1..PQn` so the two spaces can be offered together without colliding.
+ */
+function toAliasedSlices(
+  active: ActiveDeclaredQuest[],
+  prefix: "Q" | "PQ",
+): {
+  quests: (DeclaredQuestSlice & { alias: string })[];
+  aliases: Record<string, string>;
+} {
+  const quests: (DeclaredQuestSlice & { alias: string })[] = [];
+  const aliases: Record<string, string> = {};
+  for (const [index, quest] of active.entries()) {
+    const alias = `${prefix}${index + 1}`;
+    aliases[alias] = quest.questId;
+    quests.push({ alias, title: quest.title, outcome: quest.outcome, plan: quest.plan });
+  }
+  return { quests, aliases };
 }
 
 export function buildWindow(database: Database, input: BuildWindowInput): ClassifierWindow {
@@ -264,29 +281,48 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
   // window sees what was declared when it happened, not what is declared now. A
   // subagent's own declaration carries its parent's session id, which is the only
   // thing needed to find the parent's quest -- no schema or collector change.
-  let declaredQuest: DeclaredQuest | null = null;
-  let parentDeclaredQuest: DeclaredQuest | null = null;
+  let activeQuests: (DeclaredQuestSlice & { alias: string })[] = [];
+  let activeQuestAliases: Record<string, string> = {};
+  let parentActiveQuests: (DeclaredQuestSlice & { alias: string })[] = [];
+  let parentActiveQuestAliases: Record<string, string> = {};
   if (mode === "declared") {
-    // `currentDeclaredQuest` only ever resolves a *session*-scope declaration, so
+    // `activeDeclaredQuests` only ever resolves *session*-scope declarations, so
     // a subagent's own quest is invisible to it. The parent id is read straight
     // off the latest declaration event -- the same place the resolver reads it --
-    // and then the subagent resolver is asked for the quest itself.
+    // and then the subagent resolver is asked for the quest itself. A subagent
+    // still declares exactly one quest, rendered through the same list shape.
     const parentSessionId = latestDeclaredParentSessionId(database, input.sessionId, windowEnd);
     if (parentSessionId !== null) {
-      declaredQuest = currentDeclaredQuestForSubagent(database, {
+      const own = currentDeclaredQuestForSubagent(database, {
         sessionId: input.sessionId,
         parentSessionId,
         at: windowEnd,
       });
-      parentDeclaredQuest = currentDeclaredQuest(database, {
-        sessionId: parentSessionId,
-        at: windowEnd,
-      });
+      const ownAliased = toAliasedSlices(own === null ? [] : [{ ...own, alias: "Q1" }], "Q");
+      activeQuests = ownAliased.quests;
+      activeQuestAliases = ownAliased.aliases;
+      const parentAliased = toAliasedSlices(
+        activeDeclaredQuests(database, { sessionId: parentSessionId, at: windowEnd }),
+        "PQ",
+      );
+      parentActiveQuests = parentAliased.quests;
+      parentActiveQuestAliases = parentAliased.aliases;
     } else {
-      declaredQuest = currentDeclaredQuest(database, {
-        sessionId: input.sessionId,
-        at: windowEnd,
-      });
+      const aliased = toAliasedSlices(
+        activeDeclaredQuests(database, { sessionId: input.sessionId, at: windowEnd }),
+        "Q",
+      );
+      activeQuests = aliased.quests;
+      activeQuestAliases = aliased.aliases;
+    }
+  }
+
+  // A plan item is prompt-only until a segment names it, so this map is built
+  // from the declarations themselves and never read back from `stints`.
+  const planAliases: Record<string, string> = {};
+  for (const quest of [...activeQuests, ...parentActiveQuests]) {
+    for (const [index, item] of quest.plan.entries()) {
+      planAliases[`${planAliasPrefix(quest.alias)}.${index + 1}`] = item;
     }
   }
 
@@ -296,17 +332,17 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
 
   // Aliases are assigned over both slices in the order they are listed, so the
   // prompt never carries a 26-character id for the model to garble; `apply.ts`
-  // maps whatever alias comes back through `stintAliases`.
+  // maps whatever alias comes back through `openStintAliases`.
   // Inference mode is the pre-verifier path end to end: `apply.ts` looks stint
   // ids up directly there, so the slice must keep carrying real ids. Aliasing is
   // declared mode's scheme alone.
-  const stintAliases: Record<string, string> = {};
+  const openStintAliases: Record<string, string> = {};
   let aliasNumber = 0;
   const aliasFor = (realId: string): string => {
     if (mode !== "declared") return realId;
     aliasNumber += 1;
-    const alias = `A${aliasNumber}`;
-    stintAliases[alias] = realId;
+    const alias = `S${aliasNumber}`;
+    openStintAliases[alias] = realId;
     return alias;
   };
 
@@ -328,9 +364,12 @@ export function buildWindow(database: Database, input: BuildWindowInput): Classi
     project: session.project,
     messages,
     mode,
-    declaredQuest: toSlice(declaredQuest),
-    parentDeclaredQuest: toSlice(parentDeclaredQuest),
-    stintAliases,
+    activeQuests,
+    activeQuestAliases,
+    parentActiveQuests,
+    parentActiveQuestAliases,
+    openStintAliases,
+    planAliases,
     ...(openQuests === undefined ? {} : { openQuests }),
     sessionOpenStints: aliasedOpen,
     recentStints: aliasedRecent,

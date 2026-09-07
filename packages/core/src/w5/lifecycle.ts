@@ -132,6 +132,12 @@ export interface OpenStintContinuingInput {
   at: string;
   actor: Actor;
   continues?: string;
+  /**
+   * The plan alias (`"P2.1"`) this stint was opened for, recorded as written at
+   * the moment it was first matched. Audit only -- never re-parsed, since plan
+   * numbering is assigned fresh per window.
+   */
+  planIndex?: string;
 }
 
 export function openStintContinuing(
@@ -147,7 +153,12 @@ export function openStintContinuing(
       kind: "stint.opened",
       subject: id,
       at: input.at,
-      payload: { quest: input.quest, outcome: input.outcome, continues: input.continues },
+      payload: {
+        quest: input.quest,
+        outcome: input.outcome,
+        continues: input.continues,
+        plan_index: input.planIndex,
+      },
     }),
   );
   return id;

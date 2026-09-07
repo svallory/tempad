@@ -413,6 +413,7 @@ export const QUEST_DECLARE_OPTIONS = {
   trigger: { type: "string" },
   kind: { type: "string" },
   plan: { type: "string" },
+  done: { type: "string" },
   by: { type: "string", default: "agent" },
   at: { type: "string" },
 } as const;
@@ -784,11 +785,44 @@ function runQuestCommand(args: string[], context: IntentContext): number {
     });
 
     const usage =
-      'usage: tempad quest declare --session <id> [--parent <id>] (--quest <id> | --new "<title>" --outcome "<text>" [--commitment promised|personal|exploratory] [--project <slug>] [--origin <quest id> --trigger "<sentence>" --kind waiting|blocker|curiosity|unknown]) [--plan "a; b; c"] [--by agent|hero] [--at <iso>]';
+      'usage: tempad quest declare --session <id> [--parent <id>] (--quest <id> | --new "<title>" --outcome "<text>" [--commitment promised|personal|exploratory] [--project <slug>] [--origin <quest id> --trigger "<sentence>" --kind waiting|blocker|curiosity|unknown] | --done <quest>) [--plan "a; b; c"] [--by agent|hero] [--at <iso>]';
 
     if (!values.session) {
       console.error(usage);
       return 2;
+    }
+    // `--done` retires a declaration; it names an existing quest and nothing
+    // else, so every flag that describes what is being declared is excluded.
+    if (values.done) {
+      if (values.quest || values.new || values.plan || values.origin) {
+        console.error(usage);
+        return 2;
+      }
+      const resolved = resolveExistingQuest(context.database, values.done);
+      if (!resolved) {
+        console.error(`unknown quest ${values.done}`);
+        return 1;
+      }
+      const heroForDone = context.database.query("SELECT id FROM heroes LIMIT 1").get() as {
+        id: string;
+      } | null;
+      if (!heroForDone) {
+        console.error("run `tempad hero init` first");
+        return 1;
+      }
+      const doneResult = declareQuest(store, context.database, {
+        sessionId: values.session,
+        parentSessionId: values.parent,
+        questId: resolved,
+        done: true,
+        plan: [],
+        scope: values.parent ? "subagent" : "session",
+        declaredBy: values.by === "hero" ? "hero" : "agent",
+        at: values.at ?? new Date().toISOString(),
+        heroId: heroForDone.id,
+      });
+      context.stdout(`declared ${doneResult.questId} done`);
+      return 0;
     }
     if ((values.quest && values.new) || (!values.quest && !values.new)) {
       console.error(usage);

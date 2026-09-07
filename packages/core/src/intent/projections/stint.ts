@@ -14,7 +14,8 @@ export const stintProjection: Projection = {
       retracted_at TEXT,
       continues TEXT,
       close_reason TEXT,
-      dismissed_at TEXT
+      dismissed_at TEXT,
+      plan_index TEXT
     );
     CREATE TABLE IF NOT EXISTS traces (
       id TEXT PRIMARY KEY,
@@ -65,7 +66,7 @@ export const stintProjection: Projection = {
       case "stint.opened":
         database
           .query(
-            "INSERT OR REPLACE INTO stints (id, quest_id, outcome, opened_at, revision, continues) VALUES (?, ?, ?, ?, 1, ?)",
+            "INSERT OR REPLACE INTO stints (id, quest_id, outcome, opened_at, revision, continues, plan_index) VALUES (?, ?, ?, ?, 1, ?, ?)",
           )
           .run(
             event.subject,
@@ -73,6 +74,7 @@ export const stintProjection: Projection = {
             String(payload.outcome),
             event.at,
             payload.continues ? String(payload.continues) : null,
+            payload.plan_index ? String(payload.plan_index) : null,
           );
         return;
       case "stint.reworded":

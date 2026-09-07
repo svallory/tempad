@@ -440,7 +440,7 @@ describe("backfill", () => {
           openStints: window.sessionOpenStints.map((a) => a.stintId),
           recentStints: window.recentStints.map((a) => a.stintId),
           previousSessionNote: window.previousSessionNote,
-          aliases: window.stintAliases,
+          aliases: window.openStintAliases,
         });
         const open = window.sessionOpenStints.at(-1) ?? null;
         const first = window.messages[0]?.ts ?? "2026-09-04T15:00:00.000Z";

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { openDatabase } from "../../src/db/database";
 import { runIntentCommand } from "../../src/intent/cli";
 import { defaultIntentConfig } from "../../src/intent/config";
+import { activeDeclaredQuests } from "../../src/intent/declarations";
 import { resolveQuest } from "../../src/intent/projections/quest";
 
 function harness() {
@@ -413,6 +414,56 @@ describe("quests", () => {
     const exitCode = await run(["quest", "declare", "--session", "s1", "--quest", quest.id]);
     expect(exitCode).toBe(0);
     expect(lines.at(-1)).toBe(`declared ${quest.id}`);
+  });
+
+  test("quest declare --done ends the quest's active declaration for the session", async () => {
+    const { run, database, lines } = harness();
+    await run(["hero", "init", "S"]);
+    await run(["quest", "add", "--owner", "hero", "Existing"]);
+    const quest = database.query("SELECT id FROM quests").get() as { id: string };
+    await run(["quest", "declare", "--session", "s1", "--quest", quest.id]);
+    lines.length = 0;
+
+    const exitCode = await run(["quest", "declare", "--session", "s1", "--done", quest.id]);
+
+    expect(exitCode).toBe(0);
+    expect(
+      activeDeclaredQuests(database, { sessionId: "s1", at: new Date().toISOString() }),
+    ).toEqual([]);
+  });
+
+  test("quest declare --done rejects an unknown quest id, exit 1", async () => {
+    const { run } = harness();
+    await run(["hero", "init", "S"]);
+    expect(await run(["quest", "declare", "--session", "s1", "--done", "nope"])).toBe(1);
+  });
+
+  test("quest declare --done is mutually exclusive with --quest, --new and --plan", async () => {
+    const { run, database } = harness();
+    await run(["hero", "init", "S"]);
+    await run(["quest", "add", "--owner", "hero", "Existing"]);
+    const quest = database.query("SELECT id FROM quests").get() as { id: string };
+
+    expect(
+      await run(["quest", "declare", "--session", "s1", "--done", quest.id, "--quest", quest.id]),
+    ).toBe(2);
+    expect(
+      await run([
+        "quest",
+        "declare",
+        "--session",
+        "s1",
+        "--done",
+        quest.id,
+        "--new",
+        "Another",
+        "--outcome",
+        "x",
+      ]),
+    ).toBe(2);
+    expect(
+      await run(["quest", "declare", "--session", "s1", "--done", quest.id, "--plan", "a; b"]),
+    ).toBe(2);
   });
 
   test("tempad quest add sets origin_kind 'declared' on the created quest", async () => {

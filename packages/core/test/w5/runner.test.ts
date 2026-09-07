@@ -390,14 +390,15 @@ describe("runOnce", () => {
       const filePath = join(dir, "s1.jsonl");
       seedThreeWindowSession(database, filePath, 2);
 
-      // The classifier reuses whatever candidate the window slice offers: an open
-      // stint via matchedStint, else a closed one via continuesStint.
+      // The classifier names whatever candidate the window slice offers: an open
+      // stint by its alias, else the closed one it is resuming, else a new stint.
       class MemoryClassifier implements Classifier {
         public sawOpenCandidates: number[] = [];
         async classify(window: ClassifierWindow): Promise<ClassifierResult> {
           this.sawOpenCandidates.push(window.sessionOpenStints.length);
           const open = window.sessionOpenStints.at(-1) ?? null;
           const closed = window.recentStints.find((a) => a.closedAt !== null) ?? null;
+          const candidate = open ?? closed ?? null;
           const first = window.messages[0]?.ts ?? "2026-09-04T15:00:00.000Z";
           const last = window.messages.at(-1)?.ts ?? first;
           return {
@@ -409,16 +410,14 @@ describe("runOnce", () => {
                 why: "ship marko-ui",
                 belongs: true,
                 guess: null,
-                matchedQuest: open?.questId ?? closed?.questId ?? null,
-                proposedQuest: null,
-                matchedStint: open?.stintId ?? null,
-                continuesStint: open === null ? (closed?.stintId ?? null) : null,
-                newStintReason:
-                  open === null && closed === null ? "nothing open to reuse yet" : null,
+                quest: null,
+                stint:
+                  candidate === null
+                    ? "new: nothing open to reuse yet"
+                    : (candidate.stintId as string),
                 isSwitch: false,
                 trigger: null,
                 confidence: 0.9,
-                questions: [],
               },
             ],
             sessionNote: "on the walk order bug",
@@ -587,9 +586,13 @@ describe("runOnce drives a belongs question to the user", () => {
       expect(question.state).toBe("asked");
       expect(question.guess).toBe("a competitor comparison");
 
-      const handback = buildBelongsHandback("Ship marko-ui", question.guess ?? "", question.id);
+      const handback = buildBelongsHandback(
+        [{ title: "Ship marko-ui", alias: "Q1" }],
+        question.guess ?? "",
+        question.id,
+      );
       expect(handback).toContain(
-        'not part of "Ship marko-ui" (looks like: a competitor comparison)',
+        "not part of your active quests (Ship marko-ui [Q1]) (looks like: a competitor comparison)",
       );
       expect(handback).toContain(`tempad answer ${question.id} --belongs`);
     } finally {

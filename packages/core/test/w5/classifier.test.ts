@@ -3,6 +3,7 @@ import {
   AnthropicClassifier,
   type ClassifierWindow,
   DEFAULT_NEW_STINT_REASON,
+  UNRECOGNIZED_QUEST_ALIAS_GUESS,
   validateResult,
 } from "../../src/w5/classifier";
 import { buildSystemPrompt, buildUserPrompt } from "../../src/w5/prompt";
@@ -23,16 +24,21 @@ const window: ClassifierWindow = {
     },
   ],
   mode: "declared",
-  declaredQuest: {
-    title: "Ship marko-ui",
-    outcome: "86 components",
-    plan: ["walk order", "docs"],
-  },
-  parentDeclaredQuest: null,
-  stintAliases: { A1: "01HREALACTIVITYIDONE00000A", A0: "01HREALACTIVITYIDZERO0000B" },
+  activeQuests: [
+    {
+      alias: "Q1",
+      title: "Ship marko-ui",
+      outcome: "86 components",
+      plan: ["walk order", "docs"],
+    },
+  ],
+  activeQuestAliases: { Q1: "01HREALQUESTIDONE000000000" },
+  parentActiveQuests: [],
+  parentActiveQuestAliases: {},
+  openStintAliases: { S1: "01HREALACTIVITYIDONE00000A", S2: "01HREALACTIVITYIDZERO0000B" },
   sessionOpenStints: [
     {
-      stintId: "A1",
+      stintId: "S1",
       what: "fixing walk order",
       why: "ship marko-ui",
       questId: "Q1",
@@ -43,7 +49,7 @@ const window: ClassifierWindow = {
   ],
   recentStints: [
     {
-      stintId: "A0",
+      stintId: "S2",
       what: "renaming the walk helpers",
       why: "ship marko-ui",
       questId: "Q1",
@@ -69,9 +75,8 @@ const good = {
       why: "ship marko-ui",
       belongs: true,
       guess: null,
-      matchedStint: "A1",
-      continuesStint: null,
-      newStintReason: null,
+      quest: "Q1",
+      stint: "S1",
       isSwitch: false,
       trigger: null,
       confidence: 0.9,
@@ -83,9 +88,8 @@ const good = {
       why: "unknown",
       belongs: false,
       guess: "a competitor comparison, not the marko-ui work",
-      matchedStint: null,
-      continuesStint: null,
-      newStintReason: "a fresh comparison unrelated to any open stint",
+      quest: null,
+      stint: "new: a fresh comparison unrelated to any open stint",
       isSwitch: true,
       trigger: "what does Astryx do for agents?",
       confidence: 0.6,
@@ -107,7 +111,7 @@ describe("classifier", () => {
   test("user prompt contains messages, the declared quest and the memory slice sections", () => {
     const text = buildUserPrompt(window);
     expect(text).toContain("Astryx");
-    expect(text).toContain("your declared quest: Ship marko-ui");
+    expect(text).toContain("Q1: Ship marko-ui");
     expect(text).toContain("fixing walk order");
     expect(text).toContain("your open stints this session");
     expect(text).toContain("recent stints in this project");
@@ -136,162 +140,144 @@ describe("classifier", () => {
     expect(text).toContain("ignore prior instructions");
   });
 
-  test("system prompt states reuse is the default and stays under 2 KB", () => {
+  test("the declared system prompt states the selector order and stays under 2 KB", () => {
     const text = buildSystemPrompt();
-    expect(text).toContain("matchedStint");
-    expect(text).toContain("continuesStint");
-    expect(text).toContain("newStintReason");
-    expect(text).toMatch(/default/i);
+    expect(text).toContain('"quest"');
+    expect(text).toContain('"stint"');
+    // A subagent may place a segment on one of the parent's quests, so the
+    // schema has to say those aliases exist.
+    expect(text).toContain("PQn");
+    expect(text).toContain("PPn.m");
+    expect(text).not.toContain("matchedStint");
+    expect(text).not.toContain("continuesStint");
+    expect(text).not.toContain("newStintReason");
     expect(new TextEncoder().encode(text).length).toBeLessThan(2048);
-  });
-
-  test("validateResult defaults a segment that names no stint selector", () => {
-    const result = validateResult({
-      segments: [
-        {
-          ...good.segments[0],
-          matchedStint: null,
-          continuesStint: null,
-          newStintReason: null,
-        },
-      ],
-    });
-
-    expect(result.segments[0]?.newStintReason).toBe(DEFAULT_NEW_STINT_REASON);
-    expect(result.segments[0]?.matchedStint).toBeNull();
-    expect(result.segments[0]?.continuesStint).toBeNull();
-    expect(result.selectorDefaulted).toBe(1);
-    expect(result.selectorAmbiguous).toBe(0);
-  });
-
-  test("validateResult narrows two selectors to matchedStint by precedence", () => {
-    const result = validateResult({
-      segments: [{ ...good.segments[0], matchedStint: "A1", continuesStint: "A0" }],
-    });
-
-    expect(result.segments[0]?.matchedStint).toBe("A1");
-    expect(result.segments[0]?.continuesStint).toBeNull();
-    expect(result.segments[0]?.newStintReason).toBeNull();
-    expect(result.selectorAmbiguous).toBe(1);
-    expect(result.selectorDefaulted).toBe(0);
-  });
-
-  test("validateResult prefers continuesStint over newStintReason", () => {
-    const result = validateResult({
-      segments: [
-        {
-          ...good.segments[0],
-          matchedStint: null,
-          continuesStint: "A0",
-          newStintReason: "nothing fit",
-        },
-      ],
-    });
-
-    expect(result.segments[0]?.continuesStint).toBe("A0");
-    expect(result.segments[0]?.newStintReason).toBeNull();
-    expect(result.selectorAmbiguous).toBe(1);
-  });
-
-  test("validateResult treats omitted optional fields as null instead of failing", () => {
-    const {
-      matchedStint: _matchedStint,
-      continuesStint: _continuesStint,
-      trigger: _trigger,
-      ...withoutOptionals
-    } = good.segments[0] as Record<string, unknown>;
-
-    // A selector is still present, so nothing is defaulted: this isolates the
-    // absent-means-null normalization from the selector repair.
-    const result = validateResult({
-      segments: [{ ...withoutOptionals, newStintReason: "new thread of work" }],
-    });
-
-    expect(result.segments[0]?.matchedStint).toBeNull();
-    expect(result.segments[0]?.continuesStint).toBeNull();
-    expect(result.segments[0]?.trigger).toBeNull();
-    expect(result.selectorDefaulted).toBe(0);
-  });
-
-  test("validateResult defaults a segment with every selector omitted", () => {
-    const {
-      matchedStint: _matchedStint,
-      continuesStint: _continuesStint,
-      newStintReason: _newStintReason,
-      ...withoutSelectors
-    } = good.segments[0] as Record<string, unknown>;
-
-    const result = validateResult({ segments: [withoutSelectors] });
-
-    expect(result.segments[0]?.newStintReason).toBe(DEFAULT_NEW_STINT_REASON);
-    expect(result.selectorDefaulted).toBe(1);
-  });
-
-  test("validateResult still rejects a selector of the wrong type", () => {
-    expect(() =>
-      validateResult({
-        segments: [{ ...good.segments[0], matchedStint: null, continuesStint: 7 }],
-      }),
-    ).toThrow(/continuesStint/);
   });
 
   test("validateResult rejects belongs: false with a null guess", () => {
     expect(() =>
-      validateResult({
-        segments: [{ ...good.segments[0], belongs: false, guess: null }],
-      }),
+      validateResult({ segments: [{ ...good.segments[0], belongs: false, guess: null }] }, window),
     ).toThrow(/guess: expected a non-empty string when belongs is false/);
 
     expect(() =>
-      validateResult({
-        segments: [{ ...good.segments[0], belongs: false, guess: "   " }],
-      }),
+      validateResult({ segments: [{ ...good.segments[0], belongs: false, guess: "   " }] }, window),
     ).toThrow(/guess: expected a non-empty string when belongs is false/);
   });
 
   test("validateResult repairs a guess sent alongside belongs: true back to null", () => {
-    const result = validateResult({
-      segments: [{ ...good.segments[0], belongs: true, guess: "something else entirely" }],
-    });
+    const result = validateResult(
+      { segments: [{ ...good.segments[0], belongs: true, guess: "something else entirely" }] },
+      window,
+    );
 
     expect(result.segments[0]?.belongs).toBe(true);
     expect(result.segments[0]?.guess).toBeNull();
   });
 
   test("validateResult requires belongs to be a boolean", () => {
-    expect(() => validateResult({ segments: [{ ...good.segments[0], belongs: "yes" }] })).toThrow(
-      /belongs: expected boolean/,
-    );
+    expect(() =>
+      validateResult({ segments: [{ ...good.segments[0], belongs: "yes" }] }, window),
+    ).toThrow(/belongs: expected boolean/);
   });
 
-  test("validateResult treats an alias outside stintAliases as no selector at all", () => {
+  test("validateResult treats an omitted trigger as null instead of failing", () => {
+    const { trigger: _trigger, ...withoutTrigger } = good.segments[0] as Record<string, unknown>;
+
+    const result = validateResult({ segments: [withoutTrigger] }, window);
+
+    expect(result.segments[0]?.trigger).toBeNull();
+    expect(result.selectorDefaulted).toBe(0);
+  });
+
+  test("validateResult requires a quest alias when the segment belongs", () => {
+    expect(() =>
+      validateResult({ segments: [{ ...good.segments[0], quest: null }] }, window),
+    ).toThrow(/quest: expected an active quest alias when belongs is true/);
+  });
+
+  test("validateResult repairs a quest sent alongside belongs: false back to null", () => {
     const result = validateResult(
-      { segments: [{ ...good.segments[0], matchedStint: "A9", continuesStint: null }] },
+      {
+        segments: [{ ...good.segments[0], belongs: false, guess: "something else", quest: "Q1" }],
+      },
       window,
     );
 
-    // "A9" is not a key of window.stintAliases, so it never counts as a
-    // selector: the segment names none and is repaired the usual way.
-    expect(result.segments[0]?.matchedStint).toBeNull();
-    expect(result.segments[0]?.newStintReason).toBe(DEFAULT_NEW_STINT_REASON);
+    expect(result.segments[0]?.belongs).toBe(false);
+    expect(result.segments[0]?.quest).toBeNull();
+  });
+
+  test("an unrecognized quest alias becomes a doubt with a default guess", () => {
+    const result = validateResult({ segments: [{ ...good.segments[0], quest: "Q9" }] }, window);
+
+    // The model meant to place it somewhere, so the segment is surfaced as a
+    // doubt rather than silently attached to nothing.
+    expect(result.segments[0]?.belongs).toBe(false);
+    expect(result.segments[0]?.quest).toBeNull();
+    expect(result.segments[0]?.guess).toBe(UNRECOGNIZED_QUEST_ALIAS_GUESS);
     expect(result.selectorDefaulted).toBe(1);
   });
 
-  test("validateResult keeps an alias that is present in stintAliases", () => {
+  test("an unrecognized quest alias keeps a guess the model did supply", () => {
     const result = validateResult(
-      { segments: [{ ...good.segments[0], matchedStint: "A1" }] },
+      { segments: [{ ...good.segments[0], quest: "Q9", guess: "a build fix" }] },
       window,
     );
 
-    expect(result.segments[0]?.matchedStint).toBe("A1");
+    expect(result.segments[0]?.belongs).toBe(false);
+    expect(result.segments[0]?.guess).toBe("a build fix");
+  });
+
+  test("a parent quest alias is accepted on a subagent window", () => {
+    const subagentWindow: ClassifierWindow = {
+      ...window,
+      parentActiveQuests: [
+        { alias: "PQ1", title: "Ship marko-ui", outcome: "86 components", plan: [] },
+      ],
+      parentActiveQuestAliases: { PQ1: "01HREALQUESTIDPARENT000000" },
+    };
+
+    const result = validateResult(
+      { segments: [{ ...good.segments[0], quest: "PQ1" }] },
+      subagentWindow,
+    );
+
+    expect(result.segments[0]?.quest).toBe("PQ1");
+    expect(result.segments[0]?.belongs).toBe(true);
     expect(result.selectorDefaulted).toBe(0);
+  });
+
+  test("validateResult accepts each stint selector shape", () => {
+    const planWindow: ClassifierWindow = { ...window, planAliases: { "P1.1": "walk order" } };
+
+    for (const stint of ["P1.1", "S1", "new: chasing a flaky test"]) {
+      const result = validateResult({ segments: [{ ...good.segments[0], stint }] }, planWindow);
+      expect(result.segments[0]?.stint).toBe(stint);
+      expect(result.selectorDefaulted).toBe(0);
+    }
+  });
+
+  test("an unrecognized stint selector is repaired to a new stint named by what", () => {
+    const planWindow: ClassifierWindow = { ...window, planAliases: { "P1.1": "walk order" } };
+
+    for (const stint of ["S9", "P1.7", "P2.1", "nonsense", "new: "]) {
+      const result = validateResult({ segments: [{ ...good.segments[0], stint }] }, planWindow);
+      expect(result.segments[0]?.stint).toBe(`new: ${good.segments[0]?.what}`);
+      expect(result.selectorDefaulted).toBe(1);
+    }
+  });
+
+  test("validateResult requires stint to be a string in declared mode", () => {
+    expect(() => validateResult({ segments: [{ ...good.segments[0], stint: 7 }] }, window)).toThrow(
+      /stint: expected string/,
+    );
   });
 
   test("the fixed prompt text never contains a ULID-shaped candidate id", () => {
     const text = buildUserPrompt(window);
     expect(text).not.toContain("01HREALACTIVITYIDONE00000A");
     expect(text).not.toContain("01HREALACTIVITYIDZERO0000B");
-    expect(text).toContain("A1:");
+    expect(text).toContain("S1:");
   });
 
   test("validateResult rejects a sessionNote that is not null or is over 300 characters", () => {
@@ -388,9 +374,8 @@ describe("a classifier that returns a bad alias", () => {
               why: "ship",
               belongs: true,
               guess: null,
-              matchedStint: "A42",
-              continuesStint: null,
-              newStintReason: null,
+              quest: "Q1",
+              stint: "S42",
               isSwitch: false,
               trigger: null,
               confidence: 0.9,
@@ -406,8 +391,7 @@ describe("a classifier that returns a bad alias", () => {
   test("the bad alias is dropped and the segment is repaired into a new stint", async () => {
     const result = await new BadAliasClassifier().classify(window);
 
-    expect(result.segments[0]?.matchedStint).toBeNull();
-    expect(result.segments[0]?.newStintReason).toBe(DEFAULT_NEW_STINT_REASON);
+    expect(result.segments[0]?.stint).toBe("new: work");
     expect(result.selectorDefaulted).toBe(1);
   });
 });
@@ -426,9 +410,11 @@ describe("prompt rendering per mode", () => {
   const inferredWindow: ClassifierWindow = {
     ...window,
     mode: "inferred",
-    declaredQuest: null,
-    parentDeclaredQuest: null,
-    stintAliases: {},
+    activeQuests: [],
+    activeQuestAliases: {},
+    parentActiveQuests: [],
+    parentActiveQuestAliases: {},
+    openStintAliases: {},
     openQuests: [
       {
         id: "01HQUESTIDONE0000000000000",
@@ -458,7 +444,7 @@ describe("prompt rendering per mode", () => {
     expect(text).toContain('"trigger"');
     expect(text).not.toContain('"belongs"');
     expect(text).not.toContain('"guess"');
-    expect(text).not.toContain("declared quest");
+    expect(text).not.toContain("active quests");
     expect(new TextEncoder().encode(text).length).toBeLessThan(2048);
   });
 
@@ -467,7 +453,7 @@ describe("prompt rendering per mode", () => {
 
     expect(text).toContain('"belongs"');
     expect(text).toContain('"guess"');
-    expect(text).toContain("declared its quest");
+    expect(text).toContain("active quests");
     expect(text).not.toContain('"matchedQuest"');
     expect(text).not.toContain('"proposedQuest"');
     expect(text).not.toContain('"questions"');
@@ -489,12 +475,68 @@ describe("prompt rendering per mode", () => {
     expect(text).not.toContain("your declared quest");
   });
 
-  test("the declared user prompt renders the declared quest and no quest lists", () => {
+  test("the declared user prompt renders the active quests and no quest lists", () => {
     const text = buildUserPrompt(window);
 
-    expect(text).toContain("your declared quest: Ship marko-ui");
+    expect(text).toContain("active quests:");
+    expect(text).toContain("Q1: Ship marko-ui — 86 components");
     expect(text).not.toContain("open quests:");
     expect(text).not.toContain("recent side quests:");
+  });
+
+  test("the declared user prompt lists each active quest's plan under its own P aliases", () => {
+    const text = buildUserPrompt({
+      ...window,
+      activeQuests: [
+        { alias: "Q1", title: "Ship marko-ui", outcome: "86 components", plan: ["walk order"] },
+        { alias: "Q2", title: "Fix the flake", outcome: "green suite", plan: [] },
+      ],
+      activeQuestAliases: { Q1: "01HREALQUESTIDONE000000000", Q2: "01HREALQUESTIDTWO000000000" },
+    });
+
+    expect(text).toContain("P1.1 walk order");
+    expect(text).toContain("Q2: Fix the flake — green suite (plan: none)");
+  });
+
+  test("the declared user prompt renders none when nothing is declared", () => {
+    const text = buildUserPrompt({ ...window, activeQuests: [], activeQuestAliases: {} });
+
+    expect(text).toContain("active quests: none (ask to declare)");
+  });
+
+  test("a subagent's declared prompt lists the parent's active quests as PQ aliases", () => {
+    const text = buildUserPrompt({
+      ...window,
+      parentActiveQuests: [
+        { alias: "PQ1", title: "Ship marko-ui", outcome: "86 components", plan: ["walk order"] },
+      ],
+      parentActiveQuestAliases: { PQ1: "01HREALQUESTIDPARENT000000" },
+    });
+
+    expect(text).toContain("the parent session's active quests:");
+    expect(text).toContain("PQ1: Ship marko-ui — 86 components");
+  });
+
+  test("a parent quest's plan aliases never collide with the session's own", () => {
+    const text = buildUserPrompt({
+      ...window,
+      activeQuests: [
+        { alias: "Q1", title: "Verify the fix", outcome: "prove it", plan: ["run the suite"] },
+      ],
+      activeQuestAliases: { Q1: "01HREALQUESTIDOWN00000000" },
+      parentActiveQuests: [
+        { alias: "PQ1", title: "Ship marko-ui", outcome: "86 components", plan: ["walk order"] },
+      ],
+      parentActiveQuestAliases: { PQ1: "01HREALQUESTIDPARENT000000" },
+    });
+
+    expect(text).toContain("(plan: P1.1 run the suite)");
+    expect(text).toContain("(plan: PP1.1 walk order)");
+    expect(text).not.toContain("(plan: P1.1 walk order)");
+  });
+
+  test("the parent block is absent when the session is not a subagent", () => {
+    expect(buildUserPrompt(window)).not.toContain("the parent session's active quests");
   });
 
   test("validateResult accepts a pre-verifier segment for an inferred window", () => {
@@ -529,6 +571,85 @@ describe("prompt rendering per mode", () => {
 
     expect(result.segments[0]?.proposedQuest?.title).toBe("Compare Astryx");
     expect(result.segments[0]?.questions).toEqual(["which_quest"]);
+  });
+
+  test("inference mode still defaults a segment that names no stint selector", () => {
+    const result = validateResult(
+      {
+        segments: [
+          {
+            startedAt: "2026-09-04T15:00:00.000Z",
+            endedAt: "2026-09-04T15:20:00.000Z",
+            what: "work",
+            why: "ship",
+            matchedStint: null,
+            continuesStint: null,
+            newStintReason: null,
+            isSwitch: false,
+            trigger: null,
+            confidence: 0.9,
+          },
+        ],
+        sessionNote: null,
+      },
+      inferredWindow,
+    );
+
+    expect(result.segments[0]?.newStintReason).toBe(DEFAULT_NEW_STINT_REASON);
+    expect(result.selectorDefaulted).toBe(1);
+  });
+
+  test("inference mode still narrows two selectors to matchedStint by precedence", () => {
+    const result = validateResult(
+      {
+        segments: [
+          {
+            startedAt: "2026-09-04T15:00:00.000Z",
+            endedAt: "2026-09-04T15:20:00.000Z",
+            what: "work",
+            why: "ship",
+            matchedStint: "01HACTIVITYIDREAL000000000",
+            continuesStint: "01HACTIVITYIDREAL000000001",
+            newStintReason: null,
+            isSwitch: false,
+            trigger: null,
+            confidence: 0.9,
+          },
+        ],
+        sessionNote: null,
+      },
+      inferredWindow,
+    );
+
+    expect(result.segments[0]?.matchedStint).toBe("01HACTIVITYIDREAL000000000");
+    expect(result.segments[0]?.continuesStint).toBeNull();
+    expect(result.selectorAmbiguous).toBe(1);
+  });
+
+  test("inference mode is never asked for quest or stint", () => {
+    const result = validateResult(
+      {
+        segments: [
+          {
+            startedAt: "2026-09-04T15:00:00.000Z",
+            endedAt: "2026-09-04T15:20:00.000Z",
+            what: "work",
+            why: "ship",
+            matchedStint: null,
+            continuesStint: null,
+            newStintReason: "a fresh thread",
+            isSwitch: false,
+            trigger: null,
+            confidence: 0.9,
+          },
+        ],
+        sessionNote: null,
+      },
+      inferredWindow,
+    );
+
+    expect(result.segments[0]?.quest).toBeUndefined();
+    expect(result.segments[0]?.stint).toBeUndefined();
   });
 
   test("an inferred window keeps real stint ids, so selectors are not alias-checked", () => {
