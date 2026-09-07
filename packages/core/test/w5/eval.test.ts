@@ -1047,6 +1047,62 @@ describe("w5 eval", () => {
     expect(metrics.doubtsAnswered).toBe(0);
   });
 
+  test("doubts_recorded counts traces with a non-null doubt, auditable even without asking", async () => {
+    class DoubtingClassifier implements Classifier {
+      async classify(window: ClassifierWindow): Promise<ClassifierResult> {
+        const first = window.messages[0]?.ts ?? "2026-09-01T10:00:00.000Z";
+        const last = window.messages.at(-1)?.ts ?? first;
+        return {
+          segments: [
+            {
+              startedAt: first,
+              endedAt: last,
+              what: "work",
+              why: "ship",
+              belongs: false,
+              guess: "a side errand",
+              quest: null,
+              stint: "new: an unrelated errand",
+              isSwitch: false,
+              trigger: null,
+              confidence: 0.9,
+            },
+          ],
+          sessionNote: null,
+        };
+      }
+    }
+
+    const dir = mkdtempSync(join(tmpdir(), "tempad-eval-doubts-recorded-"));
+    const sourcePath = join(dir, "source.db");
+    seedSourceDb(sourcePath);
+    const declareFile = join(dir, "declare.json");
+    writeFileSync(
+      declareFile,
+      JSON.stringify([
+        {
+          session_id: "s1",
+          at: "2026-09-01T09:00:00.000Z",
+          new: { title: "Ship p", outcome: "ship it", commitment: "personal" },
+        },
+      ]),
+    );
+
+    const metrics = await runEval({
+      from: "2026-09-01",
+      to: "2026-09-02",
+      sourceDbPath: sourcePath,
+      scratchDir: dir,
+      now: "2026-09-02T00:00:00.000Z",
+      classifier: new DoubtingClassifier(),
+      log: () => {},
+      declareFile,
+    });
+
+    expect(metrics.doubtsRecorded).toBeGreaterThan(0);
+    expect(metrics.doubtsRecorded).toBe(metrics.doubts);
+  });
+
   test("--declare leaves traces unattributed when the session never declares in that window", async () => {
     const dir = mkdtempSync(join(tmpdir(), "tempad-eval-undeclared-"));
     const sourcePath = join(dir, "source.db");

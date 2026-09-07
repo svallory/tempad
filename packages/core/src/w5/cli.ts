@@ -254,7 +254,30 @@ function runQuiet(args: string[], context: W5Context): number {
   return 0;
 }
 
-function runReview(_args: string[], context: W5Context): number {
+const REVIEW_DEFAULT_DAYS = 7;
+
+function runReview(args: string[], context: W5Context): number {
+  const { values } = parseArgs({
+    args,
+    options: { days: { type: "string" } },
+    strict: true,
+  });
+  const days = values.days ? Number.parseInt(values.days, 10) : REVIEW_DEFAULT_DAYS;
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+  const doubtedTraces = context.database
+    .query(
+      `SELECT id, what, doubt FROM traces
+        WHERE doubt IS NOT NULL AND retracted_at IS NULL AND started_at >= ?
+        ORDER BY started_at ASC`,
+    )
+    .all(since) as { id: string; what: string; doubt: string }[];
+  for (const trace of doubtedTraces) {
+    context.stdout(
+      `trace ${trace.id} doubt (${trace.doubt}) — ${trace.what} — tempad trace list --stint <id>`,
+    );
+  }
+
   const expiredQuestions = context.database
     .query(
       "SELECT id, text, kind, guess, session_id as sessionId FROM questions WHERE state = 'expired' ORDER BY rowid ASC",
@@ -478,6 +501,7 @@ async function runEvalCommand(args: string[], context: W5Context): Promise<numbe
   context.stdout(`continues_links=${metrics.continuesLinks}`);
   context.stdout(`doubts=${metrics.doubts}`);
   context.stdout(`doubts_answered=${metrics.doubtsAnswered}`);
+  context.stdout(`doubts_recorded=${metrics.doubtsRecorded}`);
   context.stdout(`traces_unattributed=${metrics.tracesUnattributed}`);
   context.stdout(`declarations_skipped=${metrics.declarationsSkipped}`);
   context.stdout(`unknown_activity_ids=${metrics.unknownStintIds}`);

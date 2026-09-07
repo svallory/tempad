@@ -259,6 +259,12 @@ export interface EvalMetrics {
   continuesLinks: number;
   doubts: number;
   doubtsAnswered: number;
+  /**
+   * Traces with a non-null `doubt` in range -- the same fact `tempad review`
+   * lists, counted here so the run summary is auditable even when asking is
+   * disabled and no question was ever created for it.
+   */
+  doubtsRecorded: number;
   tracesUnattributed: number;
   declarationsSkipped: number;
   unknownStintIds: number;
@@ -486,6 +492,12 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
          AND t.retracted_at IS NULL AND t.started_at >= ? AND t.started_at < ?`,
     )
     .get(range.from, range.to) as { count: number };
+  const doubtsRecordedCount = database
+    .query(
+      `SELECT COUNT(*) as count FROM traces
+       WHERE doubt IS NOT NULL AND retracted_at IS NULL AND started_at >= ? AND started_at < ?`,
+    )
+    .get(range.from, range.to) as { count: number };
   const tracesUnattributedCount = database
     .query(
       `SELECT COUNT(*) as count FROM traces t
@@ -585,6 +597,7 @@ export async function runEval(options: EvalOptions): Promise<EvalMetrics> {
     continuesLinks: continuesCount.count,
     doubts: backfillResult.doubts,
     doubtsAnswered: doubtsAnsweredCount.count,
+    doubtsRecorded: doubtsRecordedCount.count,
     tracesUnattributed: tracesUnattributedCount.count,
     declarationsSkipped,
     unknownStintIds: backfillResult.unknownStintIds,

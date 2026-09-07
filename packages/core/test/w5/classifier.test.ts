@@ -189,10 +189,73 @@ describe("classifier", () => {
     expect(result.selectorDefaulted).toBe(0);
   });
 
-  test("validateResult requires a quest alias when the segment belongs", () => {
+  test("a missing quest with exactly one active quest is silently assigned to it", () => {
+    const result = validateResult({ segments: [{ ...good.segments[0], quest: null }] }, window);
+
+    expect(result.segments[0]?.belongs).toBe(true);
+    expect(result.segments[0]?.quest).toBe("Q1");
+    expect(result.segments[0]?.guess).toBeNull();
+    expect(result.selectorDefaulted).toBe(0);
+  });
+
+  test("an unrecognized quest alias with exactly one active quest is silently reassigned to it", () => {
+    const result = validateResult({ segments: [{ ...good.segments[0], quest: "Q9" }] }, window);
+
+    expect(result.segments[0]?.belongs).toBe(true);
+    expect(result.segments[0]?.quest).toBe("Q1");
+    expect(result.selectorDefaulted).toBe(0);
+  });
+
+  test("a missing quest with no active quest fails validation", () => {
+    const noQuestWindow: ClassifierWindow = {
+      ...window,
+      activeQuests: [],
+      activeQuestAliases: {},
+    };
     expect(() =>
-      validateResult({ segments: [{ ...good.segments[0], quest: null }] }, window),
+      validateResult({ segments: [{ ...good.segments[0], quest: null }] }, noQuestWindow),
     ).toThrow(/quest: expected an active quest alias when belongs is true/);
+  });
+
+  test("a missing quest with two or more active quests is repaired to a doubt, not a validation failure", () => {
+    const twoQuestWindow: ClassifierWindow = {
+      ...window,
+      activeQuests: [
+        ...window.activeQuests,
+        { alias: "Q2", title: "Other quest", outcome: "done", plan: [] },
+      ],
+      activeQuestAliases: { ...window.activeQuestAliases, Q2: "01HREALQUESTIDTWO000000000" },
+    };
+
+    const result = validateResult(
+      { segments: [{ ...good.segments[0], quest: null }] },
+      twoQuestWindow,
+    );
+
+    expect(result.segments[0]?.belongs).toBe(false);
+    expect(result.segments[0]?.quest).toBeNull();
+    expect(result.segments[0]?.guess).toBe("quest not named");
+    expect(result.selectorDefaulted).toBe(1);
+  });
+
+  test("an unrecognized quest alias with two or more active quests is repaired the same as a missing one", () => {
+    const twoQuestWindow: ClassifierWindow = {
+      ...window,
+      activeQuests: [
+        ...window.activeQuests,
+        { alias: "Q2", title: "Other quest", outcome: "done", plan: [] },
+      ],
+      activeQuestAliases: { ...window.activeQuestAliases, Q2: "01HREALQUESTIDTWO000000000" },
+    };
+
+    const result = validateResult(
+      { segments: [{ ...good.segments[0], quest: "Q9" }] },
+      twoQuestWindow,
+    );
+
+    expect(result.segments[0]?.belongs).toBe(false);
+    expect(result.segments[0]?.guess).toBe(UNRECOGNIZED_QUEST_ALIAS_GUESS);
+    expect(result.selectorDefaulted).toBe(1);
   });
 
   test("validateResult repairs a quest sent alongside belongs: false back to null", () => {
@@ -207,21 +270,19 @@ describe("classifier", () => {
     expect(result.segments[0]?.quest).toBeNull();
   });
 
-  test("an unrecognized quest alias becomes a doubt with a default guess", () => {
-    const result = validateResult({ segments: [{ ...good.segments[0], quest: "Q9" }] }, window);
+  test("an unrecognized quest alias with two or more active quests keeps a guess the model did supply", () => {
+    const twoQuestWindow: ClassifierWindow = {
+      ...window,
+      activeQuests: [
+        ...window.activeQuests,
+        { alias: "Q2", title: "Other quest", outcome: "done", plan: [] },
+      ],
+      activeQuestAliases: { ...window.activeQuestAliases, Q2: "01HREALQUESTIDTWO000000000" },
+    };
 
-    // The model meant to place it somewhere, so the segment is surfaced as a
-    // doubt rather than silently attached to nothing.
-    expect(result.segments[0]?.belongs).toBe(false);
-    expect(result.segments[0]?.quest).toBeNull();
-    expect(result.segments[0]?.guess).toBe(UNRECOGNIZED_QUEST_ALIAS_GUESS);
-    expect(result.selectorDefaulted).toBe(1);
-  });
-
-  test("an unrecognized quest alias keeps a guess the model did supply", () => {
     const result = validateResult(
       { segments: [{ ...good.segments[0], quest: "Q9", guess: "a build fix" }] },
-      window,
+      twoQuestWindow,
     );
 
     expect(result.segments[0]?.belongs).toBe(false);

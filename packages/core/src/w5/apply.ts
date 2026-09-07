@@ -369,7 +369,42 @@ function resolveStintForSegmentDeclared(
   };
 
   if (selector.startsWith("new: ")) {
-    return open(selector.slice("new: ".length));
+    const outcome = selector.slice("new: ".length).trim();
+
+    // A `new:` selector whose text matches a stint already open or recently
+    // closed in this session is the same outcome named twice, not a fresh one
+    // -- without this, the same duplicate-screenshots outcome opened a new
+    // stint every time the classifier phrased its `new:` the same way instead
+    // of naming the stint's own `S<n>` alias.
+    const openMatch = database
+      .query(
+        `SELECT stints.id as id, stints.quest_id as questId FROM stints
+          WHERE stints.outcome = ? AND stints.closed_at IS NULL
+            AND stints.retracted_at IS NULL AND stints.dismissed_at IS NULL
+            AND EXISTS (
+              SELECT 1 FROM traces
+               WHERE traces.stint_id = stints.id AND traces.retracted_at IS NULL
+                 AND traces.session_id = ?)
+          ORDER BY stints.opened_at DESC LIMIT 1`,
+      )
+      .get(outcome, sessionId) as { id: string; questId: string | null } | null;
+    if (openMatch !== null) return reuse(openMatch.id, openMatch.questId);
+
+    const closedMatch = database
+      .query(
+        `SELECT stints.id as id FROM stints
+          WHERE stints.outcome = ? AND stints.closed_at IS NOT NULL
+            AND stints.retracted_at IS NULL AND stints.dismissed_at IS NULL
+            AND EXISTS (
+              SELECT 1 FROM traces
+               WHERE traces.stint_id = stints.id AND traces.retracted_at IS NULL
+                 AND traces.session_id = ?)
+          ORDER BY stints.closed_at DESC LIMIT 1`,
+      )
+      .get(outcome, sessionId) as { id: string } | null;
+    if (closedMatch !== null) return open(outcome, undefined, closedMatch.id);
+
+    return open(outcome);
   }
 
   if (selector.startsWith("S")) {
@@ -646,6 +681,8 @@ export function applyResult(
       classifiedBy: "assistant",
       actor: options.actor,
       sessionId: window.sessionId,
+      belongs: declaredMode ? segment.belongs : undefined,
+      guess: declaredMode ? (segment.guess ?? null) : undefined,
     });
     summary.traces += 1;
 
@@ -654,6 +691,9 @@ export function applyResult(
       // summary and `tempad review` still show it; only the hand-back is gated.
       if (segment.belongs === false) {
         summary.doubts += 1;
+        options.log(
+          `w5 doubt: session ${window.sessionId} stint ${stintId} guess "${segment.guess ?? ""}"`,
+        );
         if (options.askingEnabled) {
           askQuestion(store, database, {
             trace: traceId,
