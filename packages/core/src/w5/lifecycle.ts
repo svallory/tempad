@@ -134,10 +134,17 @@ export interface OpenStintContinuingInput {
   continues?: string;
   /**
    * The plan alias (`"P2.1"`) this stint was opened for, recorded as written at
-   * the moment it was first matched. Audit only -- never re-parsed, since plan
-   * numbering is assigned fresh per window.
+   * the moment it was first matched. Plan numbering is assigned fresh per
+   * window, so the alias alone does not identify a plan item across time.
    */
   planIndex?: string;
+  /**
+   * The plan line's text at that index when the stint was opened. An amended
+   * plan shifts what `P2.1` names, so reuse is keyed on this rather than on the
+   * alias: without it, a stint opened for the old item would silently absorb
+   * the new one's traces.
+   */
+  planItem?: string;
 }
 
 export function openStintContinuing(
@@ -158,6 +165,7 @@ export function openStintContinuing(
         outcome: input.outcome,
         continues: input.continues,
         plan_index: input.planIndex,
+        plan_item: input.planItem,
       },
     }),
   );

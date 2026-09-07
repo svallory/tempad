@@ -199,3 +199,13 @@ CREATE TABLE w5_quiet (
 -- docs/specs/2026-09-07-ubiquitous-language.md.
 --
 -- Migration 0012_stint_minimum.sql added dismissed_at TEXT to stints.
+--
+-- Migration 0013_plan_stints.sql added plan_index TEXT and plan_item TEXT to
+-- stints (mirrored in the `stints` projection's CREATE TABLE). A declaration's
+-- --plan lists the stints a quest expects; the verifier names one as `P<n>.<m>`
+-- and the stint opened for it records both the alias (plan_index) and the plan
+-- line's text at that index (plan_item). Reuse is keyed on plan_item, not on
+-- the alias: plan numbering is assigned fresh per window, so amending a plan
+-- shifts what `P2.1` names, and without the text a stint opened for the old
+-- item would silently absorb the new one's traces. See
+-- docs/specs/2026-09-07-stints-design.md.

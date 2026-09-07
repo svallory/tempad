@@ -3,7 +3,12 @@ import { parseArgs } from "node:util";
 import type { Config } from "../config/env";
 import { answerQuestion, assignStint } from "./api";
 import type { IntentConfig } from "./config";
-import { type BranchKind, type Commitment, declareQuest } from "./declarations";
+import {
+  activeDeclaredQuests,
+  type BranchKind,
+  type Commitment,
+  declareQuest,
+} from "./declarations";
 import { assertEditIntent } from "./edit-intent";
 import { newUlid } from "./ids";
 import { applyIncremental, ensureTables, rebuildAll } from "./projections";
@@ -808,6 +813,17 @@ function runQuestCommand(args: string[], context: IntentContext): number {
       } | null;
       if (!heroForDone) {
         console.error("run `tempad hero init` first");
+        return 1;
+      }
+      // Ending a declaration the session never made (or already ended) writes an
+      // event that changes nothing, so it is a mistake worth reporting rather
+      // than a silent no-op -- most often a typo'd quest or the wrong session.
+      const activeNow = activeDeclaredQuests(context.database, {
+        sessionId: values.session,
+        at: values.at ?? new Date().toISOString(),
+      });
+      if (!activeNow.some((quest) => quest.questId === resolved)) {
+        console.error(`quest ${resolved} is not active in session ${values.session}`);
         return 1;
       }
       const doneResult = declareQuest(store, context.database, {

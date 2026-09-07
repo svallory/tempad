@@ -341,7 +341,12 @@ function resolveStintForSegmentDeclared(
     };
   };
 
-  const open = (outcome: string, planIndex?: string, continues?: string): ResolvedStint => {
+  const open = (
+    outcome: string,
+    planIndex?: string,
+    continues?: string,
+    planItem?: string,
+  ): ResolvedStint => {
     const stintId = openStintContinuing(store, database, {
       quest: questId ?? undefined,
       outcome,
@@ -349,6 +354,7 @@ function resolveStintForSegmentDeclared(
       actor: "hook",
       continues,
       planIndex,
+      planItem,
     });
     return {
       stintId,
@@ -378,14 +384,16 @@ function resolveStintForSegmentDeclared(
   }
 
   if (selector.startsWith("P")) {
-    const outcome = planAliases[selector];
-    if (outcome === undefined) {
+    const planItem = planAliases[selector];
+    if (planItem === undefined) {
       return { ...open(segment.what), unknownStintId: true };
     }
 
-    // One plan item is at most one stint per session, so a match looks for the
-    // row already standing for it before opening anything.
-    const key = `${questId ?? "none"}:${selector}`;
+    // One plan item is at most one stint per session. Reuse is keyed on the
+    // plan line's *text*, not on its alias: a plan can be amended between
+    // windows, which shifts what `P2.1` names, and a stint opened for the old
+    // item must not absorb the new one's traces.
+    const key = `${questId ?? "none"}:${selector}:${planItem}`;
     const known = planStints.get(key);
     if (known !== undefined) {
       const referenced = readStint(database, known);
@@ -395,11 +403,11 @@ function resolveStintForSegmentDeclared(
     const existing = database
       .query(
         `SELECT id, closed_at as closedAt FROM stints
-          WHERE plan_index = ? AND retracted_at IS NULL AND dismissed_at IS NULL
+          WHERE plan_index = ? AND plan_item = ? AND retracted_at IS NULL AND dismissed_at IS NULL
             AND (quest_id IS ? OR quest_id = ?)
           ORDER BY opened_at DESC LIMIT 1`,
       )
-      .get(selector, questId, questId) as { id: string; closedAt: string | null } | null;
+      .get(selector, planItem, questId, questId) as { id: string; closedAt: string | null } | null;
 
     if (existing !== null && existing.closedAt === null) {
       planStints.set(key, existing.id);
@@ -407,9 +415,10 @@ function resolveStintForSegmentDeclared(
       return reuse(existing.id, referenced?.questId ?? null);
     }
 
-    // The plan item had a stint that has since closed: coming back to it is a
-    // return, so the new row links to the old one.
-    const opened = open(outcome, selector, existing?.id);
+    // The same plan item had a stint that has since closed: coming back to it
+    // is a return, so the new row links to the old one. An amended item finds
+    // nothing here and simply opens its own stint, leaving the old one alone.
+    const opened = open(planItem, selector, existing?.id, planItem);
     planStints.set(key, opened.stintId);
     return opened;
   }
