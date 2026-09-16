@@ -37,6 +37,7 @@ export const EVENT_KINDS = [
   "question.expired",
   "retracted",
   "window.classified",
+  "impact.stated",
 ] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 

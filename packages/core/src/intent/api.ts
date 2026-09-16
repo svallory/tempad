@@ -5,6 +5,8 @@ import { applyIncremental } from "./projections";
 import { registerAllProjections } from "./projections/register";
 import type { EventStore } from "./store";
 
+export const THEME_PATTERN = /^[a-z][a-z-]*$/;
+
 // Projections must be registered before applyIncremental can materialize any
 // row -- intent/cli.ts does this on startup, but a caller reaching this
 // module directly (never importing cli.ts) would otherwise get silent
@@ -193,4 +195,51 @@ export function expireQuestion(
     database,
     store.append({ actor, kind: "question.expired", subject: questionId, payload: {} }),
   );
+}
+
+export interface StateImpactInput {
+  subject: string;
+  text: string;
+  theme?: string | null;
+  hero: Actor;
+}
+
+export function stateImpact(
+  store: EventStore,
+  database: Database,
+  input: StateImpactInput,
+): string {
+  if (input.theme != null && !THEME_PATTERN.test(input.theme)) {
+    throw new Error(`--theme must match ^[a-z][a-z-]*$: ${input.theme}`);
+  }
+  const event = store.append({
+    actor: input.hero,
+    kind: "impact.stated",
+    subject: input.subject,
+    payload: { text: input.text, theme: input.theme ?? null },
+  });
+  applyIncremental(database, event);
+  return String(event.id);
+}
+
+export interface ImpactRow {
+  text: string;
+  theme: string | null;
+}
+
+const QUERY_IMPACTS_CHUNK_SIZE = 500;
+
+export function queryImpacts(database: Database, subjects: string[]): Map<string, ImpactRow> {
+  const result = new Map<string, ImpactRow>();
+  for (let index = 0; index < subjects.length; index += QUERY_IMPACTS_CHUNK_SIZE) {
+    const chunk = subjects.slice(index, index + QUERY_IMPACTS_CHUNK_SIZE);
+    const rows = database
+      .query(
+        `SELECT subject, text, theme FROM impacts
+         WHERE retracted_at IS NULL AND subject IN (${chunk.map(() => "?").join(", ")})`,
+      )
+      .all(...chunk) as { subject: string; text: string; theme: string | null }[];
+    for (const row of rows) result.set(row.subject, { text: row.text, theme: row.theme });
+  }
+  return result;
 }

@@ -217,3 +217,23 @@ CREATE TABLE w5_quiet (
 -- events carry `belongs`/`guess` in declared mode so this column -- and
 -- `tempad review`/`w5 eval`'s `doubts_recorded` -- can audit every doubt
 -- without a question ever having been asked about it.
+--
+-- Migration 0015_impacts.sql created the `impacts` table, mirrored below and
+-- in the `impacts` projection's CREATE TABLE (src/intent/projections/impact.ts):
+-- an `impact.stated` event's client-facing text and theme for one evidence ref
+-- (`pr:<repo>#<number>`, `commit:<sha>`, `monday:<item id>`), keyed on that ref
+-- since a mirror row's own id is not stable across sync sources. `retracted`
+-- clears a row the same way every other retraction in this codebase does:
+-- `subject` is the id of the row it retracts (here, the evidence ref itself),
+-- matched with `WHERE subject = ?`.
+
+CREATE TABLE IF NOT EXISTS impacts (
+  subject TEXT PRIMARY KEY,
+  subject_kind TEXT NOT NULL CHECK (subject_kind IN ('pr', 'commit', 'monday')),
+  text TEXT NOT NULL,
+  theme TEXT,
+  revision INTEGER NOT NULL,
+  stated_at TEXT NOT NULL,
+  event_id INTEGER NOT NULL,
+  retracted_at TEXT
+);
