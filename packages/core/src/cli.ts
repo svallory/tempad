@@ -22,6 +22,7 @@ const INTENT_COMMANDS = new Set([
   "quest",
   "stint",
   "trace",
+  "impact",
   "answer",
   "rebuild",
 ]);
@@ -45,6 +46,9 @@ function printUsage(): void {
   );
   console.error("  tempad stint list [--open] [--quest <id>]");
   console.error("  tempad trace list [--since <iso>] [--stint <id>]");
+  console.error(
+    '  tempad impact set <ref> "<text>" [--theme <t>] | list [--project <p>] [--from <date> --to <date>] | import <file.json>',
+  );
   console.error('  tempad answer <question-id> --quest <id|new:"title"> [--why "..."]');
   console.error("  tempad rebuild [--until <iso>]");
   console.error("  tempad skill install [--scope user|project]");

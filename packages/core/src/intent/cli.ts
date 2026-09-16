@@ -1,7 +1,8 @@
 import type { Database } from "bun:sqlite";
+import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import type { Config } from "../config/env";
-import { answerQuestion, assignStint } from "./api";
+import { answerQuestion, assignStint, stateImpact, THEME_PATTERN } from "./api";
 import type { IntentConfig } from "./config";
 import {
   activeDeclaredQuests,
@@ -10,6 +11,7 @@ import {
   declareQuest,
 } from "./declarations";
 import { assertEditIntent } from "./edit-intent";
+import { EVIDENCE_REF_SHAPES, formatEvidenceRef, parseEvidenceRef } from "./evidence-ref";
 import { newUlid } from "./ids";
 import { applyIncremental, ensureTables, rebuildAll } from "./projections";
 import { resolveQuest } from "./projections/quest";
@@ -1033,6 +1035,180 @@ function runTraceCommand(args: string[], context: IntentContext): number {
   return 2;
 }
 
+interface ImpactMirrorRow {
+  project: string | null;
+  date: string | null;
+  title: string | null;
+}
+
+function mirrorRowForImpact(database: Database, subject: string): ImpactMirrorRow | null {
+  const ref = parseEvidenceRef(subject);
+  if (ref.kind === "commit") {
+    const row = database
+      .query(
+        `SELECT r.project as project, c.authored_at as date, c.subject as title
+         FROM gh_commits c JOIN gh_repos r ON r.full_name = c.repo WHERE c.sha = ?`,
+      )
+      .get(ref.sha) as ImpactMirrorRow | null;
+    return row;
+  }
+  if (ref.kind === "pr") {
+    const row = database
+      .query(
+        `SELECT r.project as project, p.created_at as date, p.title as title
+         FROM gh_pull_requests p JOIN gh_repos r ON r.full_name = p.repo
+         WHERE p.repo = ? AND p.number = ?`,
+      )
+      .get(ref.repo, ref.number) as ImpactMirrorRow | null;
+    return row;
+  }
+  const row = database
+    .query(
+      `SELECT project as project, updated_at as date, name as title FROM monday_items WHERE id = ?`,
+    )
+    .get(Number(ref.itemId)) as ImpactMirrorRow | null;
+  return row;
+}
+
+function runImpactCommand(args: string[], context: IntentContext): number {
+  const [subcommand, ...rest] = args;
+  const store = new EventStore(context.database);
+
+  if (subcommand === "set") {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: { theme: { type: "string" } },
+      strict: true,
+      allowPositionals: true,
+    });
+    const [ref, text] = positionals;
+    if (!ref || !text) {
+      console.error(`usage: tempad impact set <ref> "<text>" [--theme <t>]`);
+      console.error(`accepted ref shapes: ${EVIDENCE_REF_SHAPES}`);
+      return 2;
+    }
+    if (text.trim().length === 0) {
+      console.error("text must not be empty");
+      return 1;
+    }
+    const parsed = parseEvidenceRef(ref);
+    const subject = formatEvidenceRef(parsed);
+    stateImpact(store, context.database, {
+      subject,
+      text,
+      theme: values.theme ?? null,
+      hero: "hero",
+    });
+    return 0;
+  }
+
+  if (subcommand === "list") {
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        project: { type: "string" },
+        from: { type: "string" },
+        to: { type: "string" },
+      },
+      strict: true,
+    });
+    const rows = context.database
+      .query(
+        "SELECT subject, text, theme FROM impacts WHERE retracted_at IS NULL ORDER BY stated_at",
+      )
+      .all() as { subject: string; text: string; theme: string | null }[];
+    for (const row of rows) {
+      const mirror = mirrorRowForImpact(context.database, row.subject);
+      if (values.project && mirror?.project !== values.project) continue;
+      if (values.from && (!mirror?.date || mirror.date < values.from)) continue;
+      if (values.to && (!mirror?.date || mirror.date > values.to)) continue;
+      const theme = row.theme ? `[${row.theme}] ` : "";
+      const mirrorSuffix = mirror
+        ? `  (${mirror.project ?? "?"}, ${mirror.date ?? "?"}, "${mirror.title ?? "?"}")`
+        : "  (not mirrored)";
+      context.stdout(`${row.subject}  ${theme}${row.text}${mirrorSuffix}`);
+    }
+    return 0;
+  }
+
+  if (subcommand === "import") {
+    const file = rest[0];
+    if (!file) {
+      console.error("usage: tempad impact import <file.json>");
+      return 2;
+    }
+
+    let text: string;
+    try {
+      text = readFileSync(file, "utf8");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`import file could not be read: ${message}`);
+      return 1;
+    }
+
+    let entries: { ref: string; text: string; theme?: string | null }[];
+    try {
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed)) {
+        console.error("import file must contain a JSON array");
+        return 1;
+      }
+      entries = parsed as { ref: string; text: string; theme?: string | null }[];
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`import file is not valid JSON: ${message}`);
+      return 1;
+    }
+
+    const errors: string[] = [];
+    const validated: { subject: string; text: string; theme: string | null }[] = [];
+    entries.forEach((entry, index) => {
+      const position = index + 1;
+      let subject: string;
+      try {
+        subject = formatEvidenceRef(parseEvidenceRef(entry.ref));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`entry ${position}: ${message}`);
+        return;
+      }
+      if (!entry.text || entry.text.trim().length === 0) {
+        errors.push(`entry ${position}: text must not be empty`);
+        return;
+      }
+      const theme = entry.theme ?? null;
+      if (theme !== null && !THEME_PATTERN.test(theme)) {
+        errors.push(`entry ${position}: --theme must match ${THEME_PATTERN.source}: ${theme}`);
+        return;
+      }
+      validated.push({ subject, text: entry.text, theme });
+    });
+
+    if (errors.length > 0) {
+      for (const error of errors) console.error(error);
+      return 1;
+    }
+
+    const applyAll = context.database.transaction(() => {
+      for (const entry of validated) {
+        stateImpact(store, context.database, {
+          subject: entry.subject,
+          text: entry.text,
+          theme: entry.theme,
+          hero: "hero",
+        });
+      }
+    });
+    applyAll();
+    context.stdout(`imported=${validated.length}`);
+    return 0;
+  }
+
+  console.error("usage: tempad impact set|list|import ...");
+  return 2;
+}
+
 const BRANCH_KINDS = new Set<string>(["waiting", "blocker", "curiosity", "unknown"]);
 
 /**
@@ -1230,6 +1406,8 @@ export async function runIntentCommand(args: string[], context: IntentContext): 
         return runStintCommand(rest, context);
       case "trace":
         return runTraceCommand(rest, context);
+      case "impact":
+        return runImpactCommand(rest, context);
       case "answer":
         return runAnswerCommand(rest, context);
       case "rebuild":
