@@ -79,12 +79,16 @@ function applyMigration(database: Database, migration: { version: number; sql: s
  * 0003_events.sql) still runs as one plain `exec` so its statements are
  * never split apart.
  *
- * The tolerance is deliberately narrow, and covers exactly two messages:
+ * The tolerance is deliberately narrow, and covers exactly three messages:
  *
  * - "no such table" -- 0006, 0007, 0010 and 0011 target projection tables that
  *   a never-used intent layer has not created yet.
  * - "no such column" -- 0011's `RENAME COLUMN`s target columns that a
  *   freshly-created projection table already has under the new name.
+ * - "duplicate column name" -- an `ADD COLUMN` re-applied to a table that was
+ *   built (by an earlier `openDatabase` call in the same test/process, at a
+ *   pinned lower `user_version`) from schema that already includes the
+ *   column: the column is already there, so adding it again is a no-op.
  *
  * Every other error propagates and rolls the whole migration back
  * (see `applyMigration`). Skipping is safe only because these statements are
@@ -116,7 +120,12 @@ function runMigration(database: Database, sql: string): void {
       database.exec(statement);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("no such table") || message.includes("no such column")) continue;
+      if (
+        message.includes("no such table") ||
+        message.includes("no such column") ||
+        message.includes("duplicate column name")
+      )
+        continue;
       throw error;
     }
   }
