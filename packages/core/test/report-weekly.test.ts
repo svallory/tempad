@@ -111,4 +111,23 @@ describe("weeklyReport", () => {
 
     database.close();
   });
+
+  test("uses the session's project_name in the day and week tables instead of org/project", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    database.exec(
+      `UPDATE claude_sessions SET project_name = 'Widgets Display Name' WHERE id = 'session-1'`,
+    );
+
+    const output = weeklyReport.render(database, REPORT_CONFIG, {
+      from: "2026-08-31",
+      to: "2026-09-04",
+    });
+
+    expect(output).toContain("Widgets Display Name");
+    expect(output).not.toContain("acme/widgets");
+
+    database.close();
+  });
 });

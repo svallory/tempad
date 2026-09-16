@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
+import { projectLabel } from "./format.ts";
 import {
   queryDismissedMinutesByQuest,
   queryDoubtRows,
@@ -9,6 +10,7 @@ import {
   resolveIntentDatabase,
 } from "./intent-queries.ts";
 import { dayRange, heading, isWeekend, localWeekday, table } from "./markdown.ts";
+import { querySessions } from "./queries.ts";
 import type { Report, ReportOptions } from "./types.ts";
 
 interface ProjectKey {
@@ -105,6 +107,14 @@ function render(database: Database, config: Config, options: ReportOptions): str
   ];
 
   const weekTotals = new Map<string, { key: ProjectKey; stats: DayProjectStats }>();
+  const allSessions = querySessions(database, {
+    from: options.from,
+    to: options.to,
+    timeZone,
+    org: options.org,
+    project: options.project,
+    client: options.client,
+  });
 
   for (const day of days) {
     const dayRangeOptions = {
@@ -115,6 +125,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
       project: options.project,
       client: options.client,
     };
+    const daySessions = querySessions(database, dayRangeOptions);
     const stints = queryStints(intentDatabase, dayRangeOptions);
     const quests = queryQuests(intentDatabase, dayRangeOptions);
     const sideQuests = querySideQuests(intentDatabase, dayRangeOptions);
@@ -175,7 +186,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
           .reduce((sum, row) => sum + row.minutes, 0),
       };
 
-      rows.push(statsRow(projectKeyString(key), stats));
+      rows.push(statsRow(projectLabel(key, daySessions), stats));
       dayTotal = addStats(dayTotal, stats);
 
       const existing = weekTotals.get(projectKeyString(key));
@@ -195,7 +206,9 @@ function render(database: Database, config: Config, options: ReportOptions): str
     const sortedWeekKeys = [...weekTotals.values()].sort((a, b) =>
       projectKeyString(a.key).localeCompare(projectKeyString(b.key)),
     );
-    const rows = sortedWeekKeys.map(({ key, stats }) => statsRow(projectKeyString(key), stats));
+    const rows = sortedWeekKeys.map(({ key, stats }) =>
+      statsRow(projectLabel(key, allSessions), stats),
+    );
     const weekTotal = sortedWeekKeys.reduce((sum, { stats }) => addStats(sum, stats), emptyStats());
     rows.push(statsRow("Totals", weekTotal));
 

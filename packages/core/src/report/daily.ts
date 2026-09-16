@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
 import { queryImpacts } from "../intent/api.ts";
 import { formatEvidenceRef } from "../intent/evidence-ref.ts";
+import { projectLabel } from "./format.ts";
 import {
   attributeNonClaudeEvidence,
   queryDismissedMinutesByQuest,
@@ -120,7 +121,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
     );
 
     for (const key of projectKeys) {
-      lines.push(heading(3, projectKeyString(key)));
+      lines.push(heading(3, projectLabel(key, daySessions)));
 
       const keyCommits = dayCommits.filter((row) => matchesKey(row, key));
       for (const group of groupDuplicateCommits(keyCommits)) {
