@@ -31,6 +31,14 @@ mode = "declared"
 inference_fallback = true
 stint_min_minutes = 5
 
+# Path rules match one exact folder (and everything under it) and give it a
+# display name; list them before pattern rules since the first match wins.
+[[projects]]
+path = "~/work/mosaic/coolify"
+name = "Dev Server"
+org = "mosaic"
+project = "coolify"
+
 [[projects]]
 pattern = "~/work/:org/:project/:rest*"
 
