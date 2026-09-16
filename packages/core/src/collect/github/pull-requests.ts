@@ -10,6 +10,7 @@ export interface PullRequestRecord {
   createdAt: string;
   mergedAt: string | null;
   closedAt: string | null;
+  updatedAt: string;
 }
 
 interface ApiPullRequest {
@@ -63,6 +64,7 @@ export async function fetchPullRequests(
         createdAt: pull.created_at,
         mergedAt: pull.merged_at,
         closedAt: pull.closed_at,
+        updatedAt: pull.updated_at,
       });
     }
 
@@ -70,4 +72,43 @@ export async function fetchPullRequests(
   }
 
   return records;
+}
+
+interface ApiPullRequestCommit {
+  commit: { author: { date: string } | null };
+}
+
+const COMMITS_PER_PAGE = 100;
+/** GitHub's `pulls/{number}/commits` endpoint never returns more than this many commits. */
+const MAX_COMMITS = 250;
+
+/** Earliest commit author date among the PR's commits, or `null` if it has none. */
+export async function fetchFirstAuthoredAt(
+  fullName: string,
+  number: number,
+  options: GithubRequestOptions,
+): Promise<string | null> {
+  let earliest: string | null = null;
+  let fetched = 0;
+
+  for (let page = 1; fetched < MAX_COMMITS; page++) {
+    const commits = (await githubRequest(
+      `/repos/${fullName}/pulls/${number}/commits`,
+      { per_page: COMMITS_PER_PAGE, page },
+      options,
+    )) as ApiPullRequestCommit[];
+
+    if (commits.length === 0) break;
+    fetched += commits.length;
+
+    for (const commit of commits) {
+      const authoredAt = commit.commit.author?.date;
+      if (!authoredAt) continue;
+      if (!earliest || authoredAt < earliest) earliest = authoredAt;
+    }
+
+    if (commits.length < COMMITS_PER_PAGE) break;
+  }
+
+  return earliest;
 }

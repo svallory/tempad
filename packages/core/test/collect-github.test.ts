@@ -86,6 +86,9 @@ function makeFetch(): typeof fetch {
     if (url.includes("/search/issues")) {
       return jsonResponse(loadFixture("search-issues-authored.json"));
     }
+    if (url.includes("/pulls/") && url.includes("/commits")) {
+      return jsonResponse(loadFixture("pull-commits.json"));
+    }
     if (url.includes("/pulls")) {
       return jsonResponse(loadFixture("pulls.json"));
     }
@@ -246,13 +249,128 @@ describe("github collector", () => {
       expect(commitRows[0]?.author_email).toBe("me@saulo.engineer");
 
       const pullRequestRows = database
-        .query("SELECT number, role, state FROM gh_pull_requests WHERE repo = ?")
-        .all("Mosaicstg/LiUNA-Campaigns") as { number: number; role: string; state: string }[];
-      expect(pullRequestRows).toEqual([{ number: 42, role: "author", state: "merged" }]);
+        .query("SELECT number, role, state, first_authored_at FROM gh_pull_requests WHERE repo = ?")
+        .all("Mosaicstg/LiUNA-Campaigns") as {
+        number: number;
+        role: string;
+        state: string;
+        first_authored_at: string | null;
+      }[];
+      expect(pullRequestRows).toEqual([
+        { number: 42, role: "author", state: "merged", first_authored_at: "2026-08-19T09:00:00Z" },
+      ]);
 
       const secondSummary = await collector.sync(database, config, {});
       expect(secondSummary.inserted).toBe(0);
       expect(secondSummary.deleted).toBe(0);
+
+      database.close();
+    } finally {
+      rmSync(homeDirectory, { recursive: true, force: true });
+      rmSync(sourceDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test("a PR's first_authored_at is only refetched when its updated_at cursor moves", async () => {
+    const homeDirectory = mkdtempSync(join(tmpdir(), "tempad-home-"));
+    const sourceDirectory = await buildRepository([
+      {
+        message: "initial commit",
+        authorName: "Saulo Vallory",
+        authorEmail: "me@saulo.engineer",
+        date: "2026-09-02T10:00:00-03:00",
+        files: { "readme.md": "hello" },
+      },
+    ]);
+
+    try {
+      const dbPath = join(homeDirectory, "tempad.db");
+      const database = openDatabase(dbPath);
+      const config = baseConfig(homeDirectory);
+      const mirrorRoot = { source: sourceDirectory };
+
+      let commitsCalls = 0;
+      const fetchImpl: typeof fetch = (async (input: string | URL | Request) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/pulls/") && url.includes("/commits")) {
+          commitsCalls++;
+          return jsonResponse(loadFixture("pull-commits.json"));
+        }
+        if (url.includes("/search/commits"))
+          return jsonResponse(loadFixture("search-commits.json"));
+        if (url.includes("reviewed-by"))
+          return jsonResponse(loadFixture("search-issues-reviewed.json"));
+        if (url.includes("/search/issues"))
+          return jsonResponse(loadFixture("search-issues-authored.json"));
+        if (url.includes("/pulls")) return jsonResponse(loadFixture("pulls.json"));
+        return jsonResponse({ items: [], total_count: 0 });
+      }) as typeof fetch;
+
+      const collector = createGithubCollector({ fetch: fetchImpl, runner: makeRunner(mirrorRoot) });
+
+      await collector.sync(database, config, {});
+      expect(commitsCalls).toBe(1);
+
+      // Same fixture, same updated_at: a second sync must not re-fetch commits.
+      await collector.sync(database, config, {});
+      expect(commitsCalls).toBe(1);
+
+      database.close();
+    } finally {
+      rmSync(homeDirectory, { recursive: true, force: true });
+      rmSync(sourceDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test("--full refetches first_authored_at for every PR, ignoring the stored updated_at cursor", async () => {
+    const homeDirectory = mkdtempSync(join(tmpdir(), "tempad-home-"));
+    const sourceDirectory = await buildRepository([
+      {
+        message: "initial commit",
+        authorName: "Saulo Vallory",
+        authorEmail: "me@saulo.engineer",
+        date: "2026-09-02T10:00:00-03:00",
+        files: { "readme.md": "hello" },
+      },
+    ]);
+
+    try {
+      const dbPath = join(homeDirectory, "tempad.db");
+      const database = openDatabase(dbPath);
+      const config = baseConfig(homeDirectory);
+      const mirrorRoot = { source: sourceDirectory };
+
+      let commitsCalls = 0;
+      const fetchImpl: typeof fetch = (async (input: string | URL | Request) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/pulls/") && url.includes("/commits")) {
+          commitsCalls++;
+          return jsonResponse(loadFixture("pull-commits.json"));
+        }
+        if (url.includes("/search/commits"))
+          return jsonResponse(loadFixture("search-commits.json"));
+        if (url.includes("reviewed-by"))
+          return jsonResponse(loadFixture("search-issues-reviewed.json"));
+        if (url.includes("/search/issues"))
+          return jsonResponse(loadFixture("search-issues-authored.json"));
+        if (url.includes("/pulls")) return jsonResponse(loadFixture("pulls.json"));
+        return jsonResponse({ items: [], total_count: 0 });
+      }) as typeof fetch;
+
+      const collector = createGithubCollector({ fetch: fetchImpl, runner: makeRunner(mirrorRoot) });
+
+      // Incremental sync: first run fetches once, a second unchanged run fetches zero more times.
+      await collector.sync(database, config, {});
+      expect(commitsCalls).toBe(1);
+      await collector.sync(database, config, {});
+      expect(commitsCalls).toBe(1);
+
+      // --full: the CLI clears sync_state before calling the collector, widening
+      // `lower` back to `config.since`; the PR's updated_at cursor has not moved,
+      // but the `full` option must still force a refetch for every PR.
+      database.query("DELETE FROM sync_state WHERE source = ?").run("github");
+      await collector.sync(database, config, { full: true });
+      expect(commitsCalls).toBe(2);
 
       database.close();
     } finally {
@@ -343,6 +461,8 @@ describe("github collector", () => {
           return jsonResponse(loadFixture("search-issues-reviewed.json"));
         if (url.includes("/search/issues"))
           return jsonResponse(loadFixture("search-issues-authored.json"));
+        if (url.includes("/pulls/") && url.includes("/commits"))
+          return jsonResponse(loadFixture("pull-commits.json"));
         if (url.includes("/pulls")) return jsonResponse(loadFixture("pulls.json"));
         return jsonResponse({ items: [], total_count: 0 });
       }) as typeof fetch;
@@ -422,6 +542,9 @@ describe("github collector", () => {
         if (url.includes("/search/issues")) {
           return jsonResponse({ total_count: 0, items: [] });
         }
+        if (url.includes("/pulls/") && url.includes("/commits")) {
+          return jsonResponse(loadFixture("pull-commits.json"));
+        }
         if (url.includes("/pulls")) {
           return jsonResponse(loadFixture("pulls-only-reviewed.json"));
         }
@@ -488,6 +611,8 @@ describe("github collector", () => {
         if (url.includes("reviewed-by")) return jsonResponse({ total_count: 0, items: [] });
         if (url.includes("/search/issues"))
           return jsonResponse(loadFixture("search-issues-authored.json"));
+        if (url.includes("/pulls/") && url.includes("/commits"))
+          return jsonResponse(loadFixture("pull-commits.json"));
         if (url.includes("/pulls")) return jsonResponse(loadFixture("pulls.json"));
         return jsonResponse({ items: [], total_count: 0 });
       }) as typeof fetch;
@@ -571,6 +696,17 @@ describe("github collector", () => {
               stderr: "",
             };
           }
+          if (
+            typeof fullPath === "string" &&
+            fullPath.includes("/pulls/") &&
+            fullPath.includes("/commits")
+          ) {
+            return {
+              code: 0,
+              stdout: JSON.stringify(loadFixture("pull-commits.json")),
+              stderr: "",
+            };
+          }
           if (typeof fullPath === "string" && fullPath.includes("/pulls")) {
             return { code: 0, stdout: JSON.stringify(loadFixture("pulls.json")), stderr: "" };
           }
@@ -622,6 +758,17 @@ describe("github collector", () => {
             return {
               code: 0,
               stdout: JSON.stringify(loadFixture("search-issues-authored.json")),
+              stderr: "",
+            };
+          }
+          if (
+            typeof fullPath === "string" &&
+            fullPath.includes("/pulls/") &&
+            fullPath.includes("/commits")
+          ) {
+            return {
+              code: 0,
+              stdout: JSON.stringify(loadFixture("pull-commits.json")),
               stderr: "",
             };
           }

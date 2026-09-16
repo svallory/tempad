@@ -58,6 +58,7 @@ export async function runSync(
   database: Database,
   config: ReturnType<typeof loadConfig>,
   selected: Collector[],
+  full = false,
 ): Promise<{ summaries: SyncSummary[]; failed: boolean }> {
   const summaries: SyncSummary[] = [];
   let failed = false;
@@ -65,7 +66,7 @@ export async function runSync(
   for (const collector of selected) {
     const startedAt = new Date().toISOString();
     try {
-      const summary = await collector.sync(database, config, {});
+      const summary = await collector.sync(database, config, { full });
       summaries.push(summary);
       setSyncState(database, collector.name, startedAt);
     } catch (error) {
@@ -113,7 +114,7 @@ async function runSyncCommand(args: string[]): Promise<number> {
     }
   }
 
-  const { summaries, failed } = await runSync(database, config, selected);
+  const { summaries, failed } = await runSync(database, config, selected, values.full);
 
   for (const summary of summaries) {
     const warnings = summary.warnings.length > 0 ? ` warnings=${summary.warnings.length}` : "";

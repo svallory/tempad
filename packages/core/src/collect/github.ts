@@ -6,7 +6,7 @@ import { getSyncState, setSyncState } from "../db/sync-state.ts";
 import { discoverRepositories } from "./github/discover.ts";
 import { commitExists, logCommits, refsContaining } from "./github/log.ts";
 import { mirrorRepository } from "./github/mirror.ts";
-import { fetchPullRequests } from "./github/pull-requests.ts";
+import { fetchFirstAuthoredAt, fetchPullRequests } from "./github/pull-requests.ts";
 import type { CommandRunner } from "./github/request.ts";
 import type { Collector, SyncOptions, SyncSummary } from "./types.ts";
 
@@ -177,6 +177,44 @@ function upsertPullRequest(
   return rowChanged(database) ? "updated" : "unchanged";
 }
 
+/**
+ * Whether a pull request's `first_authored_at` needs (re)fetching: unset, or
+ * GitHub's `updated_at` cursor moved since the last sync -- or, on `--full`,
+ * unconditionally, since a full backfill must refetch every PR regardless of
+ * what is already stored.
+ */
+function pullRequestNeedsFirstAuthoredAt(
+  database: Database,
+  repo: string,
+  number: number,
+  updatedAt: string,
+  full: boolean,
+): boolean {
+  if (full) return true;
+  const row = database
+    .query(
+      `SELECT first_authored_at, updated_at FROM gh_pull_requests WHERE repo = ? AND number = ?`,
+    )
+    .get(repo, number) as { first_authored_at: string | null; updated_at: string | null } | null;
+  if (!row) return true;
+  if (row.first_authored_at === null) return true;
+  return row.updated_at !== updatedAt;
+}
+
+function setFirstAuthoredAt(
+  database: Database,
+  repo: string,
+  number: number,
+  firstAuthoredAt: string | null,
+  updatedAt: string,
+): void {
+  database
+    .query(
+      `UPDATE gh_pull_requests SET first_authored_at = ?, updated_at = ? WHERE repo = ? AND number = ?`,
+    )
+    .run(firstAuthoredAt, updatedAt, repo, number);
+}
+
 export function createGithubCollector(dependencies: GithubCollectorDependencies): Collector {
   return {
     name: "github",
@@ -283,6 +321,29 @@ export function createGithubCollector(dependencies: GithubCollectorDependencies)
             const outcome = upsertPullRequest(database, pullRequest);
             if (outcome === "inserted") inserted++;
             else if (outcome === "updated") updated++;
+
+            if (
+              pullRequestNeedsFirstAuthoredAt(
+                database,
+                pullRequest.repo,
+                pullRequest.number,
+                pullRequest.updatedAt,
+                options.full ?? false,
+              )
+            ) {
+              const firstAuthoredAt = await fetchFirstAuthoredAt(
+                pullRequest.repo,
+                pullRequest.number,
+                requestOptions,
+              );
+              setFirstAuthoredAt(
+                database,
+                pullRequest.repo,
+                pullRequest.number,
+                firstAuthoredAt,
+                pullRequest.updatedAt,
+              );
+            }
           }
         }
       }
