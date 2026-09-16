@@ -1,11 +1,15 @@
 #!/usr/bin/env bun
 import type { Database } from "bun:sqlite";
 import { copyFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
+import { reresolveSessions as reresolveClaudeSessions } from "./collect/claude.ts";
 import { collectors } from "./collect/index.ts";
 import type { Collector, SyncSummary } from "./collect/types.ts";
 import { loadConfig } from "./config/env.ts";
+import { deriveOrgProject, registerProject } from "./config/project-register.ts";
+import { loadRules, normalizePathForMatch } from "./config/rules.ts";
 import { openDatabase } from "./db/database.ts";
 import { setSyncState } from "./db/sync-state.ts";
 import { runIntentCommand } from "./intent/cli.ts";
@@ -52,6 +56,9 @@ function printUsage(): void {
   console.error('  tempad answer <question-id> --quest <id|new:"title"> [--why "..."]');
   console.error("  tempad rebuild [--until <iso>]");
   console.error("  tempad skill install [--scope user|project]");
+  console.error(
+    '  tempad project register <path> --name "<display>" [--org <org>] [--project <slug>] | list | reresolve <path>',
+  );
 }
 
 export async function runSync(
@@ -217,6 +224,107 @@ export function runSkillCommand(args: string[]): number {
   return 0;
 }
 
+export interface ProjectContext {
+  database: Database;
+  tomlPath: string;
+  stdout: (line: string) => void;
+  stderr: (line: string) => void;
+  homedir: () => string;
+}
+
+export async function runProjectCommand(args: string[], context: ProjectContext): Promise<number> {
+  const [action, ...rest] = args;
+  const { database, tomlPath, stdout, stderr } = context;
+
+  if (action === "register") {
+    const { values, positionals } = parseArgs({
+      args: rest,
+      options: {
+        name: { type: "string" },
+        org: { type: "string" },
+        project: { type: "string" },
+      },
+      strict: true,
+      allowPositionals: true,
+    });
+    const path = positionals[0];
+    if (!path || !values.name) {
+      printUsage();
+      return 2;
+    }
+
+    try {
+      registerProject(tomlPath, {
+        path,
+        name: values.name,
+        org: values.org,
+        project: values.project,
+      });
+    } catch (error) {
+      stderr(error instanceof Error ? error.message : String(error));
+      return 1;
+    }
+
+    const rules = loadRules(tomlPath);
+    const absolutePath = normalizePathForMatch(path, context.homedir());
+    const derived = deriveOrgProject(rules, absolutePath);
+    const moved = reresolveClaudeSessions(database, rules, path, context.homedir());
+    stdout(
+      `registered "${path}" as ${values.org ?? derived.org}/${values.project ?? derived.project} (${values.name}); ${moved} session(s) reresolved`,
+    );
+    return 0;
+  }
+
+  if (action === "list") {
+    const rules = loadRules(tomlPath);
+    for (const rule of rules.projects) {
+      if (rule.kind === "path") {
+        stdout(`path\t${rule.absolutePath}\t${rule.org}\t${rule.project}\t${rule.name ?? ""}`);
+      } else {
+        stdout(
+          `pattern\t${rule.urlPattern.pathname}\t${rule.org ?? ""}\t${rule.project ?? ""}\t${
+            rule.name ?? ""
+          }`,
+        );
+      }
+    }
+    return 0;
+  }
+
+  if (action === "reresolve") {
+    const { positionals } = parseArgs({
+      args: rest,
+      options: {},
+      strict: true,
+      allowPositionals: true,
+    });
+    const path = positionals[0];
+    if (!path) {
+      printUsage();
+      return 2;
+    }
+    const rules = loadRules(tomlPath);
+    const moved = reresolveClaudeSessions(database, rules, path, context.homedir());
+    stdout(`reresolved ${moved} session(s) under "${path}"`);
+    return 0;
+  }
+
+  printUsage();
+  return 2;
+}
+
+async function runProjectDispatch(rest: string[]): Promise<number> {
+  const config = loadConfig();
+  const database = openDatabase(join(config.home, "tempad.db"));
+  return runProjectCommand(rest, {
+    database,
+    tomlPath: join(config.home, "tempad.toml"),
+    stdout: (line: string) => console.log(line),
+    stderr: (line: string) => console.error(line),
+    homedir,
+  });
+}
+
 async function runIntentDispatch(command: string, rest: string[]): Promise<number> {
   const config = loadConfig();
   const database = openDatabase(join(config.home, "tempad.db"));
@@ -258,6 +366,9 @@ async function main(): Promise<number> {
   }
   if (command === "skill") {
     return runSkillCommand(rest);
+  }
+  if (command === "project") {
+    return runProjectDispatch(rest);
   }
 
   printUsage();
