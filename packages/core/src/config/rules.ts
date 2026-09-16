@@ -1,10 +1,13 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
+import { resolve as resolvePathname } from "node:path";
 
 export interface PathRule {
-  pattern: string;
+  pattern?: string;
+  path?: string;
   org?: string;
   project?: string;
+  name?: string;
 }
 
 export interface RepositoryRule {
@@ -21,16 +24,29 @@ export interface BoardRule {
   [key: string]: string;
 }
 
-interface CompiledRule {
+interface CompiledPatternRule {
+  kind: "pattern";
   urlPattern: URLPattern;
   org: string | undefined;
   project: string | undefined;
+  name: string | null;
 }
+
+interface CompiledPathRule {
+  kind: "path";
+  absolutePath: string;
+  org: string;
+  project: string;
+  name: string | null;
+}
+
+type CompiledRule = CompiledPatternRule | CompiledPathRule;
 
 export interface ResolvedPath {
   org: string;
   project: string;
   meta: Record<string, string>;
+  name: string | null;
 }
 
 export interface ResolvedEntity {
@@ -45,8 +61,31 @@ export interface Rules {
   boards: BoardRule[];
 }
 
-function expandHome(pattern: string, home: string): string {
+export function expandHome(pattern: string, home: string): string {
   return pattern.startsWith("~") ? home + pattern.slice(1) : pattern;
+}
+
+function stripTrailingSlash(path: string): string {
+  return path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
+}
+
+/**
+ * `~`-expands, resolves symlinks (falling back to plain path resolution when
+ * the path doesn't exist yet, e.g. a `path` rule for a folder created after
+ * being registered), and strips a trailing slash -- applied to both a
+ * `path` rule's configured folder (at load time) and the `cwd` it's matched
+ * against (at match time), so `~/work/x/`, a symlinked component, or a
+ * differently-cased path (on case-insensitive filesystems) all normalize to
+ * the same string before comparison.
+ */
+export function normalizePathForMatch(path: string, home: string): string {
+  const expanded = expandHome(path, home);
+  const resolved = existsSync(expanded) ? realpathSync(expanded) : resolvePathname(expanded);
+  return stripTrailingSlash(resolved);
+}
+
+function pathsEqual(a: string, b: string): boolean {
+  return process.platform === "darwin" ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
 function slugify(name: string): string {
@@ -94,7 +133,32 @@ export function loadRules(tomlPath: string): Rules {
   const home = homedir();
 
   const projects = rawRules.map((rule, index) => {
-    const pathname = expandHome(rule.pattern, home);
+    const hasPattern = rule.pattern !== undefined;
+    const hasPath = rule.path !== undefined;
+
+    if (hasPattern === hasPath) {
+      throw new Error(
+        `projects entry at index ${index} must have exactly one of "pattern" or "path"`,
+      );
+    }
+
+    if (hasPath) {
+      if (!rule.org || !rule.project) {
+        throw new Error(
+          `projects entry at index ${index} (path "${rule.path}") requires "org" and "project"`,
+        );
+      }
+      const absolutePath = normalizePathForMatch(rule.path as string, home);
+      return {
+        kind: "path" as const,
+        absolutePath,
+        org: rule.org,
+        project: rule.project,
+        name: rule.name ?? null,
+      };
+    }
+
+    const pathname = expandHome(rule.pattern as string, home);
     const urlPattern = new URLPattern({ pathname });
 
     const groupNames = extractGroupNames(pathname);
@@ -108,7 +172,13 @@ export function loadRules(tomlPath: string): Rules {
       throw new Error(`Rule at index ${index} (pattern "${rule.pattern}") cannot supply "project"`);
     }
 
-    return { urlPattern, org: rule.org, project: rule.project };
+    return {
+      kind: "pattern" as const,
+      urlPattern,
+      org: rule.org,
+      project: rule.project,
+      name: rule.name ?? null,
+    };
   });
 
   const repositories = parsed.repositories ?? [];
@@ -130,8 +200,33 @@ function extractGroupNames(pathname: string): Set<string> {
   return names;
 }
 
+/**
+ * True when `candidatePath` is `underPath` itself or a descendant of it.
+ * Both are expected already normalized (see `normalizePathForMatch`) --
+ * exported so callers matching against a `path` rule's folder outside
+ * `resolvePath` (e.g. `reresolveSessions`) use the exact same rule: trailing
+ * slash stripped, symlinks resolved, case-insensitive on darwin only.
+ */
+export function matchesPath(underPath: string, candidatePath: string): boolean {
+  if (pathsEqual(candidatePath, underPath)) return true;
+  const prefix = `${underPath}/`;
+  const [a, b] =
+    process.platform === "darwin"
+      ? [candidatePath.toLowerCase(), prefix.toLowerCase()]
+      : [candidatePath, prefix];
+  return a.startsWith(b);
+}
+
 export function resolvePath(rules: Rules, absolutePath: string): ResolvedPath {
+  const home = homedir();
+  const normalizedInput = normalizePathForMatch(absolutePath, home);
+
   for (const rule of rules.projects) {
+    if (rule.kind === "path") {
+      if (!matchesPath(rule.absolutePath, normalizedInput)) continue;
+      return { org: rule.org, project: rule.project, meta: {}, name: rule.name };
+    }
+
     const match = rule.urlPattern.exec({ pathname: absolutePath });
     if (!match) continue;
 
@@ -147,10 +242,10 @@ export function resolvePath(rules: Rules, absolutePath: string): ResolvedPath {
       meta[name] = value;
     }
 
-    return { org, project, meta };
+    return { org, project, meta, name: rule.name };
   }
 
-  return { org: "unassigned", project: "unassigned", meta: {} };
+  return { org: "unassigned", project: "unassigned", meta: {}, name: null };
 }
 
 function metaFromEntity<T extends Record<string, unknown>>(

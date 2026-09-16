@@ -1,8 +1,15 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { Config } from "../config/env.ts";
-import { loadRules, resolvePath } from "../config/rules.ts";
+import {
+  expandHome,
+  loadRules,
+  matchesPath,
+  normalizePathForMatch,
+  resolvePath,
+} from "../config/rules.ts";
 import { getSyncState } from "../db/sync-state.ts";
 import type { Collector, SyncOptions, SyncSummary } from "./types.ts";
 
@@ -366,10 +373,10 @@ function prepareQueries(database: Database): ClaudeQueries {
 
   const upsertSession = database.query(
     `INSERT INTO claude_sessions
-      (id, claude_dir, project_dir, file_path, cwd, org, project, path_meta, title, title_source,
-       entrypoint, user_type, git_branch, started_at, ended_at, message_count, tool_call_count,
-       models, host_slug, file_mtime)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, claude_dir, project_dir, file_path, cwd, org, project, path_meta, project_name, title,
+       title_source, entrypoint, user_type, git_branch, started_at, ended_at, message_count,
+       tool_call_count, models, host_slug, file_mtime)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        claude_dir = excluded.claude_dir,
        project_dir = excluded.project_dir,
@@ -378,6 +385,7 @@ function prepareQueries(database: Database): ClaudeQueries {
        org = excluded.org,
        project = excluded.project,
        path_meta = excluded.path_meta,
+       project_name = excluded.project_name,
        title = excluded.title,
        title_source = excluded.title_source,
        entrypoint = excluded.entrypoint,
@@ -471,6 +479,7 @@ async function syncFile(
       resolved.org,
       resolved.project,
       Object.keys(resolved.meta).length > 0 ? JSON.stringify(resolved.meta) : null,
+      resolved.name,
       title,
       titleSource,
       session.entrypoint ?? null,
@@ -532,6 +541,75 @@ export async function syncOneSessionFile(
     deleted: 0,
     warnings: result.warnings,
   };
+}
+
+/**
+ * Re-resolves org/project/path_meta/project_name for every stored session
+ * whose `cwd` falls under `underPath`, without re-reading session files --
+ * used after a `tempad project register` inserts a new rule that changes
+ * where existing sessions resolve to.
+ */
+export function reresolveSessions(
+  database: Database,
+  rules: ReturnType<typeof loadRules>,
+  underPath: string,
+  home: string = homedir(),
+): number {
+  const update = database.query(
+    "UPDATE claude_sessions SET org = ?, project = ?, path_meta = ?, project_name = ? WHERE id = ?",
+  );
+  const normalizedUnderPath = normalizePathForMatch(underPath, home);
+
+  // Prefilters candidates in SQL by (exact match or `/`-prefixed descendant)
+  // against both the plain `~`-expanded path and its realpath (when it
+  // differs, e.g. `underPath` itself is reached through a symlink), so a
+  // database with sessions scattered across many unrelated projects never
+  // realpath-resolves rows that can't possibly be under `underPath` -- only
+  // rows this prefilter lets through pay for the exact/normalized comparison
+  // below. A trailing slash on `underPath` is stripped before building the
+  // prefixes (matching `normalizePathForMatch`'s own normalization), and the
+  // comparison is case-insensitive on darwin (`LOWER()` both sides) to widen
+  // the prefilter rather than narrow it -- this can only let through a few
+  // extra rows for the exact check to reject, never drop a real match. It
+  // does not resolve a symlink inside `cwd` itself (only in `underPath`),
+  // which is the one gap `matchesPath`'s full normalization still covers for
+  // direct calls to `resolvePath`, just not for this SQL-prefiltered path.
+  const stripTrailingSlash = (path: string): string =>
+    path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
+  const expandedUnderPath = stripTrailingSlash(expandHome(underPath, home));
+  const candidatePrefixes = new Set([expandedUnderPath, normalizedUnderPath]);
+  const conditions: string[] = [];
+  const params: string[] = [];
+  const caseInsensitive = process.platform === "darwin";
+  const cwdColumn = caseInsensitive ? "LOWER(cwd)" : "cwd";
+  for (const prefix of candidatePrefixes) {
+    const value = caseInsensitive ? prefix.toLowerCase() : prefix;
+    conditions.push(`${cwdColumn} = ?`, `${cwdColumn} LIKE ? || '/%'`);
+    params.push(value, value);
+  }
+
+  const rows = database
+    .query(
+      `SELECT id, cwd, project_dir FROM claude_sessions WHERE cwd IS NOT NULL AND (${conditions.join(" OR ")})`,
+    )
+    .all(...params) as { id: string; cwd: string | null; project_dir: string }[];
+
+  let moved = 0;
+  for (const row of rows) {
+    const resolveTarget = row.cwd ?? decodeProjectDir(row.project_dir);
+    if (!matchesPath(normalizedUnderPath, normalizePathForMatch(resolveTarget, home))) continue;
+
+    const resolved = resolvePath(rules, resolveTarget);
+    update.run(
+      resolved.org,
+      resolved.project,
+      Object.keys(resolved.meta).length > 0 ? JSON.stringify(resolved.meta) : null,
+      resolved.name,
+      row.id,
+    );
+    moved += 1;
+  }
+  return moved;
 }
 
 export const claudeCollector: Collector = {

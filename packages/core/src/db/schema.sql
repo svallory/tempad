@@ -74,6 +74,7 @@ CREATE TABLE claude_sessions (
   org              TEXT NOT NULL,
   project          TEXT NOT NULL,
   path_meta        TEXT,                  -- JSON of extra named groups
+  project_name     TEXT,                  -- display name from a [[projects]] rule, if any
   title            TEXT,
   git_branch       TEXT,
   started_at       TEXT NOT NULL,

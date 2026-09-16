@@ -1,9 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { claudeCollector } from "../src/collect/claude.ts";
+import { claudeCollector, reresolveSessions } from "../src/collect/claude.ts";
 import type { Config } from "../src/config/env.ts";
+import { loadRules } from "../src/config/rules.ts";
 import { openDatabase } from "../src/db/database.ts";
 import { setSyncState } from "../src/db/sync-state.ts";
 
@@ -450,6 +452,110 @@ describe("claude collector", () => {
         .get() as { title: string; title_source: string };
       expect(updated.title).toBe("Security review");
       expect(updated.title_source).toBe("custom-title");
+
+      database.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("fills project_name from a path rule and reresolveSessions updates it after a rule is added", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tempad-claude-"));
+    const home = join(root, "home");
+    const claudeDir = join(root, "claude");
+    const projectDir = join(root, "work", "mosaic", "coolify");
+    mkdirSync(home, { recursive: true });
+    mkdirSync(claudeDir, { recursive: true });
+    mkdirSync(join(claudeDir, "projects", "coolify-project"), { recursive: true });
+    mkdirSync(projectDir, { recursive: true });
+
+    const tomlPath = join(home, "tempad.toml");
+    writeFileSync(
+      tomlPath,
+      `[[projects]]\npattern = "${root.replace(/\\/g, "\\\\")}/work/:org/:project/:rest*"\n`,
+    );
+
+    const sessionFile = join(claudeDir, "projects", "coolify-project", "session-6.jsonl");
+    writeJsonl(sessionFile, [
+      {
+        type: "user",
+        uuid: "u1",
+        sessionId: "sess-6",
+        timestamp: "2026-01-01T10:00:00.000Z",
+        cwd: projectDir,
+        origin: { kind: "human" },
+        message: { role: "user", content: "deploy the app" },
+      },
+    ]);
+
+    try {
+      const database = openDatabase(join(root, "tempad.db"));
+      const config = makeConfig(home, [claudeDir]);
+
+      await claudeCollector.sync(database, config, {});
+
+      const beforeRow = database
+        .query("SELECT project_name FROM claude_sessions WHERE id = 'sess-6'")
+        .get() as { project_name: string | null };
+      expect(beforeRow.project_name).toBeNull();
+
+      writeFileSync(
+        tomlPath,
+        `[[projects]]\npath = "${projectDir.replace(/\\/g, "\\\\")}"\nname = "Dev Server"\norg = "mosaic"\nproject = "coolify"\n\n[[projects]]\npattern = "${root.replace(/\\/g, "\\\\")}/work/:org/:project/:rest*"\n`,
+      );
+
+      const rules = loadRules(tomlPath);
+      const moved = reresolveSessions(database, rules, projectDir);
+      expect(moved).toBe(1);
+
+      const afterRow = database
+        .query("SELECT org, project, project_name FROM claude_sessions WHERE id = 'sess-6'")
+        .get() as { org: string; project: string; project_name: string | null };
+      expect(afterRow).toEqual({ org: "mosaic", project: "coolify", project_name: "Dev Server" });
+
+      database.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("reresolveSessions prefilters in SQL and never realpath-resolves a session outside the path", async () => {
+    const root = mkdtempSync(join(tmpdir(), "tempad-claude-"));
+    const home = join(root, "home");
+    const targetDir = join(root, "work", "mosaic", "coolify");
+    const otherDir = join(root, "work", "other", "thing");
+    mkdirSync(home, { recursive: true });
+    mkdirSync(targetDir, { recursive: true });
+    mkdirSync(otherDir, { recursive: true });
+
+    const tomlPath = join(home, "tempad.toml");
+    writeFileSync(
+      tomlPath,
+      `[[projects]]\npath = "${targetDir.replace(/\\/g, "\\\\")}"\nname = "Dev Server"\norg = "mosaic"\nproject = "coolify"\n`,
+    );
+
+    try {
+      const database = openDatabase(join(root, "tempad.db"));
+      database.exec(
+        `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, path_meta, title, title_source, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+         VALUES ('sess-target', '~/.claude', 'p', '/tmp/sess-target.jsonl', '${targetDir}', 'x', 'y', NULL, NULL, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 1, 0, '[]', 'test-host', '2026-01-01T00:00:00.000Z'),
+                ('sess-other', '~/.claude', 'p', '/tmp/sess-other.jsonl', '${otherDir}', 'x', 'y', NULL, NULL, NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', 1, 0, '[]', 'test-host', '2026-01-01T00:00:00.000Z')`,
+      );
+
+      const rules = loadRules(tomlPath);
+
+      const realpathSpy = spyOn(fs, "realpathSync");
+      const moved = reresolveSessions(database, rules, targetDir);
+      const resolvedPaths = realpathSpy.mock.calls.map((call) => call[0]);
+      realpathSpy.mockRestore();
+
+      expect(moved).toBe(1);
+      expect(resolvedPaths).not.toContain(otherDir);
+
+      const row = database
+        .query("SELECT project_name FROM claude_sessions WHERE id = 'sess-target'")
+        .get() as { project_name: string | null };
+      expect(row.project_name).toBe("Dev Server");
 
       database.close();
     } finally {
