@@ -6,7 +6,7 @@
 
 ## 2026-09-01 (Tuesday)
 ### acme/widgets
-- bbbbbbb feat(widgets): polish report output (acme/widgets)
+- bbbbbbb [feature] Clients now see a polished, readable daily report (acme/widgets)
 - Polish report output, 09:15 to 10:45, 3 messages
 - #42 Polish report output, opened
 #### Quests

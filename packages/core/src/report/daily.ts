@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
+import { queryImpacts } from "../intent/api.ts";
+import { formatEvidenceRef } from "../intent/evidence-ref.ts";
 import {
   attributeNonClaudeEvidence,
   queryDismissedMinutesByQuest,
@@ -76,6 +78,14 @@ function render(database: Database, config: Config, options: ReportOptions): str
     const dayAttribution = new Map(
       attributeNonClaudeEvidence(intentDatabase, dayRangeOptions).map((row) => [row.id, row]),
     );
+    const dayImpactSubjects = [
+      ...dayCommits.map((row) => formatEvidenceRef({ kind: "commit", sha: row.sha })),
+      ...dayPullRequests.map((row) =>
+        formatEvidenceRef({ kind: "pr", repo: row.repo, number: row.number }),
+      ),
+      ...dayMondayItems.map((row) => formatEvidenceRef({ kind: "monday", itemId: String(row.id) })),
+    ];
+    const dayImpacts = queryImpacts(intentDatabase, dayImpactSubjects);
 
     const hasEvidence =
       dayCommits.length > 0 ||
@@ -113,9 +123,11 @@ function render(database: Database, config: Config, options: ReportOptions): str
         const suffix = group.count > 1 ? ` (x${group.count})` : "";
         const quest = dayAttribution.get(group.sha)?.questTitle;
         const attribution = quest ? ` — ${quest}` : "";
-        lines.push(
-          `- ${group.sha.slice(0, 7)} ${group.subject} (${group.repo})${suffix}${attribution}`,
-        );
+        const impact = dayImpacts.get(formatEvidenceRef({ kind: "commit", sha: group.sha }));
+        const text = impact
+          ? `${impact.theme ? `[${impact.theme}] ` : ""}${impact.text}`
+          : group.subject;
+        lines.push(`- ${group.sha.slice(0, 7)} ${text} (${group.repo})${suffix}${attribution}`);
       }
 
       const keySessions = daySessions.filter((row) => matchesKey(row, key));
@@ -143,13 +155,23 @@ function render(database: Database, config: Config, options: ReportOptions): str
             : "no timeline";
         const quest = dayAttribution.get(String(item.id))?.questTitle;
         const attribution = quest ? ` — ${quest}` : "";
-        lines.push(
-          `- [${item.status ?? "no status"}] ${item.name}, timeline ${timeline}${attribution}`,
+        const impact = dayImpacts.get(
+          formatEvidenceRef({ kind: "monday", itemId: String(item.id) }),
         );
+        const text = impact
+          ? `${impact.theme ? `[${impact.theme}] ` : ""}${impact.text}`
+          : item.name;
+        lines.push(`- [${item.status ?? "no status"}] ${text}, timeline ${timeline}${attribution}`);
       }
       for (const pr of dayPullRequests.filter((row) => matchesKey(row, key))) {
         const action = prAction(pr, day, timeZone);
-        lines.push(`- #${pr.number} ${pr.title}, ${action}`);
+        const impact = dayImpacts.get(
+          formatEvidenceRef({ kind: "pr", repo: pr.repo, number: pr.number }),
+        );
+        const text = impact
+          ? `${impact.theme ? `[${impact.theme}] ` : ""}${impact.text}`
+          : pr.title;
+        lines.push(`- #${pr.number} ${text}, ${action}`);
       }
 
       const keyStints = dayStints.filter((row) => matchesKey(row, key));
