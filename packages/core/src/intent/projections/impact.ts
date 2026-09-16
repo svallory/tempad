@@ -22,7 +22,7 @@ export const impactProjection: Projection = {
           .query("SELECT revision FROM impacts WHERE subject = ?")
           .get(event.subject) as { revision: number } | null;
         const revision = (existing?.revision ?? 0) + 1;
-        const subjectKind = String(event.subject).split(":", 1)[0];
+        const subjectKind = String(event.subject).split(":", 1)[0] ?? "";
         database
           .query(
             `INSERT INTO impacts (subject, subject_kind, text, theme, revision, stated_at, event_id, retracted_at)
