@@ -86,6 +86,7 @@ export interface PullRequestRow {
   createdAt: string;
   mergedAt: string | null;
   closedAt: string | null;
+  firstAuthoredAt: string | null;
 }
 
 // NULL means the session predates the title_source column and was never re-synced
@@ -288,7 +289,8 @@ export function queryPullRequestsByRepo(
     .query(
       `SELECT p.repo as repo, r.org as org, r.project as project, p.number as number,
               p.title as title, p.state as state,
-              p.created_at as createdAt, p.merged_at as mergedAt, p.closed_at as closedAt
+              p.created_at as createdAt, p.merged_at as mergedAt, p.closed_at as closedAt,
+              p.first_authored_at as firstAuthoredAt
        FROM gh_pull_requests p
        JOIN gh_repos r ON r.full_name = p.repo
        ${whereClause}`,
@@ -299,9 +301,9 @@ export function queryPullRequestsByRepo(
 export function queryPullRequests(database: Database, range: DateRange): PullRequestRow[] {
   const { start, end } = toDayBounds(range);
   const conditions = [
-    "((p.created_at >= ? AND p.created_at < ?) OR (p.merged_at >= ? AND p.merged_at < ?) OR (p.closed_at >= ? AND p.closed_at < ?))",
+    "((p.created_at >= ? AND p.created_at < ?) OR (p.merged_at >= ? AND p.merged_at < ?) OR (p.closed_at >= ? AND p.closed_at < ?) OR (p.first_authored_at >= ? AND p.first_authored_at < ?))",
   ];
-  const params: (string | number)[] = [start, end, start, end, start, end];
+  const params: (string | number)[] = [start, end, start, end, start, end, start, end];
 
   if (range.org) {
     conditions.push("LOWER(r.org) = ?");
@@ -319,7 +321,8 @@ export function queryPullRequests(database: Database, range: DateRange): PullReq
     .query(
       `SELECT p.repo as repo, r.org as org, r.project as project, p.number as number,
               p.title as title, p.state as state,
-              p.created_at as createdAt, p.merged_at as mergedAt, p.closed_at as closedAt
+              p.created_at as createdAt, p.merged_at as mergedAt, p.closed_at as closedAt,
+              p.first_authored_at as firstAuthoredAt
        FROM gh_pull_requests p
        JOIN gh_repos r ON r.full_name = p.repo
        WHERE ${conditions.join(" AND ")}${client.sql}

@@ -36,6 +36,55 @@ describe("dailyReport", () => {
     database.close();
   });
 
+  test("default output is byte-identical whether --pr-date is omitted or explicitly 'merged'", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    const withoutOption = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-08-31",
+      to: "2026-09-02",
+    });
+    const withMerged = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-08-31",
+      to: "2026-09-02",
+      prDate: "merged",
+    });
+
+    const golden = readFileSync(join(import.meta.dir, "fixtures/report-golden/daily.md"), "utf8");
+    expect(withoutOption).toBe(golden);
+    expect(withMerged).toBe(golden);
+
+    database.close();
+  });
+
+  test("--pr-date authored places a pull request under its first commit's author day instead of its merge day", () => {
+    const database = openDatabase(join(dir, "tempad.db"));
+    seedReportFixtures(database);
+
+    // Seeded PR #42: created 2026-09-01, merged 2026-09-02, first_authored_at 2026-08-20.
+    const mergedMode = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-08-20",
+      to: "2026-08-20",
+    });
+    expect(mergedMode).not.toContain("#42");
+
+    const authoredMode = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-08-20",
+      to: "2026-08-20",
+      prDate: "authored",
+    });
+    expect(authoredMode).toContain("#42");
+
+    const authoredModeOnMergeDay = dailyReport.render(database, REPORT_CONFIG, {
+      from: "2026-09-02",
+      to: "2026-09-02",
+      prDate: "authored",
+    });
+    expect(authoredModeOnMergeDay).not.toContain("#42");
+
+    database.close();
+  });
+
   test("a 2026-09-01T02:30Z commit is placed on the 2026-08-31 local day", () => {
     const database = openDatabase(join(dir, "tempad.db"));
     seedReportFixtures(database);

@@ -31,7 +31,7 @@ function printUsage(): void {
   console.error("Usage:");
   console.error("  tempad sync [monday|github|claude] [--full]");
   console.error(
-    "  tempad report <daily|project|hourly|weekly> --from <date> --to <date> [--org X] [--project Y] [--out path] [--as-of <iso>] [--party <slug>] [--client <slug>]",
+    "  tempad report <daily|project|hourly|weekly> --from <date> --to <date> [--org X] [--project Y] [--out path] [--as-of <iso>] [--party <slug>] [--client <slug>] [--pr-date merged|authored]",
   );
   console.error('  tempad hero init "<name>"');
   console.error(
@@ -145,11 +145,21 @@ async function runReportCommand(args: string[]): Promise<number> {
       "as-of": { type: "string" },
       party: { type: "string" },
       client: { type: "string" },
+      "pr-date": { type: "string" },
     },
     strict: true,
   });
 
   if (!values.from || !values.to) {
+    printUsage();
+    return 2;
+  }
+
+  if (
+    values["pr-date"] !== undefined &&
+    values["pr-date"] !== "merged" &&
+    values["pr-date"] !== "authored"
+  ) {
     printUsage();
     return 2;
   }
@@ -165,6 +175,7 @@ async function runReportCommand(args: string[]): Promise<number> {
     project: values.project,
     asOf: values["as-of"],
     client: values.client,
+    prDate: values["pr-date"] as "merged" | "authored" | undefined,
   };
 
   const output = report.render(database, config, options);

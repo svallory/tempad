@@ -45,8 +45,8 @@ export function seedReportFixtures(database: Database): void {
   );
 
   database.exec(
-    `INSERT INTO gh_pull_requests (repo, number, title, state, author, role, created_at, merged_at, closed_at)
-     VALUES ('acme/widgets', 42, 'Polish report output', 'merged', 'octocat', 'author', '2026-09-01T15:00:00.000Z', '2026-09-02T10:00:00.000Z', NULL)`,
+    `INSERT INTO gh_pull_requests (repo, number, title, state, author, role, created_at, merged_at, closed_at, first_authored_at, updated_at)
+     VALUES ('acme/widgets', 42, 'Polish report output', 'merged', 'octocat', 'author', '2026-09-01T15:00:00.000Z', '2026-09-02T10:00:00.000Z', NULL, '2026-08-20T09:00:00.000Z', '2026-09-02T10:00:00.000Z')`,
   );
 
   database.exec(
