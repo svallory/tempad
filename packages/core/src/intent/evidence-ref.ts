@@ -1,13 +1,16 @@
 export type EvidenceRef =
   | { kind: "pr"; repo: string; number: number }
   | { kind: "commit"; sha: string }
-  | { kind: "monday"; itemId: string };
+  | { kind: "monday"; itemId: string }
+  | { kind: "session"; sessionId: string };
 
 const PR_PATTERN = /^pr:([^/#]+\/[^/#]+)#(\d+)$/;
 const COMMIT_PATTERN = /^commit:([0-9a-f]{7,40})$/;
 const MONDAY_PATTERN = /^monday:(\d+)$/;
+const SESSION_PATTERN = /^session:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 
-export const EVIDENCE_REF_SHAPES = "pr:<repo>#<number>, commit:<sha>, monday:<item id>";
+export const EVIDENCE_REF_SHAPES =
+  "pr:<repo>#<number>, commit:<sha>, monday:<item id>, session:<claude session id>";
 
 export function parseEvidenceRef(ref: string): EvidenceRef {
   const pr = ref.match(PR_PATTERN);
@@ -20,6 +23,9 @@ export function parseEvidenceRef(ref: string): EvidenceRef {
   const monday = ref.match(MONDAY_PATTERN);
   if (monday) return { kind: "monday", itemId: monday[1] as string };
 
+  const session = ref.match(SESSION_PATTERN);
+  if (session) return { kind: "session", sessionId: session[1] as string };
+
   throw new Error(`invalid evidence ref: ${ref} (expected one of ${EVIDENCE_REF_SHAPES})`);
 }
 
@@ -31,5 +37,7 @@ export function formatEvidenceRef(ref: EvidenceRef): string {
       return `commit:${ref.sha}`;
     case "monday":
       return `monday:${ref.itemId}`;
+    case "session":
+      return `session:${ref.sessionId}`;
   }
 }

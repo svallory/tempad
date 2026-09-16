@@ -32,6 +32,29 @@ describe("tempad impact", () => {
     expect(row.theme).toBe("fix");
   });
 
+  test("set stores a session impact", async () => {
+    const { run, database } = harness();
+    await run(["hero", "init", "S"]);
+    expect(
+      await run([
+        "impact",
+        "set",
+        "session:3d4f5a96-77fa-478a-accc-d804f2fad104",
+        "Restored production access",
+        "--theme",
+        "fix",
+      ]),
+    ).toBe(0);
+    const row = database
+      .query("SELECT text, theme FROM impacts WHERE subject = ?")
+      .get("session:3d4f5a96-77fa-478a-accc-d804f2fad104") as {
+      text: string;
+      theme: string | null;
+    };
+    expect(row.text).toBe("Restored production access");
+    expect(row.theme).toBe("fix");
+  });
+
   test("set rejects an unknown ref shape and names the accepted shapes", async () => {
     const { run } = harness();
     await run(["hero", "init", "S"]);
@@ -45,6 +68,7 @@ describe("tempad impact", () => {
     expect(message).toContain("pr:<repo>#<number>");
     expect(message).toContain("commit:<sha>");
     expect(message).toContain("monday:<item id>");
+    expect(message).toContain("session:<claude session id>");
   });
 
   test("set rejects blank text with the same message as import, exit 1", async () => {
@@ -98,6 +122,43 @@ describe("tempad impact", () => {
     expect(line).toContain("Fix bug");
   });
 
+  test("list shows (not mirrored) for a session ref absent from claude_sessions", async () => {
+    const { run, lines } = harness();
+    await run(["hero", "init", "S"]);
+    await run([
+      "impact",
+      "set",
+      "session:3d4f5a96-77fa-478a-accc-d804f2fad104",
+      "Restored production access",
+    ]);
+    expect(await run(["impact", "list"])).toBe(0);
+    const line = lines.find((entry) =>
+      entry.startsWith("session:3d4f5a96-77fa-478a-accc-d804f2fad104"),
+    );
+    expect(line).toContain("(not mirrored)");
+  });
+
+  test("list joins the mirror row when the session exists in claude_sessions", async () => {
+    const { run, lines, database } = harness();
+    await run(["hero", "init", "S"]);
+    database.exec(
+      `INSERT INTO claude_sessions (id, claude_dir, project_dir, file_path, cwd, org, project, path_meta, title, title_source, git_branch, started_at, ended_at, message_count, tool_call_count, models, host_slug, file_mtime)
+       VALUES ('3d4f5a96-77fa-478a-accc-d804f2fad104', '~/.claude', 'dir', '/tmp/s.jsonl', NULL, 'org', 'proj', NULL, 'Ops session on Coolify', 'custom-title', NULL, '2026-09-10T00:00:00.000Z', '2026-09-10T01:00:00.000Z', 2, 0, '[]', 'host', '2026-09-10T01:00:00.000Z')`,
+    );
+    await run([
+      "impact",
+      "set",
+      "session:3d4f5a96-77fa-478a-accc-d804f2fad104",
+      "Restored production access",
+    ]);
+    expect(await run(["impact", "list"])).toBe(0);
+    const line = lines.find((entry) =>
+      entry.startsWith("session:3d4f5a96-77fa-478a-accc-d804f2fad104"),
+    );
+    expect(line).toContain("proj");
+    expect(line).toContain("Ops session on Coolify");
+  });
+
   test("import applies each entry as one event and prints imported=<n>", async () => {
     const { run, database, lines } = harness();
     await run(["hero", "init", "S"]);
@@ -108,6 +169,7 @@ describe("tempad impact", () => {
       JSON.stringify([
         { ref: "commit:aaa1111", text: "A" },
         { ref: "monday:42", text: "B", theme: "feature" },
+        { ref: "session:3d4f5a96-77fa-478a-accc-d804f2fad104", text: "C", theme: "process" },
       ]),
     );
     expect(await run(["impact", "import", file])).toBe(0);
@@ -121,8 +183,13 @@ describe("tempad impact", () => {
     expect(rows).toEqual([
       { subject: "commit:aaa1111", text: "A", theme: null },
       { subject: "monday:42", text: "B", theme: "feature" },
+      {
+        subject: "session:3d4f5a96-77fa-478a-accc-d804f2fad104",
+        text: "C",
+        theme: "process",
+      },
     ]);
-    expect(lines).toContain("imported=2");
+    expect(lines).toContain("imported=3");
   });
 
   test("import validates every entry before applying any, on a bad entry nothing is applied", async () => {

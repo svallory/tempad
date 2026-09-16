@@ -36,6 +36,19 @@ describe("impacts projection", () => {
     expect(row.retracted_at).toBeNull();
   });
 
+  test("state accepts a session subject", () => {
+    const { database, store } = harness();
+    stateImpact(store, database, {
+      subject: "session:3d4f5a96-77fa-478a-accc-d804f2fad104",
+      text: "Restored production access",
+      hero: "hero",
+    });
+    const row = database
+      .query("SELECT subject_kind FROM impacts WHERE subject = ?")
+      .get("session:3d4f5a96-77fa-478a-accc-d804f2fad104") as { subject_kind: string };
+    expect(row.subject_kind).toBe("session");
+  });
+
   test("restating the same subject is revision 2, later text wins", () => {
     const { database, store } = harness();
     stateImpact(store, database, { subject: "pr:org/repo#1", text: "First", hero: "hero" });
