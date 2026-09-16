@@ -46,6 +46,7 @@ export interface SessionRow {
   id: string;
   org: string;
   project: string;
+  projectName: string | null;
   title: string | null;
   titleSource: string | null;
   gitBranch: string | null;
@@ -185,8 +186,8 @@ export function querySessions(database: Database, range: DateRange): SessionRow[
 
   return database
     .query(
-      `SELECT s.id as id, s.org as org, s.project as project, s.title as title,
-              s.title_source as titleSource, s.git_branch as gitBranch,
+      `SELECT s.id as id, s.org as org, s.project as project, s.project_name as projectName,
+              s.title as title, s.title_source as titleSource, s.git_branch as gitBranch,
               s.started_at as startedAt, s.ended_at as endedAt, s.message_count as messageCount
        FROM claude_sessions s
        WHERE ${conditions.join(" AND ")}${client.sql}

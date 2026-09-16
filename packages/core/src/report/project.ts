@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
 import { type ImpactRow, queryImpacts } from "../intent/api.ts";
 import { formatEvidenceRef } from "../intent/evidence-ref.ts";
+import { projectLabel } from "./format.ts";
 import {
   attributeNonClaudeEvidence,
   type NonClaudeEvidenceRow,
@@ -193,7 +194,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
     const lines =
       rows.length > 0
         ? [
-            heading(3, projectKeyString(key)),
+            heading(3, projectLabel(key, projectSessions)),
             "Elapsed is an upper bound.",
             "",
             table(
@@ -211,7 +212,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
             ),
             ...sideQuestFooter,
           ]
-        : [heading(3, projectKeyString(key)), "- no evidence"];
+        : [heading(3, projectLabel(key, projectSessions)), "- no evidence"];
     sections.push(lines.join("\n"));
   }
 
