@@ -12,6 +12,7 @@ export interface SyncSummary {
 export interface SyncOptions {
   since?: string;
   fetch?: typeof fetch;
+  full?: boolean;
 }
 
 export interface Collector {

@@ -60,6 +60,8 @@ CREATE TABLE gh_pull_requests (
   created_at  TEXT NOT NULL,
   merged_at   TEXT,
   closed_at   TEXT,
+  first_authored_at TEXT,                 -- earliest commit author date among the PR's commits
+  updated_at  TEXT,                        -- GitHub's PR updated_at cursor, to detect changed PRs
   PRIMARY KEY (repo, number)
 );
 
