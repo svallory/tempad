@@ -1062,11 +1062,19 @@ function mirrorRowForImpact(database: Database, subject: string): ImpactMirrorRo
       .get(ref.repo, ref.number) as ImpactMirrorRow | null;
     return row;
   }
+  if (ref.kind === "monday") {
+    const row = database
+      .query(
+        `SELECT project as project, updated_at as date, name as title FROM monday_items WHERE id = ?`,
+      )
+      .get(Number(ref.itemId)) as ImpactMirrorRow | null;
+    return row;
+  }
   const row = database
     .query(
-      `SELECT project as project, updated_at as date, name as title FROM monday_items WHERE id = ?`,
+      `SELECT project as project, started_at as date, title as title FROM claude_sessions WHERE id = ?`,
     )
-    .get(Number(ref.itemId)) as ImpactMirrorRow | null;
+    .get(ref.sessionId) as ImpactMirrorRow | null;
   return row;
 }
 

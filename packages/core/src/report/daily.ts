@@ -84,6 +84,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
         formatEvidenceRef({ kind: "pr", repo: row.repo, number: row.number }),
       ),
       ...dayMondayItems.map((row) => formatEvidenceRef({ kind: "monday", itemId: String(row.id) })),
+      ...daySessions.map((row) => formatEvidenceRef({ kind: "session", sessionId: row.id })),
     ];
     const dayImpacts = queryImpacts(intentDatabase, dayImpactSubjects);
 
@@ -131,15 +132,27 @@ function render(database: Database, config: Config, options: ReportOptions): str
       }
 
       const keySessions = daySessions.filter((row) => matchesKey(row, key));
-      const namedSessions = keySessions.filter((row) => isNamedTitleSource(row.titleSource));
-      const untitledSessions = keySessions.filter((row) => !isNamedTitleSource(row.titleSource));
+      const sessionImpacts = new Map(
+        keySessions.map((session) => [
+          session.id,
+          dayImpacts.get(formatEvidenceRef({ kind: "session", sessionId: session.id })),
+        ]),
+      );
+      const namedSessions = keySessions.filter(
+        (row) => isNamedTitleSource(row.titleSource) || sessionImpacts.get(row.id) !== undefined,
+      );
+      const untitledSessions = keySessions.filter(
+        (row) => !isNamedTitleSource(row.titleSource) && sessionImpacts.get(row.id) === undefined,
+      );
 
       for (const session of namedSessions) {
         const startTime = localTime(session.startedAt, timeZone);
         const endTime = localTime(session.endedAt, timeZone);
-        lines.push(
-          `- ${session.title ?? "(untitled session)"}, ${startTime} to ${endTime}, ${session.messageCount} messages`,
-        );
+        const impact = sessionImpacts.get(session.id);
+        const text = impact
+          ? `${impact.theme ? `[${impact.theme}] ` : ""}${impact.text}`
+          : (session.title ?? "(untitled session)");
+        lines.push(`- ${text}, ${startTime} to ${endTime}, ${session.messageCount} messages`);
       }
       if (untitledSessions.length > 0) {
         const totalMessages = untitledSessions.reduce(

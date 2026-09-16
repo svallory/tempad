@@ -221,15 +221,19 @@ CREATE TABLE w5_quiet (
 -- Migration 0015_impacts.sql created the `impacts` table, mirrored below and
 -- in the `impacts` projection's CREATE TABLE (src/intent/projections/impact.ts):
 -- an `impact.stated` event's client-facing text and theme for one evidence ref
--- (`pr:<repo>#<number>`, `commit:<sha>`, `monday:<item id>`), keyed on that ref
--- since a mirror row's own id is not stable across sync sources. `retracted`
--- clears a row the same way every other retraction in this codebase does:
--- `subject` is the id of the row it retracts (here, the evidence ref itself),
--- matched with `WHERE subject = ?`.
+-- (`pr:<repo>#<number>`, `commit:<sha>`, `monday:<item id>`, `session:<claude
+-- session id>`), keyed on that ref since a mirror row's own id is not stable
+-- across sync sources. `retracted` clears a row the same way every other
+-- retraction in this codebase does: `subject` is the id of the row it
+-- retracts (here, the evidence ref itself), matched with `WHERE subject = ?`.
+--
+-- Migration 0016_impacts_session.sql widened `subject_kind`'s CHECK to add
+-- `'session'`, for work with no commit/PR/Monday item (an ops session, an
+-- unmirrored redesign) to still carry a client-facing impact line.
 
 CREATE TABLE IF NOT EXISTS impacts (
   subject TEXT PRIMARY KEY,
-  subject_kind TEXT NOT NULL CHECK (subject_kind IN ('pr', 'commit', 'monday')),
+  subject_kind TEXT NOT NULL CHECK (subject_kind IN ('pr', 'commit', 'monday', 'session')),
   text TEXT NOT NULL,
   theme TEXT,
   revision INTEGER NOT NULL,
