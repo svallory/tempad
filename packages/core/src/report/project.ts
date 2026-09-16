@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config/env.ts";
+import { type ImpactRow, queryImpacts } from "../intent/api.ts";
+import { formatEvidenceRef } from "../intent/evidence-ref.ts";
 import {
   attributeNonClaudeEvidence,
   type NonClaudeEvidenceRow,
@@ -77,6 +79,11 @@ function render(database: Database, config: Config, options: ReportOptions): str
   const attribution = new Map(
     attributeNonClaudeEvidence(intentDatabase, range).map((row) => [row.id, row]),
   );
+  const impactSubjects = [
+    ...commits.map((row) => formatEvidenceRef({ kind: "commit", sha: row.sha })),
+    ...mondayItems.map((row) => formatEvidenceRef({ kind: "monday", itemId: String(row.id) })),
+  ];
+  const impacts = queryImpacts(intentDatabase, impactSubjects);
 
   const keys = new Map<string, ProjectKey>();
   for (const row of [...commits, ...sessions, ...mondayItems]) {
@@ -142,7 +149,13 @@ function render(database: Database, config: Config, options: ReportOptions): str
             const itemCommits = projectCommits.length;
             const itemSessions = projectSessions.length;
             const quest = attribution.get(String(item.id))?.questTitle;
-            const name = quest ? `${item.name} — ${quest}` : item.name;
+            const impact = impacts.get(
+              formatEvidenceRef({ kind: "monday", itemId: String(item.id) }),
+            );
+            const base = impact
+              ? `${impact.theme ? `[${impact.theme}] ` : ""}${impact.text}`
+              : item.name;
+            const name = quest ? `${base} — ${quest}` : base;
             return [
               name,
               localDateTime(first, range.timeZone),
@@ -158,6 +171,7 @@ function render(database: Database, config: Config, options: ReportOptions): str
             queryPullRequestsByRepo(database, key.org, key.project),
             range.timeZone,
             attribution,
+            impacts,
           )
     ).map((row) => [...row, "-", "-"]);
 
@@ -223,6 +237,7 @@ function branchRows(
   pullRequests: PullRequestRow[],
   timeZone: string,
   attribution: Map<string, NonClaudeEvidenceRow>,
+  impacts: Map<string, ImpactRow>,
 ): string[][] {
   const pullRequestsByNumber = new Map(pullRequests.map((pr) => [pr.number, pr]));
 
@@ -245,7 +260,12 @@ function branchRows(
     const quest = branchCommits
       .map((commit) => attribution.get(commit.sha)?.questTitle)
       .find((title): title is string => Boolean(title));
-    const label = branchLabel(branch, pullRequestsByNumber);
+    const impact = branchCommits
+      .map((commit) => impacts.get(formatEvidenceRef({ kind: "commit", sha: commit.sha })))
+      .find((row): row is ImpactRow => row !== undefined);
+    const label = impact
+      ? `${impact.theme ? `[${impact.theme}] ` : ""}${impact.text}`
+      : branchLabel(branch, pullRequestsByNumber);
     return [
       quest ? `${label} — ${quest}` : label,
       localDateTime(first, timeZone),

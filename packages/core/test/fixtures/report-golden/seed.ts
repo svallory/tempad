@@ -1,7 +1,9 @@
 import type { Database } from "bun:sqlite";
 import type { Config } from "../../../src/config/env.ts";
+import { stateImpact } from "../../../src/intent/api.ts";
 import { ensureTables } from "../../../src/intent/projections/index.ts";
 import { registerAllProjections } from "../../../src/intent/projections/register.ts";
+import { EventStore } from "../../../src/intent/store.ts";
 
 export const TIME_ZONE = "America/Sao_Paulo";
 
@@ -123,4 +125,12 @@ function seedIntentFixtures(database: Database): void {
     `INSERT INTO questions (id, trace_id, session_id, text, kind, state, asked_at, answered_at, answer, answered_by, turns_watched)
      VALUES ('question-1', 'trace-3', 'session-1', 'is this its own quest or part of the report polish?', 'which_quest', 'expired', '2026-09-01T13:00:00.000Z', NULL, NULL, NULL, 2)`,
   );
+
+  const store = new EventStore(database);
+  stateImpact(store, database, {
+    subject: "commit:bbbbbbb2222222222222222222222222222222",
+    text: "Clients now see a polished, readable daily report",
+    theme: "feature",
+    hero: "hero",
+  });
 }

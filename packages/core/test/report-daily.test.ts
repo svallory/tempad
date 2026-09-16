@@ -172,8 +172,11 @@ describe("dailyReport", () => {
       to: "2026-09-01",
     });
 
-    expect(output).toContain("bbbbbbb feat(widgets): polish report output (acme/widgets) (x3)");
-    const occurrences = output.split("feat(widgets): polish report output").length - 1;
+    expect(output).toContain(
+      "bbbbbbb [feature] Clients now see a polished, readable daily report (acme/widgets) (x3)",
+    );
+    const occurrences =
+      output.split("Clients now see a polished, readable daily report").length - 1;
     expect(occurrences).toBe(1);
 
     database.close();
