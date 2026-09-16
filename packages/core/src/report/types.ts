@@ -8,6 +8,8 @@ export interface ReportOptions {
   project?: string;
   asOf?: string;
   client?: string;
+  /** Which date places a pull request in a day/week. Default `"merged"`. */
+  prDate?: "merged" | "authored";
 }
 
 export interface Report {

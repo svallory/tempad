@@ -38,6 +38,7 @@ function projectKeyString(key: ProjectKey): string {
 
 function render(database: Database, config: Config, options: ReportOptions): string {
   const timeZone = config.tz;
+  const prDate = options.prDate ?? "merged";
   const range = {
     from: options.from,
     to: options.to,
@@ -63,7 +64,9 @@ function render(database: Database, config: Config, options: ReportOptions): str
     const dayCommits = commits.filter((row) => localDay(row.authoredAt, timeZone) === day);
     const daySessions = sessions.filter((row) => sessionTouchesDay(row, day, timeZone));
     const dayMondayItems = mondayItems.filter((row) => mondayTouchesDay(row, day, timeZone));
-    const dayPullRequests = pullRequests.filter((row) => pullRequestTouchesDay(row, day, timeZone));
+    const dayPullRequests = pullRequests.filter((row) =>
+      pullRequestTouchesDay(row, day, timeZone, prDate),
+    );
     const dayRangeOptions = {
       from: day,
       to: day,
@@ -257,7 +260,16 @@ function mondayTouchesDay(item: MondayItemRow, day: string, timeZone: string): b
   return localDay(item.updatedAt, timeZone) === day;
 }
 
-function pullRequestTouchesDay(pr: PullRequestRow, day: string, timeZone: string): boolean {
+function pullRequestTouchesDay(
+  pr: PullRequestRow,
+  day: string,
+  timeZone: string,
+  prDate: "merged" | "authored",
+): boolean {
+  if (prDate === "authored") {
+    const placedAt = pr.firstAuthoredAt ?? pr.createdAt;
+    return localDay(placedAt, timeZone) === day;
+  }
   if (localDay(pr.createdAt, timeZone) === day) return true;
   if (pr.mergedAt && localDay(pr.mergedAt, timeZone) === day) return true;
   if (pr.closedAt && localDay(pr.closedAt, timeZone) === day) return true;
